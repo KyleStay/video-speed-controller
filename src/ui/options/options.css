@@ -14,6 +14,8 @@
   --md-outline-variant: #cac4d0;
   --md-shadow: rgba(0, 0, 0, 0.1);
   --md-shadow-2: rgba(0, 0, 0, 0.15);
+  --vsc-success: #137333;
+  --vsc-success-container: rgba(19, 115, 51, 0.15);
 
   /* Legacy variable mapping */
   --main-bg-color: var(--md-surface);
@@ -38,6 +40,8 @@
     --md-outline-variant: #49454f;
     --md-shadow: rgba(0, 0, 0, 0.3);
     --md-shadow-2: rgba(0, 0, 0, 0.4);
+    --vsc-success: #81c995;
+    --vsc-success-container: rgba(129, 201, 149, 0.16);
   }
 
   a {
@@ -148,7 +152,7 @@ header {
   background-color: transparent !important;
   color: var(--md-on-surface-variant);
   border: 1px solid var(--md-outline);
-  min-height: 0;
+  min-height: 36px;
   overflow: visible;
   box-shadow: none !important;
   transform: none !important;
@@ -159,8 +163,8 @@ header {
 
 .split-button button.split-primary:hover,
 .split-button button.split-arrow:hover {
-  background: rgba(76, 175, 80, 0.12) !important;
-  color: #4caf50;
+  background: var(--vsc-success-container) !important;
+  color: var(--vsc-success);
 }
 
 .split-button button.split-primary::before,
@@ -370,6 +374,14 @@ select:focus {
   box-shadow: 0 0 0 1px var(--md-primary);
 }
 
+input[type='text']:focus-visible,
+input[type='number']:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
 /* Material Design text inputs */
 input[type='text'],
 input[type='number'] {
@@ -391,6 +403,11 @@ input[type='number'] {
 #controllerOpacity,
 #controllerButtonSize {
   width: 60px;
+}
+
+#controllerOpacity:invalid,
+#controllerButtonSize:invalid {
+  border-color: #d32f2f;
 }
 
 input::placeholder {
@@ -501,9 +518,9 @@ button:active {
 
 /* !important needed to override .split-button button.split-primary's !important transparent */
 .split-button button#save.has-changes {
-  background-color: rgba(76, 175, 80, 0.15) !important;
-  color: #4caf50 !important;
-  border-color: #4caf50 !important;
+  background-color: var(--vsc-success-container) !important;
+  color: var(--vsc-success) !important;
+  border-color: var(--vsc-success) !important;
 }
 
 .split-button button#save.saved {
@@ -627,6 +644,7 @@ button:active {
 
 .row.site-rule .rulePattern {
   width: 100%;
+  min-width: 0;
   text-align: left;
 }
 
@@ -748,6 +766,22 @@ button:active {
   border-color: #f57c00;
 }
 
+@media (forced-colors: active) {
+  .customKey {
+    color: CanvasText;
+    text-shadow: none;
+  }
+
+  .css-editor textarea {
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .css-editor .css-highlight {
+    display: none;
+  }
+}
+
 .css-validation {
   font-size: 12px;
 }
@@ -844,6 +878,12 @@ button:active {
     gap: 8px;
   }
 
+  .row:not(.site-rule):has(> input[type='checkbox']) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
   .row.customs {
     display: flex;
     flex-wrap: wrap;
@@ -869,7 +909,7 @@ button:active {
 
   .site-rules-header,
   .row.site-rule {
-    grid-template-columns: 1fr 50px 70px 32px;
+    grid-template-columns: minmax(0, 1fr) 50px 70px 32px;
   }
 
   .site-rules-header {

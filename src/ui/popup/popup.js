@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const status_element = document.querySelector('#status');
     status_element.classList.toggle('hide', false);
     status_element.classList.remove('error', 'success');
-    status_element.innerText = str;
+    status_element.textContent = str;
   }
 
   function setStatusState(str, state = '') {
@@ -75,7 +75,46 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state) {
       statusElement.classList.add(state);
     }
-    statusElement.innerText = str;
+    statusElement.textContent = str;
+  }
+
+  function setCustomSpeedValidity(valid) {
+    const input = document.querySelector('#custom-speed-input');
+    if (input) {
+      input.setAttribute('aria-invalid', String(!valid));
+    }
+  }
+
+  function getSpeedControls() {
+    return [
+      '#speed-decrease',
+      '#speed-reset',
+      '#speed-increase',
+      '.preset-btn',
+      '#custom-speed-input',
+      '#custom-speed-apply',
+    ]
+      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .filter(Boolean);
+  }
+
+  function setSpeedControlsAvailable(available) {
+    getSpeedControls().forEach((control) => {
+      control.disabled = !available;
+    });
+  }
+
+  function validateCustomSpeedValue(value) {
+    const speed = parseFloat(value);
+    if (!Number.isFinite(speed)) {
+      return { valid: false, speed, message: 'Enter a speed from 0.07x to 16x.' };
+    }
+
+    if (speed < SPEED_LIMITS.MIN || speed > SPEED_LIMITS.MAX) {
+      return { valid: false, speed, message: 'Speed must be between 0.07x and 16x.' };
+    }
+
+    return { valid: true, speed };
   }
 
   // Load settings and initialize UI
@@ -159,16 +198,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#custom-speed-form').addEventListener('submit', (event) => {
       event.preventDefault();
       const input = document.querySelector('#custom-speed-input');
-      const speed = parseFloat(input.value);
-      if (!Number.isFinite(speed)) {
-        setStatusState('Enter a speed from 0.07x to 16x.', 'error');
+      const result = validateCustomSpeedValue(input.value);
+      if (!result.valid) {
+        setCustomSpeedValidity(false);
+        setStatusState(result.message, 'error');
         input.focus();
+        input.select();
         return;
       }
 
-      const targetSpeed = Math.min(Math.max(speed, SPEED_LIMITS.MIN), SPEED_LIMITS.MAX);
-      input.value = targetSpeed.toString();
-      setSpeed(targetSpeed);
+      setCustomSpeedValidity(true);
+      setSpeed(result.speed);
+    });
+
+    document.querySelector('#custom-speed-input').addEventListener('input', (event) => {
+      setCustomSpeedValidity(validateCustomSpeedValue(event.currentTarget.value).valid);
     });
   }
 
@@ -187,29 +231,41 @@ document.addEventListener('DOMContentLoaded', () => {
   function sendCommand(type, payload, successMessage, options = {}) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (!tabs[0]) {
+        setSpeedControlsAvailable(false);
         setStatusState('No active tab.', 'error');
         return;
       }
 
       chrome.tabs.sendMessage(tabs[0].id, { type, payload }, (response) => {
         if (chrome.runtime.lastError) {
-          setStatusState('Reload page to enable controls.', 'error');
+          const tabUrl = tabs[0].url || '';
+          const restrictedPage = /^(chrome|edge|about|chrome-extension):/i.test(tabUrl);
+          setSpeedControlsAvailable(false);
+          setStatusState(
+            restrictedPage
+              ? 'Controls are not available on browser pages.'
+              : 'Reload this page to enable controls.',
+            'error'
+          );
           updateCurrentSpeed(null);
           return;
         }
 
         if (!response?.ok) {
+          setSpeedControlsAvailable(false);
           setStatusState('No response from this page. Try reloading the tab.', 'error');
           updateCurrentSpeed(null);
           return;
         }
 
         if (response.mediaCount === 0) {
+          setSpeedControlsAvailable(false);
           setStatusState('No media found on this page.', 'error');
           updateCurrentSpeed(null);
           return;
         }
 
+        setSpeedControlsAvailable(true);
         if (typeof response.currentSpeed === 'number') {
           updateCurrentSpeed(response.currentSpeed);
         } else {
@@ -236,6 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.querySelector('#custom-speed-input');
     if (input && typeof speed === 'number') {
       input.value = formatSpeed(speed);
+      setCustomSpeedValidity(true);
     }
   }
 

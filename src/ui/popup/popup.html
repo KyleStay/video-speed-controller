@@ -35,25 +35,75 @@
 
         <!-- Speed Presets -->
         <div class="speed-presets">
-          <div class="preset-grid">
-            <button class="preset-btn" data-speed="0.5" aria-label="Set speed to 0.5x">0.5</button>
-            <button class="preset-btn" data-speed="0.75" aria-label="Set speed to 0.75x">
+          <div class="preset-grid" role="group" aria-label="Speed presets">
+            <button
+              class="preset-btn"
+              data-speed="0.5"
+              aria-label="Set speed to 0.5x"
+              aria-pressed="false"
+            >
+              0.5
+            </button>
+            <button
+              class="preset-btn"
+              data-speed="0.75"
+              aria-label="Set speed to 0.75x"
+              aria-pressed="false"
+            >
               0.75
             </button>
-            <button class="preset-btn" data-speed="1.0" aria-label="Set speed to 1x">1</button>
-            <button class="preset-btn" data-speed="1.25" aria-label="Set speed to 1.25x">
+            <button
+              class="preset-btn"
+              data-speed="1.0"
+              aria-label="Set speed to 1x"
+              aria-pressed="false"
+            >
+              1
+            </button>
+            <button
+              class="preset-btn"
+              data-speed="1.25"
+              aria-label="Set speed to 1.25x"
+              aria-pressed="false"
+            >
               1.25
             </button>
-            <button class="preset-btn" data-speed="1.5" aria-label="Set speed to 1.5x">1.5</button>
-            <button class="preset-btn" data-speed="1.75" aria-label="Set speed to 1.75x">
+            <button
+              class="preset-btn"
+              data-speed="1.5"
+              aria-label="Set speed to 1.5x"
+              aria-pressed="false"
+            >
+              1.5
+            </button>
+            <button
+              class="preset-btn"
+              data-speed="1.75"
+              aria-label="Set speed to 1.75x"
+              aria-pressed="false"
+            >
               1.75
             </button>
-            <button class="preset-btn" data-speed="2.0" aria-label="Set speed to 2x">2</button>
-            <button class="preset-btn" data-speed="2.5" aria-label="Set speed to 2.5x">2.5</button>
+            <button
+              class="preset-btn"
+              data-speed="2.0"
+              aria-label="Set speed to 2x"
+              aria-pressed="false"
+            >
+              2
+            </button>
+            <button
+              class="preset-btn"
+              data-speed="2.5"
+              aria-label="Set speed to 2.5x"
+              aria-pressed="false"
+            >
+              2.5
+            </button>
           </div>
         </div>
 
-        <form id="custom-speed-form" class="custom-speed" aria-label="Custom speed">
+        <form id="custom-speed-form" class="custom-speed" aria-label="Custom speed" novalidate>
           <label for="custom-speed-input">Custom</label>
           <input
             id="custom-speed-input"
@@ -64,6 +114,8 @@
             inputmode="decimal"
             placeholder="1.33"
             aria-label="Custom playback speed"
+            aria-describedby="status"
+            aria-invalid="false"
           />
           <button id="custom-speed-apply" class="custom-speed-btn" type="submit">Set</button>
         </form>

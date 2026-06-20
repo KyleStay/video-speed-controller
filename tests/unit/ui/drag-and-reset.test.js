@@ -144,4 +144,41 @@ describe('DragAndReset', () => {
     const style = controller.div.shadowRoot.querySelector('style');
     expect(style.textContent.includes('touch-action: none')).toBe(true);
   });
+
+  it('Controller opacity uses a CSS variable so interaction states can brighten it', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo();
+    mockDOM.container.appendChild(mockVideo);
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    const shadowController = controller.div.shadowRoot.querySelector('#controller');
+    const style = controller.div.shadowRoot.querySelector('style');
+
+    expect(shadowController.style.opacity).toBe('');
+    expect(shadowController.style.getPropertyValue('--vsc-controller-opacity')).toBe('0.3');
+    expect(shadowController.style.getPropertyValue('--vsc-controller-active-opacity')).toBe('0.75');
+    expect(style.textContent).toContain('opacity: var(--vsc-controller-opacity)');
+    expect(style.textContent).toContain('opacity: var(--vsc-controller-active-opacity)');
+  });
+
+  it('Controller active opacity does not dim higher configured opacity', () => {
+    const wrapper = document.createElement('vsc-controller');
+    const shadow = window.VSC.ShadowDOMManager.createShadowDOM(wrapper, { opacity: 1 });
+    const shadowController = shadow.querySelector('#controller');
+
+    expect(shadowController.style.getPropertyValue('--vsc-controller-opacity')).toBe('1');
+    expect(shadowController.style.getPropertyValue('--vsc-controller-active-opacity')).toBe('1');
+  });
+
+  it('Controller active opacity preserves an explicitly transparent controller', () => {
+    const wrapper = document.createElement('vsc-controller');
+    const shadow = window.VSC.ShadowDOMManager.createShadowDOM(wrapper, { opacity: 0 });
+    const shadowController = shadow.querySelector('#controller');
+
+    expect(shadowController.style.getPropertyValue('--vsc-controller-opacity')).toBe('0');
+    expect(shadowController.style.getPropertyValue('--vsc-controller-active-opacity')).toBe('0');
+  });
 });

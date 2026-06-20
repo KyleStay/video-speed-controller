@@ -19,6 +19,10 @@ window.VSC = window.VSC || {};
 
 let keyBindings = [];
 
+const TAB_NAMES = ['settings', 'advanced', 'faq'];
+const CONTROLLER_OPACITY_LIMITS = { min: 0, max: 1 };
+const CONTROLLER_BUTTON_SIZE_LIMITS = { min: 10, max: 32 };
+
 /**
  * Lightweight CSS syntax highlighter for the controller CSS editor.
  * Returns HTML with spans wrapping comments, selectors, properties,
@@ -277,6 +281,73 @@ function validateControllerCSS(css) {
     msg.textContent = `Syntax error: ${e.message.replace(/^Failed to execute.*: /, '')}`;
     return false;
   }
+}
+
+function showTimedStatus(message, state = 'error', timeout = 5000) {
+  const status = document.getElementById('status');
+  status.textContent = message;
+  status.classList.remove('show', 'success', 'error');
+  status.classList.add('show');
+  if (state) {
+    status.classList.add(state);
+  }
+  if (timeout > 0) {
+    setTimeout(() => {
+      status.textContent = '';
+      status.classList.remove('show', state);
+    }, timeout);
+  }
+}
+
+function validateNumberSetting(inputId, label, limits) {
+  const input = document.getElementById(inputId);
+  const value = Number(input.value);
+
+  if (!input.value.trim() || !Number.isFinite(value)) {
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-errormessage', 'status');
+    return { valid: false, input, message: `${label} must be a number.` };
+  }
+
+  if (value < limits.min || value > limits.max) {
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-errormessage', 'status');
+    return {
+      valid: false,
+      input,
+      message: `${label} must be between ${limits.min} and ${limits.max}.`,
+    };
+  }
+
+  input.setAttribute('aria-invalid', 'false');
+  input.removeAttribute('aria-errormessage');
+  return { valid: true, value };
+}
+
+export function validateControllerSettings() {
+  const opacity = validateNumberSetting(
+    'controllerOpacity',
+    'Controller opacity',
+    CONTROLLER_OPACITY_LIMITS
+  );
+  if (!opacity.valid) {
+    return opacity;
+  }
+
+  const buttonSize = validateNumberSetting(
+    'controllerButtonSize',
+    'Controller button size',
+    CONTROLLER_BUTTON_SIZE_LIMITS
+  );
+  if (!buttonSize.valid) {
+    return buttonSize;
+  }
+
+  return {
+    valid: true,
+    controllerOpacity: opacity.value,
+    controllerButtonSize: buttonSize.value,
+  };
 }
 
 // TODO(v3): Remove keyCodeAliases once all bindings have displayKey field
@@ -696,7 +767,7 @@ function collectSiteRules() {
 }
 
 // Validates settings before saving
-function validate() {
+export function validate() {
   let valid = true;
   const status = document.getElementById('status');
 
@@ -706,6 +777,17 @@ function validate() {
   }
 
   const regEndsWithFlags = window.VSC.Constants.regEndsWithFlags;
+
+  const controllerSettings = validateControllerSettings();
+  if (!controllerSettings.valid) {
+    showTimedStatus(`Error: ${controllerSettings.message}`, 'error', 0);
+    const panel = controllerSettings.input.closest('[role="tabpanel"]');
+    if (panel?.hidden && panel.getAttribute('aria-labelledby')) {
+      switchTab(panel.getAttribute('aria-labelledby').replace('tab-', ''));
+    }
+    controllerSettings.input.focus();
+    return false;
+  }
 
   // Validate site rules
   const rules = collectSiteRules();
@@ -777,8 +859,8 @@ async function save_options() {
     const exclusiveKeys = document.getElementById('exclusiveKeys').checked;
     const audioBoolean = document.getElementById('audioBoolean').checked;
     const startHidden = document.getElementById('startHidden').checked;
-    const controllerOpacity = Number(document.getElementById('controllerOpacity').value);
-    const controllerButtonSize = Number(document.getElementById('controllerButtonSize').value);
+    const controllerSettings = validateControllerSettings();
+    const { controllerOpacity, controllerButtonSize } = controllerSettings;
     const logLevel = parseInt(document.getElementById('logLevel').value);
     const siteRules = collectSiteRules();
     const customCSS = document.getElementById('controllerCSS').value;
@@ -1070,14 +1152,105 @@ async function handleImportFile(event) {
   }
 }
 
-function switchTab(tabName) {
-  ['settings', 'advanced', 'faq'].forEach((name) => {
+export function switchTab(tabName, options = {}) {
+  TAB_NAMES.forEach((name) => {
     const selected = name === tabName;
     const tab = document.getElementById(`tab-${name}`);
     const panel = document.getElementById(`panel-${name}`);
     tab.classList.toggle('active', selected);
     tab.setAttribute('aria-selected', String(selected));
-    panel.style.display = selected ? '' : 'none';
+    tab.setAttribute('tabindex', selected ? '0' : '-1');
+    panel.hidden = !selected;
+  });
+
+  if (options.focus) {
+    document.getElementById(`tab-${tabName}`).focus();
+  }
+}
+
+export function setupTabNavigation() {
+  const tabs = TAB_NAMES.map((name) => document.getElementById(`tab-${name}`));
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => switchTab(TAB_NAMES[index]));
+    tab.addEventListener('keydown', (event) => {
+      let nextIndex = null;
+
+      if (event.key === 'ArrowRight') {
+        nextIndex = (index + 1) % tabs.length;
+      } else if (event.key === 'ArrowLeft') {
+        nextIndex = (index - 1 + tabs.length) % tabs.length;
+      } else if (event.key === 'Home') {
+        nextIndex = 0;
+      } else if (event.key === 'End') {
+        nextIndex = tabs.length - 1;
+      }
+
+      if (nextIndex !== null) {
+        event.preventDefault();
+        switchTab(TAB_NAMES[nextIndex], { focus: true });
+      }
+    });
+  });
+}
+
+function setSplitMenuOpen(open, options = {}) {
+  const splitMenu = document.getElementById('split-menu');
+  const splitToggle = document.getElementById('split-toggle');
+  splitMenu.hidden = !open;
+  splitToggle.setAttribute('aria-expanded', String(open));
+
+  if (open && options.focusFirst) {
+    splitMenu.querySelector('button')?.focus();
+  } else if (!open && options.returnFocus) {
+    splitToggle.focus();
+  }
+}
+
+export function setupSplitMenu() {
+  const splitMenu = document.getElementById('split-menu');
+  const splitToggle = document.getElementById('split-toggle');
+  const menuButtons = () => Array.from(splitMenu.querySelectorAll('button'));
+
+  splitToggle.addEventListener('click', () => {
+    setSplitMenuOpen(splitMenu.hidden);
+  });
+  splitToggle.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSplitMenuOpen(true, { focusFirst: true });
+    } else if (event.key === 'Escape') {
+      setSplitMenuOpen(false);
+    }
+  });
+  splitMenu.addEventListener('keydown', (event) => {
+    const buttons = menuButtons();
+    const currentIndex = buttons.indexOf(document.activeElement);
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setSplitMenuOpen(false, { returnFocus: true });
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      buttons[(currentIndex + 1) % buttons.length]?.focus();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      buttons[(currentIndex - 1 + buttons.length) % buttons.length]?.focus();
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      buttons[0]?.focus();
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      buttons[buttons.length - 1]?.focus();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.split-button')) {
+      setSplitMenuOpen(false);
+    }
+  });
+  splitMenu.addEventListener('click', () => {
+    setSplitMenuOpen(false, { returnFocus: true });
   });
 }
 
@@ -1126,6 +1299,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('restore').addEventListener('click', async (e) => {
     e.preventDefault();
+    const confirmed = window.confirm(
+      'Reset all Video Speed Controller settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
+    );
+    if (!confirmed) {
+      return;
+    }
     await restore_defaults();
     markClean();
   });
@@ -1142,29 +1321,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('importFile').addEventListener('change', handleImportFile);
 
-  document.getElementById('tab-settings').addEventListener('click', () => switchTab('settings'));
-  document.getElementById('tab-advanced').addEventListener('click', () => switchTab('advanced'));
-  document.getElementById('tab-faq').addEventListener('click', () => switchTab('faq'));
-
-  // Split button dropdown
-  const splitMenu = document.getElementById('split-menu');
-  const splitToggle = document.getElementById('split-toggle');
-  splitToggle.addEventListener('click', () => {
-    const expanded = splitMenu.hidden;
-    splitMenu.hidden = !expanded;
-    splitToggle.setAttribute('aria-expanded', String(expanded));
-  });
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.split-button')) {
-      splitMenu.hidden = true;
-      splitToggle.setAttribute('aria-expanded', 'false');
-    }
-  });
-  // Close dropdown after any menu action
-  splitMenu.addEventListener('click', () => {
-    splitMenu.hidden = true;
-    splitToggle.setAttribute('aria-expanded', 'false');
-  });
+  setupTabNavigation();
+  setupSplitMenu();
 
   // CSS editor: live validation (debounced) + syntax highlighting + scroll sync
   const cssTextarea = document.getElementById('controllerCSS');

@@ -13,6 +13,8 @@ class ShadowDOMManager {
    */
   static createShadowDOM(wrapper, options = {}) {
     const { top = '0px', left = '0px', speed = '1.00', opacity = 0.3, buttonSize = 14 } = options;
+    const numericOpacity = Number(opacity);
+    const activeOpacity = numericOpacity > 0 ? Math.max(numericOpacity, 0.75) : 0;
 
     const shadow = wrapper.attachShadow({ mode: 'open' });
 
@@ -56,7 +58,7 @@ class ShadowDOMManager {
       :host(.vsc-show) #controller {
         display: block !important;
         visibility: visible !important;
-        opacity: ${opacity} !important;
+        opacity: var(--vsc-controller-active-opacity) !important;
       }
       
       #controller {
@@ -71,13 +73,16 @@ class ShadowDOMManager {
         cursor: default;
         z-index: 9999999;
         white-space: nowrap;
+        opacity: var(--vsc-controller-opacity);
       }
       
-      #controller:hover {
-        opacity: 0.7;
+      #controller:hover,
+      #controller:focus-within {
+        opacity: var(--vsc-controller-active-opacity);
       }
       
-      #controller:hover>.draggable {
+      #controller:hover>.draggable,
+      #controller:focus-within>.draggable {
         margin-right: 0.8em;
       }
       
@@ -88,7 +93,7 @@ class ShadowDOMManager {
       
       #controller.dragging {
         cursor: -webkit-grabbing;
-        opacity: 0.7;
+        opacity: var(--vsc-controller-active-opacity);
       }
       
       #controller.dragging #controls {
@@ -173,7 +178,7 @@ class ShadowDOMManager {
     // Create controller div
     const controller = document.createElement('div');
     controller.id = 'controller';
-    controller.style.cssText = `top:${top}; left:${left}; opacity:${opacity};`;
+    controller.style.cssText = `top:${top}; left:${left}; --vsc-controller-opacity:${opacity}; --vsc-controller-active-opacity:${activeOpacity};`;
 
     // Create draggable speed indicator
     const draggable = document.createElement('span');
@@ -181,6 +186,7 @@ class ShadowDOMManager {
     draggable.setAttribute('role', 'button');
     draggable.setAttribute('tabindex', '0');
     draggable.setAttribute('aria-label', `Playback speed ${speed}. Press Enter to reset speed.`);
+    draggable.setAttribute('title', `Playback speed ${speed}. Press Enter to reset speed.`);
     draggable.setAttribute('aria-live', 'polite');
     draggable.className = 'draggable';
     draggable.style.cssText = `font-size: ${buttonSize}px;`;
@@ -264,11 +270,10 @@ class ShadowDOMManager {
     const speedIndicator = this.getSpeedIndicator(shadow);
     if (speedIndicator) {
       const formattedSpeed = window.VSC.Constants.formatSpeed(speed);
+      const label = `Playback speed ${formattedSpeed}. Press Enter to reset speed.`;
       speedIndicator.textContent = formattedSpeed;
-      speedIndicator.setAttribute(
-        'aria-label',
-        `Playback speed ${formattedSpeed}. Press Enter to reset speed.`
-      );
+      speedIndicator.setAttribute('aria-label', label);
+      speedIndicator.setAttribute('title', label);
     }
   }
 

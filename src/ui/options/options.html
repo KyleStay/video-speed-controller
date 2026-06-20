@@ -16,6 +16,7 @@
           role="tab"
           aria-selected="true"
           aria-controls="panel-settings"
+          tabindex="0"
         >
           Settings
         </button>
@@ -25,6 +26,7 @@
           role="tab"
           aria-selected="false"
           aria-controls="panel-advanced"
+          tabindex="-1"
         >
           Advanced
         </button>
@@ -34,6 +36,7 @@
           role="tab"
           aria-selected="false"
           aria-controls="panel-faq"
+          tabindex="-1"
         >
           FAQ
         </button>
@@ -100,21 +103,21 @@
     </div>
 
     <!-- ============ ADVANCED TAB ============ -->
-    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" style="display: none">
+    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" hidden>
       <section>
         <div class="row">
           <label for="controllerOpacity"
             >Controller opacity<br />
             <em>0 = fully transparent, 1 = fully opaque. Default: 0.3</em>
           </label>
-          <input id="controllerOpacity" type="text" value="" />
+          <input id="controllerOpacity" type="number" min="0" max="1" step="any" value="" />
         </div>
         <div class="row">
           <label for="controllerButtonSize"
             >Controller button size<br />
             <em>Font size in pixels for the speed display and buttons. Default: 14</em>
           </label>
-          <input id="controllerButtonSize" type="text" value="" />
+          <input id="controllerButtonSize" type="number" min="10" max="32" step="any" value="" />
         </div>
         <div class="row">
           <label for="logLevel"
@@ -183,7 +186,7 @@ vsc-controller { top: 50px !important; }
     <div id="status" role="status" aria-live="polite"></div>
 
     <!-- ============ FAQ TAB ============ -->
-    <div id="panel-faq" role="tabpanel" aria-labelledby="tab-faq" style="display: none">
+    <div id="panel-faq" role="tabpanel" aria-labelledby="tab-faq" hidden>
       <section>
         <div id="faq">
           <ul class="faq-toc">
