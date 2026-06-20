@@ -96,7 +96,7 @@ class EventManager {
     this.lastKeyEventSignature = eventSignature;
 
     // Ignore keydown event if typing in an input box
-    if (this.isTypingContext(event.target)) {
+    if (this.isTypingContext(event)) {
       return false;
     }
 
@@ -203,37 +203,60 @@ class EventManager {
 
   /**
    * Check if user is typing in an input context
-   * @param {Element} target - Event target
+   * @param {KeyboardEvent|Element} eventOrTarget - Keyboard event or event target
    * @returns {boolean} True if typing context
    * @private
    */
-  isTypingContext(target) {
-    if (!target) {
+  isTypingContext(eventOrTarget) {
+    if (!eventOrTarget) {
       return false;
     }
 
-    if (target.isContentEditable) {
-      return true;
+    const path =
+      typeof eventOrTarget.composedPath === 'function'
+        ? eventOrTarget.composedPath()
+        : [eventOrTarget.target || eventOrTarget];
+
+    const eventDocument =
+      path.find((target) => target?.ownerDocument)?.ownerDocument ||
+      eventOrTarget.target?.ownerDocument ||
+      eventOrTarget.ownerDocument ||
+      document;
+    const deepActiveElement = EventManager.getDeepActiveElement(eventDocument);
+    if (deepActiveElement && !path.includes(deepActiveElement)) {
+      path.push(deepActiveElement);
     }
 
-    return Boolean(
-      target.closest?.(
-        'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]'
-      )
-    );
+    return path.some((target) => {
+      if (!target || target === window || target === document) {
+        return false;
+      }
+
+      if (target.isContentEditable) {
+        return true;
+      }
+
+      return Boolean(
+        target.closest?.(
+          'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"]'
+        )
+      );
+    });
   }
 
   /**
    * Decide whether a matched VSC shortcut should block page handlers.
    * Generic sites keep honoring the user's exclusiveKeys preference. YouTube
-   * attaches aggressive page-level shortcuts, so matched VSC shortcuts are
-   * claimed there without disabling unrelated YouTube shortcuts globally.
+   * and Reddit attach aggressive page-level shortcuts, so matched VSC
+   * shortcuts are claimed there without disabling unrelated site shortcuts
+   * globally.
    * @returns {boolean}
    * @private
    */
   shouldClaimShortcutEvent() {
     return (
-      this.config.settings.exclusiveKeys || EventManager.isYouTubeHost(window.location.hostname)
+      this.config.settings.exclusiveKeys ||
+      EventManager.isShortcutClaimHost(window.location.hostname)
     );
   }
 
@@ -474,6 +497,24 @@ EventManager.modifiersMatch = function (mods, ctrl, alt, meta, shift) {
 
 EventManager.isYouTubeHost = function (hostname) {
   return /(^|\.)youtube\.com$/.test(hostname) || /(^|\.)youtube-nocookie\.com$/.test(hostname);
+};
+
+EventManager.isRedditHost = function (hostname) {
+  return /(^|\.)reddit\.com$/.test(hostname);
+};
+
+EventManager.isShortcutClaimHost = function (hostname) {
+  return EventManager.isYouTubeHost(hostname) || EventManager.isRedditHost(hostname);
+};
+
+EventManager.getDeepActiveElement = function (root) {
+  let activeElement = root.activeElement || null;
+
+  while (activeElement?.shadowRoot?.activeElement) {
+    activeElement = activeElement.shadowRoot.activeElement;
+  }
+
+  return activeElement;
 };
 
 // Time window (ms) after a user interaction in which an external ratechange is

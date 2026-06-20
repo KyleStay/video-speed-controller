@@ -219,7 +219,15 @@ describe('EventManager Matching', () => {
     expect(window.VSC.EventManager.isYouTubeHost('notyoutube.com')).toBe(false);
   });
 
-  it('YouTube claim path does not require exclusiveKeys', () => {
+  it('Reddit host detection covers Reddit domains only', () => {
+    expect(window.VSC.EventManager.isRedditHost('reddit.com')).toBe(true);
+    expect(window.VSC.EventManager.isRedditHost('www.reddit.com')).toBe(true);
+    expect(window.VSC.EventManager.isRedditHost('old.reddit.com')).toBe(true);
+    expect(window.VSC.EventManager.isRedditHost('new.reddit.com')).toBe(true);
+    expect(window.VSC.EventManager.isRedditHost('notreddit.com')).toBe(false);
+  });
+
+  it('site-specific claim path does not require exclusiveKeys', () => {
     const { config, eventManager } = setupEnv([
       {
         action: 'slower',
@@ -233,12 +241,55 @@ describe('EventManager Matching', () => {
     ]);
     config.settings.exclusiveKeys = false;
 
-    const originalIsYouTubeHost = window.VSC.EventManager.isYouTubeHost;
-    window.VSC.EventManager.isYouTubeHost = () => true;
+    const originalIsShortcutClaimHost = window.VSC.EventManager.isShortcutClaimHost;
+    window.VSC.EventManager.isShortcutClaimHost = () => true;
 
     expect(eventManager.shouldClaimShortcutEvent()).toBe(true);
 
-    window.VSC.EventManager.isYouTubeHost = originalIsYouTubeHost;
+    window.VSC.EventManager.isShortcutClaimHost = originalIsShortcutClaimHost;
+  });
+
+  it('Reddit matched shortcuts block same-target page capture listeners without exclusiveKeys', () => {
+    const { config, eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+    config.settings.exclusiveKeys = false;
+
+    const originalIsShortcutClaimHost = window.VSC.EventManager.isShortcutClaimHost;
+    window.VSC.EventManager.isShortcutClaimHost = () => true;
+
+    eventManager.setupKeyboardShortcuts(document);
+
+    let siteHandled = false;
+    const redditLikeHandler = () => {
+      siteHandled = true;
+    };
+    document.addEventListener('keydown', redditLikeHandler, true);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyS',
+      key: 's',
+      keyCode: 83,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    document.removeEventListener('keydown', redditLikeHandler, true);
+    eventManager.cleanup();
+    window.VSC.EventManager.isShortcutClaimHost = originalIsShortcutClaimHost;
+
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    expect(siteHandled).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('Unmatched keys still reach same-target page capture listeners', () => {
@@ -306,9 +357,11 @@ describe('EventManager Matching', () => {
       document.createElement('select'),
       document.createElement('div'),
       document.createElement('div'),
+      document.createElement('div'),
     ];
     editableTargets[3].setAttribute('contenteditable', 'true');
     editableTargets[4].setAttribute('role', 'textbox');
+    editableTargets[5].setAttribute('role', 'searchbox');
 
     editableTargets.forEach((target, index) => {
       document.body.appendChild(target);
@@ -328,6 +381,108 @@ describe('EventManager Matching', () => {
 
     expect(actions.length).toBe(0);
     expect(siteHandledCount).toBe(editableTargets.length);
+  });
+
+  it('Matched shortcuts do not fire when editable controls appear in composedPath', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    const searchInput = document.createElement('input');
+    const retargetedHost = document.createElement('reddit-search-large');
+    document.body.appendChild(retargetedHost);
+
+    eventManager.handleKeydown({
+      ...makeEvent({
+        code: 'KeyS',
+        key: 's',
+        keyCode: 83,
+        target: retargetedHost,
+        timeStamp: 250,
+      }),
+      composedPath: () => [searchInput, retargetedHost, document.body, document, window],
+    });
+
+    expect(actions.length).toBe(0);
+    retargetedHost.remove();
+  });
+
+  it('Matched shortcuts do not fire when focus is inside an open shadow search input', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    const searchHost = document.createElement('reddit-search-large');
+    const shadowRoot = searchHost.attachShadow({ mode: 'open' });
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    shadowRoot.appendChild(searchInput);
+    document.body.appendChild(searchHost);
+    searchInput.focus();
+
+    eventManager.handleKeydown(
+      makeEvent({
+        code: 'KeyS',
+        key: 's',
+        keyCode: 83,
+        target: document.body,
+        timeStamp: 260,
+      })
+    );
+
+    expect(actions.length).toBe(0);
+    searchInput.blur();
+    searchHost.remove();
+  });
+
+  it('Active typing focus in another document does not suppress current document shortcuts', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    const otherDocument = document.implementation.createHTMLDocument('iframe');
+    const otherInput = otherDocument.createElement('input');
+    otherDocument.body.appendChild(otherInput);
+    otherInput.focus();
+
+    const currentTarget = document.createElement('div');
+    document.body.appendChild(currentTarget);
+    eventManager.handleKeydown(
+      makeEvent({
+        code: 'KeyS',
+        key: 's',
+        keyCode: 83,
+        target: currentTarget,
+        timeStamp: 270,
+      })
+    );
+
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    currentTarget.remove();
   });
 
   it('Simple: Shift+KeyS still matches simple KeyS binding (backward compat)', () => {
