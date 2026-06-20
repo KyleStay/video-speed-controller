@@ -504,6 +504,10 @@ class ActionHandler {
       return;
     }
     speedIndicator.textContent = numericSpeed.toFixed(2);
+    speedIndicator.setAttribute?.(
+      'aria-label',
+      `Playback speed ${numericSpeed.toFixed(2)}. Press Enter to reset speed.`
+    );
 
     // 6. Persist to storage only if rememberSpeed is enabled
     if (source !== 'external' && this.config.settings.rememberSpeed) {

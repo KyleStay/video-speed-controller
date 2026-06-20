@@ -12,6 +12,10 @@ class VideoSpeedExtension {
     this.initialized = false;
     this.eventListenersInitialized = false;
     this.teardownRequested = false;
+    this.pendingVideoAttachments = new WeakMap();
+    this.pendingVideoElements = new Set();
+    this.cssLiveUpdateHandler = null;
+    this.scheduledWork = new Set();
   }
 
   /**
@@ -100,11 +104,7 @@ class VideoSpeedExtension {
       }
     };
 
-    if (window.requestIdleCallback) {
-      requestIdleCallback(callback);
-    } else {
-      setTimeout(callback, 100);
-    }
+    this.scheduleDeferredWork(callback, { idle: true, delay: 100 });
   }
 
   /**
@@ -126,20 +126,16 @@ class VideoSpeedExtension {
           `Attached controllers to ${lightMedia.length} media elements (light scan)`
         );
 
-        // Schedule comprehensive scan for later if needed
-        if (lightMedia.length === 0) {
-          this.scheduleComprehensiveScan(document);
-        }
+        // Schedule a bounded comprehensive scan for shadow DOM, site-specific
+        // containers, and same-document late media. This is delayed so the
+        // lightweight path still wins first paint and avoids wasteful polling.
+        this.scheduleComprehensiveScan(document);
       } catch (error) {
         this.logger.error(`Failed to scan media elements: ${error.message}`);
       }
     };
 
-    if (window.requestIdleCallback) {
-      requestIdleCallback(performChunkedScan);
-    } else {
-      setTimeout(performChunkedScan, 200);
-    }
+    this.scheduleDeferredWork(performChunkedScan, { idle: true, delay: 200 });
   }
 
   /**
@@ -147,25 +143,31 @@ class VideoSpeedExtension {
    * @param {Document} document - Document to scan comprehensively
    */
   scheduleComprehensiveScan(document) {
-    // Only do comprehensive scan if we didn't find any media with light scan
-    setTimeout(() => {
-      try {
-        const comprehensiveMedia = this.mediaObserver.scanAll(document);
-
-        comprehensiveMedia.forEach((media) => {
-          // Skip if already has controller
-          if (!media.vsc) {
-            this.onVideoFound(media, media.parentElement || media.parentNode);
+    this.scheduleDeferredWork(
+      () => {
+        try {
+          if (this.teardownRequested || !this.mediaObserver) {
+            return;
           }
-        });
 
-        this.logger.info(
-          `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
-        );
-      } catch (error) {
-        this.logger.error(`Failed comprehensive media scan: ${error.message}`);
-      }
-    }, 1000); // Wait 1 second before comprehensive scan
+          const comprehensiveMedia = this.mediaObserver.scanAll(document);
+
+          comprehensiveMedia.forEach((media) => {
+            // Skip if already has controller
+            if (!media.vsc) {
+              this.onVideoFound(media, media.parentElement || media.parentNode);
+            }
+          });
+
+          this.logger.info(
+            `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
+          );
+        } catch (error) {
+          this.logger.error(`Failed comprehensive media scan: ${error.message}`);
+        }
+      },
+      { delay: 1000 }
+    ); // Wait 1 second before comprehensive scan
   }
 
   /**
@@ -194,11 +196,46 @@ class VideoSpeedExtension {
       this.initialized = true;
     };
 
-    if (window.requestIdleCallback) {
-      requestIdleCallback(doWork);
-    } else {
-      setTimeout(doWork, 0);
+    this.scheduleDeferredWork(doWork, { idle: true, delay: 0 });
+  }
+
+  /**
+   * Schedule idle/timer work and make it cancellable during teardown.
+   * @param {Function} callback - Work to run
+   * @param {Object} options - Scheduling options
+   * @param {boolean} options.idle - Prefer requestIdleCallback when available
+   * @param {number} options.delay - Fallback timer delay
+   * @returns {Object} Scheduled work handle
+   */
+  scheduleDeferredWork(callback, { idle = false, delay = 0 } = {}) {
+    const useIdle = idle && typeof window.requestIdleCallback === 'function';
+    const work = { id: null, type: useIdle ? 'idle' : 'timer' };
+
+    const run = () => {
+      this.scheduledWork.delete(work);
+      if (this.teardownRequested) {
+        return;
+      }
+      callback();
+    };
+
+    this.scheduledWork.add(work);
+    work.id = useIdle ? window.requestIdleCallback(run) : setTimeout(run, delay);
+    return work;
+  }
+
+  /**
+   * Cancel deferred startup/scan callbacks.
+   */
+  clearScheduledWork() {
+    for (const work of this.scheduledWork) {
+      if (work.type === 'idle' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(work.id);
+      } else {
+        clearTimeout(work.id);
+      }
     }
+    this.scheduledWork.clear();
   }
 
   /**
@@ -272,7 +309,11 @@ class VideoSpeedExtension {
 
   /** Live-update the user's custom CSS when options are saved. */
   setupCSSLiveUpdates() {
-    document.documentElement.addEventListener('VSC_STORAGE_CHANGED', (e) => {
+    if (this.cssLiveUpdateHandler) {
+      return;
+    }
+
+    this.cssLiveUpdateHandler = (e) => {
       if (e.detail?.customCSS?.newValue === undefined || !this._controllerSheet) {
         return;
       }
@@ -289,7 +330,9 @@ class VideoSpeedExtension {
         );
         this._customSheet = null;
       }
-    });
+    };
+
+    document.documentElement.addEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
   }
 
   /**
@@ -313,30 +356,32 @@ class VideoSpeedExtension {
    * @param {HTMLMediaElement} video - Video element
    * @param {HTMLElement} parent - Parent element
    */
-  onVideoFound(video, parent) {
+  onVideoFound(video, parent, options = {}) {
     try {
       if (this.mediaObserver && !this.mediaObserver.isValidMediaElement(video)) {
         this.logger.debug('Video element is not valid for controller attachment');
+        this.clearPendingVideoAttachment(video);
         return;
       }
 
       if (video.vsc) {
         this.logger.debug('Video already has controller attached');
+        this.clearPendingVideoAttachment(video);
         return;
       }
 
       // Defer until readyState >= HAVE_CURRENT_DATA — inserting a controller
       // too early can trigger the site's internal MutationObservers.
-      if (video.readyState < 2) {
+      if (video.readyState < 2 && !options.forceAttach) {
         this.logger.debug(
           'Deferring controller until loadeddata (readyState=%d)',
           video.readyState
         );
-        video.addEventListener('loadeddata', () => this.onVideoFound(video, parent), {
-          once: true,
-        });
+        this.deferVideoAttachment(video, parent);
         return;
       }
+
+      this.clearPendingVideoAttachment(video);
 
       // Check if controller should start hidden based on video visibility/size
       const shouldStartHidden = this.mediaObserver
@@ -360,6 +405,60 @@ class VideoSpeedExtension {
   }
 
   /**
+   * Defer controller attachment for media that exists before the player has
+   * enough data. The WeakMap prevents duplicate listeners during mutation bursts.
+   * @param {HTMLMediaElement} video - Media element
+   * @param {HTMLElement} parent - Parent element
+   */
+  deferVideoAttachment(video, parent) {
+    if (this.pendingVideoAttachments.has(video)) {
+      return;
+    }
+
+    const attach = () => {
+      this.clearPendingVideoAttachment(video);
+      if (this.teardownRequested || video.vsc || !video.isConnected) {
+        return;
+      }
+      this.onVideoFound(video, parent, { forceAttach: true });
+    };
+
+    const events = ['loadeddata', 'canplay', 'play'];
+    events.forEach((eventName) => {
+      video.addEventListener(eventName, attach, { once: true });
+    });
+
+    const fallbackTimer = setTimeout(() => {
+      // Metadata-only and custom-player media can stay at readyState 1 for a
+      // long time. Attach after a bounded wait once a source exists.
+      if (video.readyState >= 1 || video.currentSrc || video.src) {
+        attach();
+      }
+    }, 1500);
+
+    this.pendingVideoAttachments.set(video, { attach, events, fallbackTimer });
+    this.pendingVideoElements.add(video);
+  }
+
+  /**
+   * Remove deferred attachment listeners/timer for a media element.
+   * @param {HTMLMediaElement} video - Media element
+   */
+  clearPendingVideoAttachment(video) {
+    const pending = this.pendingVideoAttachments.get(video);
+    if (!pending) {
+      return;
+    }
+
+    pending.events.forEach((eventName) => {
+      video.removeEventListener(eventName, pending.attach);
+    });
+    clearTimeout(pending.fallbackTimer);
+    this.pendingVideoAttachments.delete(video);
+    this.pendingVideoElements.delete(video);
+  }
+
+  /**
    * Tear down the extension: remove all controllers, stop observers, clean up listeners.
    * Counterpart to initialize() — leaves the page as if VSC was never active.
    */
@@ -370,6 +469,12 @@ class VideoSpeedExtension {
 
     this.teardownRequested = true;
     this.logger.info('Tearing down Video Speed Controller');
+
+    this.clearScheduledWork();
+
+    for (const video of this.pendingVideoElements) {
+      this.clearPendingVideoAttachment(video);
+    }
 
     // Remove all controllers from tracked media elements
     const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
@@ -397,6 +502,14 @@ class VideoSpeedExtension {
       this.siteHandlerManager.cleanup();
     }
 
+    if (this.cssLiveUpdateHandler) {
+      document.documentElement.removeEventListener(
+        'VSC_STORAGE_CHANGED',
+        this.cssLiveUpdateHandler
+      );
+      this.cssLiveUpdateHandler = null;
+    }
+
     // Remove adopted controller CSS (both default and custom sheets)
     if (document.adoptedStyleSheets) {
       document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
@@ -418,6 +531,7 @@ class VideoSpeedExtension {
    */
   onVideoRemoved(video) {
     try {
+      this.clearPendingVideoAttachment(video);
       if (video.vsc) {
         this.logger.debug('Removing controller from video element');
         video.vsc.remove();
@@ -425,6 +539,24 @@ class VideoSpeedExtension {
     } catch (error) {
       this.logger.error(`Failed to remove video controller: ${error.message}`);
     }
+  }
+
+  /**
+   * Summarize controlled media state for popup responses.
+   * @param {Array<HTMLMediaElement>} videos - Controlled media elements
+   * @returns {Object} Status payload
+   */
+  getMediaStatus(videos) {
+    const rates = videos
+      .map((video) => (typeof video.playbackRate === 'number' ? video.playbackRate : null))
+      .filter((rate) => rate !== null);
+    const speeds = [...new Set(rates.map((rate) => Number(rate.toFixed(2))))];
+
+    return {
+      mediaCount: videos.length,
+      currentSpeed: speeds.length === 1 ? speeds[0] : null,
+      speeds,
+    };
   }
 }
 
@@ -439,6 +571,7 @@ class VideoSpeedExtension {
     if (typeof message === 'object' && message.type && message.type.startsWith('VSC_')) {
       // Use state manager for complete media element discovery (includes shadow DOM)
       const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
+      let handled = true;
 
       switch (message.type) {
         case window.VSC.Constants.MESSAGE_TYPES.SET_SPEED:
@@ -498,6 +631,11 @@ class VideoSpeedExtension {
           }
           break;
 
+        case window.VSC.Constants.MESSAGE_TYPES.GET_STATUS: {
+          message._status = extension.getMediaStatus(videos);
+          break;
+        }
+
         case window.VSC.Constants.MESSAGE_TYPES.TEARDOWN:
           extension.teardown();
           break;
@@ -505,6 +643,24 @@ class VideoSpeedExtension {
         case window.VSC.Constants.MESSAGE_TYPES.REINIT:
           extension.initialize();
           break;
+
+        default:
+          handled = false;
+      }
+
+      if (message.requestId) {
+        const status = message._status || extension.getMediaStatus(videos);
+        document.documentElement.dispatchEvent(
+          new CustomEvent('VSC_MESSAGE_RESULT', {
+            detail: {
+              requestId: message.requestId,
+              ok: handled,
+              mediaCount: status.mediaCount,
+              currentSpeed: status.currentSpeed,
+              speeds: status.speeds,
+            },
+          })
+        );
       }
     }
   });

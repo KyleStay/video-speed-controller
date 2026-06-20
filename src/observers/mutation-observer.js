@@ -11,7 +11,12 @@ class VideoMutationObserver {
     this.onVideoRemoved = onVideoRemoved;
     this.mediaObserver = mediaObserver;
     this.observer = null;
-    this.shadowObservers = new Set();
+    this.shadowObservers = new Map();
+    this.pendingMutations = [];
+    this.mutationCallbackScheduled = false;
+    this.mutationCallbackId = null;
+    this.mutationCallbackType = null;
+    this.active = true;
   }
 
   /**
@@ -19,13 +24,9 @@ class VideoMutationObserver {
    * @param {Document} document - Document to observe
    */
   start(document) {
+    this.active = true;
     this.observer = new MutationObserver((mutations) => {
-      // Process mutations when the browser is genuinely idle — no forced timeout.
-      // Sites do async post-load init that's sensitive to DOM insertions; a
-      // forced timeout can fire during that window.
-      requestIdleCallback(() => {
-        this.processMutations(mutations);
-      });
+      this.scheduleMutationProcessing(mutations);
     });
 
     const observerOptions = {
@@ -39,11 +40,54 @@ class VideoMutationObserver {
   }
 
   /**
+   * Queue mutation records and process them in one idle callback.
+   * @param {Array<MutationRecord>} mutations - Mutation records
+   * @private
+   */
+  scheduleMutationProcessing(mutations) {
+    if (!this.active || typeof window === 'undefined') {
+      return;
+    }
+
+    this.pendingMutations.push(...mutations);
+
+    if (this.mutationCallbackScheduled) {
+      return;
+    }
+
+    this.mutationCallbackScheduled = true;
+    const callback = () => {
+      this.mutationCallbackId = null;
+      this.mutationCallbackType = null;
+      this.mutationCallbackScheduled = false;
+      if (!this.active || typeof window === 'undefined') {
+        this.pendingMutations = [];
+        return;
+      }
+      const queuedMutations = this.pendingMutations;
+      this.pendingMutations = [];
+      this.processMutations(queuedMutations);
+    };
+
+    if (typeof window !== 'undefined' && window.requestIdleCallback) {
+      this.mutationCallbackType = 'idle';
+      this.mutationCallbackId = window.requestIdleCallback(callback, { timeout: 1500 });
+    } else {
+      this.mutationCallbackType = 'timer';
+      this.mutationCallbackId = setTimeout(callback, 100);
+    }
+  }
+
+  /**
    * Process mutation events
    * @param {Array<MutationRecord>} mutations - Mutation records
    * @private
    */
   processMutations(mutations) {
+    if (!this.active) {
+      return;
+    }
+
     mutations.forEach((mutation) => {
       switch (mutation.type) {
         case 'childList':
@@ -100,13 +144,18 @@ class VideoMutationObserver {
       this.handleVisibilityChanges(mutation.target);
     }
 
-    // Handle special cases like Apple TV+ player
-    if (
-      (mutation.target.attributes['aria-hidden'] &&
-        mutation.target.attributes['aria-hidden'].value === 'false') ||
-      mutation.target.nodeName === 'APPLE-TV-PLUS-PLAYER'
-    ) {
-      const flattenedNodes = window.VSC.DomUtils.getShadow(document.body);
+    // Handle special cases like Apple TV+ player. Keep this scoped to the
+    // custom player element so generic aria-hidden changes do not trigger a
+    // whole-page shadow traversal on busy apps.
+    if (mutation.target.nodeName === 'APPLE-TV-PLUS-PLAYER') {
+      if (
+        mutation.target.attributes['aria-hidden'] &&
+        mutation.target.attributes['aria-hidden'].value !== 'false'
+      ) {
+        return;
+      }
+
+      const flattenedNodes = window.VSC.DomUtils.getShadow(mutation.target);
       const videoNodes = flattenedNodes.filter((x) => x.tagName === 'VIDEO');
 
       for (const node of videoNodes) {
@@ -139,10 +188,17 @@ class VideoMutationObserver {
       return;
     }
 
-    // Check if element contains videos
-    const audioEnabled = this.config.settings.audioBoolean;
-    const mediaTagSelector = audioEnabled ? 'video,audio' : 'video';
-    const videos = element.querySelectorAll ? element.querySelectorAll(mediaTagSelector) : [];
+    // Recheck known controlled media under this element. Avoid broad
+    // querySelectorAll() on arbitrary style/class churn from large SPA trees.
+    const videos = window.VSC.stateManager
+      ? window.VSC.stateManager
+          .getControlledElements()
+          .filter((video) => video === element || element.contains?.(video))
+      : [];
+
+    if (videos.length === 0 && !this.nodeMayContainMedia(element)) {
+      return;
+    }
 
     videos.forEach((video) => {
       this.recheckVideoElement(video);
@@ -215,6 +271,10 @@ class VideoMutationObserver {
    * @private
    */
   processNodeChildren(node, parent, added) {
+    if (!this.nodeMayContainMedia(node)) {
+      return;
+    }
+
     let children = [];
 
     // Handle shadow DOM
@@ -235,6 +295,29 @@ class VideoMutationObserver {
   }
 
   /**
+   * Fast preflight for expensive subtree walks.
+   * @param {Node} node - Candidate node
+   * @returns {boolean} True when node or descendants might include media
+   * @private
+   */
+  nodeMayContainMedia(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) {
+      return false;
+    }
+
+    const mediaSelector = this.config.settings.audioBoolean ? 'video,audio' : 'video';
+    if (node.matches?.(mediaSelector) || node.querySelector?.(mediaSelector)) {
+      return true;
+    }
+
+    if (node.shadowRoot) {
+      return true;
+    }
+
+    return Boolean(Array.from(node.children || []).some((child) => child.shadowRoot));
+  }
+
+  /**
    * Set up observer for shadow root
    * @param {ShadowRoot} shadowRoot - Shadow root to observe
    * @private
@@ -245,12 +328,7 @@ class VideoMutationObserver {
     }
 
     const shadowObserver = new MutationObserver((mutations) => {
-      requestIdleCallback(
-        () => {
-          this.processMutations(mutations);
-        },
-        { timeout: 500 }
-      );
+      this.scheduleMutationProcessing(mutations);
     });
 
     const observerOptions = {
@@ -260,7 +338,7 @@ class VideoMutationObserver {
     };
 
     shadowObserver.observe(shadowRoot, observerOptions);
-    this.shadowObservers.add(shadowRoot);
+    this.shadowObservers.set(shadowRoot, shadowObserver);
 
     window.VSC.logger.debug('Shadow root observer added');
   }
@@ -278,17 +356,30 @@ class VideoMutationObserver {
    * Stop observing and clean up
    */
   stop() {
+    this.active = false;
+
     if (this.observer) {
       this.observer.disconnect();
       this.observer = null;
     }
 
+    if (this.mutationCallbackScheduled) {
+      if (this.mutationCallbackType === 'idle' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(this.mutationCallbackId);
+      } else {
+        clearTimeout(this.mutationCallbackId);
+      }
+      this.mutationCallbackId = null;
+      this.mutationCallbackType = null;
+    }
+
     // Clean up shadow observers
-    this.shadowObservers.forEach((_shadowRoot) => {
-      // Note: We can't access the observer directly, but disconnecting the main
-      // observer should handle most cases. Shadow observers will be garbage collected.
+    this.shadowObservers.forEach((shadowObserver) => {
+      shadowObserver.disconnect();
     });
     this.shadowObservers.clear();
+    this.pendingMutations = [];
+    this.mutationCallbackScheduled = false;
 
     window.VSC.logger.debug('Video mutation observer stopped');
   }

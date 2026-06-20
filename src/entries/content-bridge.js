@@ -116,8 +116,30 @@ async function init() {
     });
 
     // --- Ongoing: popup/background message relay ---
-    chrome.runtime.onMessage.addListener((request) => {
-      docEl.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: request }));
+    chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+      const requestId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`;
+      const requestWithId = { ...request, requestId };
+
+      const timeout = setTimeout(() => {
+        docEl.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
+        sendResponse({ ok: false, mediaCount: null, error: 'timeout' });
+      }, 250);
+
+      const handleResult = (event) => {
+        if (event.detail?.requestId !== requestId) {
+          return;
+        }
+        clearTimeout(timeout);
+        docEl.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
+        sendResponse(event.detail);
+      };
+
+      docEl.addEventListener('VSC_MESSAGE_RESULT', handleResult);
+      docEl.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: requestWithId }));
+      return true;
     });
 
     // --- Ongoing: speed write-back from MAIN world ---

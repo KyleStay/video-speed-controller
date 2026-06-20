@@ -138,6 +138,107 @@ describe('Inject', () => {
     window.requestIdleCallback = originalRequestIdleCallback;
   });
 
+  it('clears scheduled deferred work during teardown', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalCancelIdleCallback = window.cancelIdleCallback;
+    window.requestIdleCallback = vi.fn(() => 123);
+    window.cancelIdleCallback = vi.fn();
+    const callback = vi.fn();
+
+    extension.scheduleDeferredWork(callback, { idle: true });
+    extension.initialized = true;
+    extension.teardown();
+
+    expect(window.cancelIdleCallback).toHaveBeenCalledWith(123);
+    expect(callback).not.toHaveBeenCalled();
+    expect(extension.scheduledWork.size).toBe(0);
+
+    extension.teardownRequested = false;
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
+  });
+
+  it('deferred media scan schedules comprehensive scan even after light scan finds media', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    window.requestIdleCallback = (callback) => callback();
+
+    const video = createMockVideo({ readyState: 4 });
+    mockDOM.container.appendChild(video);
+    extension.mediaObserver = {
+      scanForMediaLight: vi.fn(() => [video]),
+      isValidMediaElement: vi.fn(() => true),
+      shouldStartHidden: vi.fn(() => false),
+    };
+    extension.scheduleComprehensiveScan = vi.fn();
+
+    extension.deferredMediaScan(document);
+
+    expect(extension.scheduleComprehensiveScan).toHaveBeenCalledWith(document);
+
+    window.requestIdleCallback = originalRequestIdleCallback;
+  });
+
+  it('clearScheduledWork cancels pending idle callbacks and timers', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalCancelIdleCallback = window.cancelIdleCallback;
+    const cancelIdleCallback = vi.fn();
+    window.requestIdleCallback = vi.fn(() => 42);
+    window.cancelIdleCallback = cancelIdleCallback;
+
+    const timer = extension.scheduleDeferredWork(() => {}, { delay: 1000 });
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    extension.scheduleDeferredWork(() => {}, { idle: true });
+
+    expect(extension.scheduledWork.size).toBeGreaterThanOrEqual(2);
+
+    extension.clearScheduledWork();
+
+    expect(cancelIdleCallback).toHaveBeenCalledWith(42);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(timer.id);
+    expect(extension.scheduledWork.size).toBe(0);
+
+    clearTimeoutSpy.mockRestore();
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
+  });
+
+  it('deferred media scan schedules comprehensive scan even when light scan finds media', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    window.requestIdleCallback = (callback) => {
+      callback();
+      return 1;
+    };
+
+    const video = createMockVideo({ readyState: 4 });
+    const parent = document.createElement('div');
+    parent.appendChild(video);
+    extension.mediaObserver = {
+      scanForMediaLight: vi.fn(() => [video]),
+      isValidMediaElement: vi.fn(() => true),
+      shouldStartHidden: vi.fn(() => false),
+    };
+    extension.scheduleComprehensiveScan = vi.fn();
+
+    extension.deferredMediaScan(document);
+
+    expect(extension.mediaObserver.scanForMediaLight).toHaveBeenCalledOnce();
+    expect(extension.scheduleComprehensiveScan).toHaveBeenCalledWith(document);
+
+    window.requestIdleCallback = originalRequestIdleCallback;
+  });
+
   it('onVideoFound should prefer parentElement when available', async () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();
@@ -235,6 +336,64 @@ describe('Inject', () => {
       expect.any(Function),
       expect.objectContaining({ once: true })
     );
+    expect(video.addEventListener).toHaveBeenCalledWith(
+      'canplay',
+      expect.any(Function),
+      expect.objectContaining({ once: true })
+    );
+    expect(video.addEventListener).toHaveBeenCalledWith(
+      'play',
+      expect.any(Function),
+      expect.objectContaining({ once: true })
+    );
+  });
+
+  it('onVideoFound only registers one deferred attachment per unready video', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const video = createMockVideo({ readyState: 1 });
+    const parent = document.createElement('div');
+    video.addEventListener = vi.fn();
+    video.removeEventListener = vi.fn();
+
+    Object.defineProperty(video, 'isConnected', {
+      value: true,
+      writable: false,
+      configurable: true,
+    });
+
+    extension.onVideoFound(video, parent);
+    extension.onVideoFound(video, parent);
+
+    expect(video.addEventListener).toHaveBeenCalledTimes(3);
+
+    extension.onVideoRemoved(video);
+
+    expect(video.removeEventListener).toHaveBeenCalledTimes(3);
+  });
+
+  it('deferred video attachment can attach on play before loadeddata', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const video = createMockVideo({ readyState: 1 });
+    const parent = document.createElement('div');
+    parent.appendChild(video);
+
+    Object.defineProperty(video, 'isConnected', {
+      value: true,
+      writable: false,
+      configurable: true,
+    });
+
+    extension.onVideoFound(video, parent);
+    expect(video.vsc).toBeUndefined();
+
+    video.dispatchEvent({ type: 'play' });
+
+    expect(video.vsc).toBeDefined();
+    expect(video.vsc instanceof window.VSC.VideoController).toBe(true);
   });
 
   it('onVideoFound should handle video with neither parentElement nor parentNode', async () => {
@@ -365,5 +524,65 @@ describe('Inject', () => {
 
     expect(extension._customSheet).toBeNull();
     expect(document.adoptedStyleSheets).toContain(extension._controllerSheet);
+  });
+
+  it('setupCSSLiveUpdates is removed during teardown', () => {
+    extension = window.VSC_controller;
+    resetCSSState(extension);
+    extension.config.settings.customCSS = '';
+    extension.injectControllerCSS();
+    extension.setupCSSLiveUpdates();
+
+    const handler = extension.cssLiveUpdateHandler;
+    const removeEventListener = vi.spyOn(document.documentElement, 'removeEventListener');
+
+    extension.initialized = true;
+    extension.teardown();
+
+    expect(removeEventListener).toHaveBeenCalledWith('VSC_STORAGE_CHANGED', handler);
+    expect(extension.cssLiveUpdateHandler).toBeNull();
+
+    removeEventListener.mockRestore();
+    extension.teardownRequested = false;
+  });
+
+  it('VSC_GET_STATUS responds with current speed when all controlled media match', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const video = createMockVideo({ readyState: 4, playbackRate: 1.5 });
+    mockDOM.container.appendChild(video);
+    video.vsc = { remove: vi.fn() };
+    window.VSC.stateManager.controllers.set('status-test', {
+      element: video,
+      controller: { video },
+    });
+
+    const results = [];
+    const handleResult = (event) => results.push(event.detail);
+    document.documentElement.addEventListener('VSC_MESSAGE_RESULT', handleResult);
+
+    document.documentElement.dispatchEvent(
+      new CustomEvent('VSC_MESSAGE', {
+        detail: {
+          type: window.VSC.Constants.MESSAGE_TYPES.GET_STATUS,
+          requestId: 'status-1',
+        },
+      })
+    );
+
+    expect(results).toEqual([
+      {
+        requestId: 'status-1',
+        ok: true,
+        mediaCount: 1,
+        currentSpeed: 1.5,
+        speeds: [1.5],
+      },
+    ]);
+
+    document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
+    window.VSC.stateManager.controllers.delete('status-test');
+    delete video.vsc;
   });
 });

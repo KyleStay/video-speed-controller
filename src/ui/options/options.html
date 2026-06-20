@@ -8,15 +8,47 @@
 
   <body>
     <header>
-      <nav class="header-tabs">
+      <nav class="header-tabs" role="tablist" aria-label="Options sections">
         <img src="../../assets/icons/icon48.png" alt="" class="header-icon" />
-        <button id="tab-settings" class="header-tab active">Settings</button>
-        <button id="tab-advanced" class="header-tab">Advanced</button>
-        <button id="tab-faq" class="header-tab">FAQ</button>
+        <button
+          id="tab-settings"
+          class="header-tab active"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-settings"
+        >
+          Settings
+        </button>
+        <button
+          id="tab-advanced"
+          class="header-tab"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-advanced"
+        >
+          Advanced
+        </button>
+        <button
+          id="tab-faq"
+          class="header-tab"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-faq"
+        >
+          FAQ
+        </button>
       </nav>
       <div class="split-button">
         <button id="save" class="split-primary">Save</button>
-        <button id="split-toggle" class="split-arrow" aria-label="More actions">&#9662;</button>
+        <button
+          id="split-toggle"
+          class="split-arrow"
+          aria-label="More actions"
+          aria-expanded="false"
+          aria-controls="split-menu"
+        >
+          &#9662;
+        </button>
         <div id="split-menu" class="split-dropdown" hidden>
           <button id="import">Import</button>
           <button id="export">Export</button>
@@ -27,7 +59,7 @@
     </header>
 
     <!-- ============ SETTINGS TAB ============ -->
-    <div id="panel-settings">
+    <div id="panel-settings" role="tabpanel" aria-labelledby="tab-settings">
       <section id="customs">
         <h3>Shortcuts</h3>
         <div id="shortcuts-container"></div>
@@ -68,7 +100,7 @@
     </div>
 
     <!-- ============ ADVANCED TAB ============ -->
-    <div id="panel-advanced" style="display: none">
+    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" style="display: none">
       <section>
         <div class="row">
           <label for="controllerOpacity"
@@ -148,10 +180,10 @@ vsc-controller { top: 50px !important; }
 
     <!-- status bar -->
 
-    <div id="status"></div>
+    <div id="status" role="status" aria-live="polite"></div>
 
     <!-- ============ FAQ TAB ============ -->
-    <div id="panel-faq" style="display: none">
+    <div id="panel-faq" role="tabpanel" aria-labelledby="tab-faq" style="display: none">
       <section>
         <div id="faq">
           <ul class="faq-toc">
@@ -206,9 +238,9 @@ vsc-controller { top: 50px !important; }
           </p>
           <p>
             When <code>rememberSpeed</code> is <strong>on</strong>, the last speed you set is stored
-            and persists across sessions. This stored speed <strong>takes precedence</strong> over
-            site rule defaults. To let a site rule win again, either turn off
-            <code>rememberSpeed</code> or manually reset to 1x.
+            and persists across sessions for sites without a speed rule. A matching site rule
+            <strong>takes precedence</strong> on each fresh page load; your in-session speed changes
+            still apply to new videos until the page is reloaded.
           </p>
 
           <h4 id="faq-keys">A site's keyboard shortcuts conflict with mine. What can I do?</h4>

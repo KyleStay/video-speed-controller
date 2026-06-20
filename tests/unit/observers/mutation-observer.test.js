@@ -227,4 +227,97 @@ describe('MutationObserver', () => {
     expect(mockOnVideoFound[0].video).toBe(videoElement);
     expect(mockOnVideoFound[0].parent).toBe(videoElement.parentNode);
   });
+
+  it('VideoMutationObserver should coalesce mutation processing into one idle callback', () => {
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const idleCallbacks = [];
+    window.requestIdleCallback = (callback) => {
+      idleCallbacks.push(callback);
+    };
+
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    observer.processMutations = vi.fn();
+
+    const firstMutation = { type: 'childList', addedNodes: [], removedNodes: [] };
+    const secondMutation = { type: 'attributes', target: document.body };
+
+    observer.scheduleMutationProcessing([firstMutation]);
+    observer.scheduleMutationProcessing([secondMutation]);
+
+    expect(idleCallbacks.length).toBe(1);
+
+    idleCallbacks[0]();
+
+    expect(observer.processMutations).toHaveBeenCalledOnce();
+    expect(observer.processMutations).toHaveBeenCalledWith([firstMutation, secondMutation]);
+
+    window.requestIdleCallback = originalRequestIdleCallback;
+  });
+
+  it('VideoMutationObserver should cancel pending mutation callback on stop', () => {
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalCancelIdleCallback = window.cancelIdleCallback;
+    let pendingCallback;
+    window.requestIdleCallback = (callback) => {
+      pendingCallback = callback;
+      return 99;
+    };
+    window.cancelIdleCallback = vi.fn();
+
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    observer.processMutations = vi.fn();
+
+    observer.scheduleMutationProcessing([{ type: 'childList', addedNodes: [], removedNodes: [] }]);
+    observer.stop();
+    pendingCallback();
+
+    expect(window.cancelIdleCallback).toHaveBeenCalledWith(99);
+    expect(observer.processMutations).not.toHaveBeenCalled();
+    expect(observer.pendingMutations).toEqual([]);
+
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
+  });
+
+  it('VideoMutationObserver should not query arbitrary style/class mutation subtrees', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: { audioBoolean: true } },
+      () => {},
+      () => {}
+    );
+    const container = document.createElement('div');
+    container.querySelectorAll = vi.fn();
+    container.querySelector = vi.fn(() => null);
+
+    observer.handleVisibilityChanges(container);
+
+    expect(container.querySelectorAll).not.toHaveBeenCalled();
+  });
+
+  it('VideoMutationObserver should disconnect shadow observers on stop', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    const host = document.createElement('div');
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+
+    observer.observeShadowRoot(shadowRoot);
+    const shadowObserver = observer.shadowObservers.get(shadowRoot);
+    const disconnect = vi.spyOn(shadowObserver, 'disconnect');
+
+    observer.stop();
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(observer.shadowObservers.size).toBe(0);
+  });
 });

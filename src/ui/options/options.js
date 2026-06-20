@@ -105,17 +105,60 @@ const ACTION_OPTIONS = [
 
 // Column spec for shortcut rows (used by createRow)
 const SHORTCUT_COLUMNS = [
-  { key: 'action', type: 'select', className: 'customDo', options: ACTION_OPTIONS },
-  { key: 'keyInput', type: 'text', className: 'customKey', placeholder: 'press a key' },
-  { key: 'value', type: 'text', className: 'customValue', placeholder: 'value (0.10)' },
+  {
+    key: 'action',
+    type: 'select',
+    className: 'customDo',
+    options: ACTION_OPTIONS,
+    label: 'Shortcut action',
+  },
+  {
+    key: 'keyInput',
+    type: 'text',
+    className: 'customKey',
+    placeholder: 'press a key',
+    label: 'Shortcut key',
+  },
+  {
+    key: 'value',
+    type: 'text',
+    className: 'customValue',
+    placeholder: 'value (0.10)',
+    label: 'Shortcut value',
+  },
 ];
 
 // Column spec for site rule rows
 const SITE_RULE_COLUMNS = [
-  { key: 'pattern', type: 'text', className: 'rulePattern', placeholder: 'youtube.com or /regex/' },
-  { key: 'disabled', type: 'checkbox', className: 'ruleDisabled', default: false },
-  { key: 'speed', type: 'text', className: 'ruleSpeed', placeholder: '(global)' },
+  {
+    key: 'pattern',
+    type: 'text',
+    className: 'rulePattern',
+    placeholder: 'youtube.com or /regex/',
+    label: 'Site rule pattern',
+  },
+  {
+    key: 'disabled',
+    type: 'checkbox',
+    className: 'ruleDisabled',
+    default: false,
+    label: 'Disable site rule',
+  },
+  {
+    key: 'speed',
+    type: 'text',
+    className: 'ruleSpeed',
+    placeholder: '(global)',
+    label: 'Site rule speed',
+  },
 ];
+
+export function validateCustomCSSSafety(css) {
+  if (/@import\b|url\s*\(/i.test(css)) {
+    return 'Remote-loading CSS such as @import or url() is not allowed.';
+  }
+  return '';
+}
 
 /**
  * Validate CSS using the browser's own parser.
@@ -192,6 +235,14 @@ function validateControllerCSS(css) {
 
   if (!css.trim()) {
     return true;
+  }
+
+  const safetyError = validateCustomCSSSafety(css);
+  if (safetyError) {
+    textarea.classList.add('css-error');
+    msg.classList.add('error');
+    msg.textContent = safetyError;
+    return false;
   }
 
   try {
@@ -529,6 +580,7 @@ function add_shortcut(data = {}) {
   const row = createRow(container, SHORTCUT_COLUMNS, data, {
     className: 'customs',
     removable: true,
+    removeLabel: 'Remove shortcut',
   });
   // Hide value input for actions that don't need values
   const action = data.action || row.querySelector('.customDo').value;
@@ -608,7 +660,7 @@ function add_site_rule(data = { enabled: true }) {
     container,
     SITE_RULE_COLUMNS,
     { pattern: data.pattern, disabled: !data.enabled, speed: speedDisplay },
-    { className: 'site-rule', removable: true }
+    { className: 'site-rule', removable: true, removeLabel: 'Remove site rule' }
   );
 }
 
@@ -710,7 +762,7 @@ function validate() {
 // Saves options using VideoSpeedConfig system
 async function save_options() {
   if (validate() === false) {
-    return;
+    return false;
   }
 
   const status = document.getElementById('status');
@@ -739,7 +791,7 @@ async function save_options() {
         status.textContent = '';
         status.classList.remove('show', 'error');
       }, 5000);
-      return;
+      return false;
     }
 
     // Byte-length guard for chrome.storage.sync (8KB per-item limit)
@@ -751,7 +803,7 @@ async function save_options() {
         status.textContent = '';
         status.classList.remove('show', 'error');
       }, 5000);
-      return;
+      return false;
     }
 
     // Ensure VideoSpeedConfig singleton is initialized
@@ -783,7 +835,16 @@ async function save_options() {
         status.textContent = '';
         status.classList.remove('show', 'error');
       }, 3000);
+      return false;
     }
+
+    status.textContent = 'Options saved';
+    status.classList.add('show', 'success');
+    setTimeout(() => {
+      status.textContent = '';
+      status.classList.remove('show', 'success');
+    }, 2000);
+    return true;
   } catch (error) {
     console.error('Failed to save options:', error);
     status.textContent = `Error saving options: ${error.message}`;
@@ -792,6 +853,7 @@ async function save_options() {
       status.textContent = '';
       status.classList.remove('show', 'error');
     }, 3000);
+    return false;
   }
 }
 
@@ -963,6 +1025,13 @@ async function handleImportFile(event) {
       throw new Error('File does not look like a Video Speed Controller settings file');
     }
 
+    if (typeof imported.customCSS === 'string') {
+      const safetyError = validateCustomCSSSafety(imported.customCSS);
+      if (safetyError) {
+        throw new Error(safetyError);
+      }
+    }
+
     // Ensure config is initialized
     if (!window.VSC.videoSpeedConfig) {
       window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
@@ -1003,8 +1072,12 @@ async function handleImportFile(event) {
 
 function switchTab(tabName) {
   ['settings', 'advanced', 'faq'].forEach((name) => {
-    document.getElementById(`tab-${name}`).classList.toggle('active', name === tabName);
-    document.getElementById(`panel-${name}`).style.display = name === tabName ? '' : 'none';
+    const selected = name === tabName;
+    const tab = document.getElementById(`tab-${name}`);
+    const panel = document.getElementById(`panel-${name}`);
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    panel.style.display = selected ? '' : 'none';
   });
 }
 
@@ -1037,8 +1110,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   saveBtn.addEventListener('click', async (e) => {
     e.preventDefault();
-    await save_options();
-    markClean();
+    if (await save_options()) {
+      markClean();
+    }
   });
 
   document.getElementById('add').addEventListener('click', () => {
@@ -1053,7 +1127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('restore').addEventListener('click', async (e) => {
     e.preventDefault();
     await restore_defaults();
-    markDirty();
+    markClean();
   });
 
   document.getElementById('export').addEventListener('click', (e) => {
@@ -1074,17 +1148,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Split button dropdown
   const splitMenu = document.getElementById('split-menu');
-  document.getElementById('split-toggle').addEventListener('click', () => {
-    splitMenu.hidden = !splitMenu.hidden;
+  const splitToggle = document.getElementById('split-toggle');
+  splitToggle.addEventListener('click', () => {
+    const expanded = splitMenu.hidden;
+    splitMenu.hidden = !expanded;
+    splitToggle.setAttribute('aria-expanded', String(expanded));
   });
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.split-button')) {
       splitMenu.hidden = true;
+      splitToggle.setAttribute('aria-expanded', 'false');
     }
   });
   // Close dropdown after any menu action
   splitMenu.addEventListener('click', () => {
     splitMenu.hidden = true;
+    splitToggle.setAttribute('aria-expanded', 'false');
   });
 
   // CSS editor: live validation (debounced) + syntax highlighting + scroll sync
@@ -1103,12 +1182,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateCSSHighlight();
   validateControllerCSS(cssTextarea.value);
 
-  // About and feedback button event listeners
-  document.getElementById('about').addEventListener('click', () => {
+  // About and feedback buttons are optional in branded builds.
+  document.getElementById('about')?.addEventListener('click', () => {
     window.open('https://github.com/igrigorik/videospeed');
   });
 
-  document.getElementById('feedback').addEventListener('click', () => {
+  document.getElementById('feedback')?.addEventListener('click', () => {
     window.open('https://github.com/igrigorik/videospeed/issues');
   });
 

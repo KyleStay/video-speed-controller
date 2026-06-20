@@ -78,6 +78,9 @@ describe('ActionHandler', () => {
 
     expect(mockVideo.playbackRate).toBe(2.0);
     expect(mockVideo.vsc.speedIndicator.textContent).toBe('2.00');
+    expect(mockVideo.vsc.speedIndicator.getAttribute('aria-label')).toBe(
+      'Playback speed 2.00. Press Enter to reset speed.'
+    );
     expect(config.settings.lastSpeed).toBe(2.0);
   });
 

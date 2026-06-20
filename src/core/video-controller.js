@@ -25,6 +25,7 @@ class VideoController {
     // Transient reset memory (not persisted, instance-specific)
     this.speedBeforeReset = null;
     this.positionBeforeJump = null;
+    this.initMetadataHandler = null;
 
     // Attach controller to video element first (needed for adjustSpeed)
     target.vsc = this;
@@ -74,10 +75,12 @@ class VideoController {
       window.VSC.logger.debug('Deferring initializeSpeed until loadedmetadata');
       const handler = () => {
         this.video.removeEventListener('loadedmetadata', handler);
+        this.initMetadataHandler = null;
         if (targetSpeed !== this.video.playbackRate) {
           this.actionHandler.adjustSpeed(this.video, targetSpeed, { source: 'init' });
         }
       };
+      this.initMetadataHandler = handler;
       this.video.addEventListener('loadedmetadata', handler);
     } else {
       this.actionHandler.adjustSpeed(this.video, targetSpeed, { source: 'init' });
@@ -289,11 +292,21 @@ class VideoController {
     window.VSC.logger.debug('Removing VideoController');
 
     // Remove DOM element
+    if (this.div?.flashTimer !== undefined) {
+      clearTimeout(this.div.flashTimer);
+      this.div.flashTimer = undefined;
+    }
+
     if (this.div && this.div.parentNode) {
       this.div.remove();
     }
 
     // Remove event listeners
+    if (this.initMetadataHandler) {
+      this.video.removeEventListener('loadedmetadata', this.initMetadataHandler);
+      this.initMetadataHandler = null;
+    }
+
     if (this.handlePlay) {
       this.video.removeEventListener('play', this.handlePlay);
     }

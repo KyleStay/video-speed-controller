@@ -158,6 +158,9 @@ describe('VideoController', () => {
     mockDOM.container.appendChild(mockVideo);
 
     const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    controller.div.flashTimer = setTimeout(() => {}, 1000);
+    const flashTimer = controller.div.flashTimer;
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
 
     // Verify setup
     expect(mockVideo.vsc).toBeDefined();
@@ -169,6 +172,9 @@ describe('VideoController', () => {
     // Verify cleanup
     expect(mockVideo.vsc).toBe(undefined);
     expect(window.VSC.stateManager.controllers.size).toBe(0);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(flashTimer);
+
+    clearTimeoutSpy.mockRestore();
   });
 
   it('VideoController should register with state manager', async () => {

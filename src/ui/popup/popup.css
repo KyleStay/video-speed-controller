@@ -58,7 +58,12 @@
 
 html,
 body {
-  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family:
+    'Roboto',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   font-size: 14px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -90,8 +95,6 @@ body {
   padding: 8px 20px;
   position: relative;
 }
-
-
 
 .footer-controls {
   display: flex;
@@ -258,6 +261,42 @@ body {
   box-shadow: 0 2px 4px var(--md-shadow);
 }
 
+.custom-speed {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.custom-speed label {
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.custom-speed input {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 8px;
+  background: var(--md-surface);
+  color: var(--md-on-surface);
+  padding: 0 8px;
+  font: inherit;
+}
+
+.custom-speed-btn {
+  height: 36px;
+  border: 1px solid var(--md-primary);
+  border-radius: 8px;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0 12px;
+}
+
 /* Status */
 .status {
   padding: 0;
@@ -310,7 +349,9 @@ body {
   background-color: currentColor;
   opacity: 0.1;
   transform: translate(-50%, -50%);
-  transition: width 0.6s, height 0.6s;
+  transition:
+    width 0.6s,
+    height 0.6s;
 }
 
 .control-btn:active::before,
@@ -323,7 +364,9 @@ body {
 /* Focus styles for accessibility */
 .control-btn:focus-visible,
 .preset-btn:focus-visible,
-.icon-btn:focus-visible {
+.icon-btn:focus-visible,
+.custom-speed input:focus-visible,
+.custom-speed-btn:focus-visible {
   outline: 2px solid var(--md-primary);
   outline-offset: 2px;
 }
@@ -345,5 +388,15 @@ body {
 
   .speed-section {
     padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
   }
 }

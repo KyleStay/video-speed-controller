@@ -25,7 +25,8 @@ class ShadowDOMManager {
         font-size: 13px;
       }
       
-      :host(:hover) #controls {
+      :host(:hover) #controls,
+      :host(:focus-within) #controls {
         display: inline-block;
       }
       
@@ -101,6 +102,8 @@ class ShadowDOMManager {
         justify-content: center;
         width: 2.8em;
         height: 1.4em;
+        min-width: 24px;
+        min-height: 24px;
         text-align: center;
         vertical-align: middle;
         box-sizing: border-box;
@@ -124,11 +127,20 @@ class ShadowDOMManager {
         border: 0px solid white;
         font-family: "Lucida Console", Monaco, monospace;
         margin: 0px 2px 2px 2px;
+        min-width: 24px;
+        min-height: 24px;
         transition: background 0.2s, color 0.2s;
       }
       
       button:focus {
-        outline: 0;
+        outline: none;
+      }
+
+      button:focus-visible,
+      .draggable:focus-visible {
+        outline: 2px solid #ffffff;
+        outline-offset: 2px;
+        box-shadow: 0 0 0 4px #2196f3;
       }
       
       button:hover {
@@ -146,6 +158,15 @@ class ShadowDOMManager {
       button.rw {
         opacity: 0.65;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
     `;
     shadow.appendChild(style);
 
@@ -157,6 +178,10 @@ class ShadowDOMManager {
     // Create draggable speed indicator
     const draggable = document.createElement('span');
     draggable.setAttribute('data-action', 'drag');
+    draggable.setAttribute('role', 'button');
+    draggable.setAttribute('tabindex', '0');
+    draggable.setAttribute('aria-label', `Playback speed ${speed}. Press Enter to reset speed.`);
+    draggable.setAttribute('aria-live', 'polite');
     draggable.className = 'draggable';
     draggable.style.cssText = `font-size: ${buttonSize}px;`;
     draggable.textContent = speed;
@@ -169,10 +194,10 @@ class ShadowDOMManager {
 
     // Create buttons
     const buttons = [
-      { action: 'rewind', text: '«', class: 'rw' },
-      { action: 'slower', text: '−', class: '' },
-      { action: 'faster', text: '+', class: '' },
-      { action: 'advance', text: '»', class: 'rw' },
+      { action: 'rewind', text: '«', class: 'rw', label: 'Rewind' },
+      { action: 'slower', text: '−', class: '', label: 'Decrease speed' },
+      { action: 'faster', text: '+', class: '', label: 'Increase speed' },
+      { action: 'advance', text: '»', class: 'rw', label: 'Advance' },
     ];
 
     buttons.forEach((btnConfig) => {
@@ -181,6 +206,8 @@ class ShadowDOMManager {
       if (btnConfig.class) {
         button.className = btnConfig.class;
       }
+      button.setAttribute('aria-label', btnConfig.label);
+      button.setAttribute('title', btnConfig.label);
       button.textContent = btnConfig.text;
       controls.appendChild(button);
     });
@@ -236,7 +263,12 @@ class ShadowDOMManager {
   static updateSpeedDisplay(shadow, speed) {
     const speedIndicator = this.getSpeedIndicator(shadow);
     if (speedIndicator) {
-      speedIndicator.textContent = window.VSC.Constants.formatSpeed(speed);
+      const formattedSpeed = window.VSC.Constants.formatSpeed(speed);
+      speedIndicator.textContent = formattedSpeed;
+      speedIndicator.setAttribute(
+        'aria-label',
+        `Playback speed ${formattedSpeed}. Press Enter to reset speed.`
+      );
     }
   }
 

@@ -397,8 +397,31 @@ describe('content-bridge', () => {
     });
   });
 
-  // Runtime message relay: chrome mock doesn't expose onMessage listeners,
-  // so we can't unit-test the relay without enhancing the mock. The relay is
-  // a trivial one-liner (line 119 of content-bridge.js) — tested via manual
-  // popup interaction rather than unit tests.
+  describe('runtime message relay', () => {
+    it('reports timeout as an explicit failure', async () => {
+      const listeners = [];
+      const originalAddListener = globalThis.chrome.runtime.onMessage.addListener;
+      globalThis.chrome.runtime.onMessage.addListener = (callback) => {
+        listeners.push(callback);
+        originalAddListener(callback);
+      };
+
+      await loadBridge();
+      expect(listeners).toHaveLength(1);
+
+      const responses = [];
+      const swallowMessage = (event) => event.stopImmediatePropagation();
+      docEl.addEventListener('VSC_MESSAGE', swallowMessage, true);
+
+      listeners[0]({ type: 'PING_WITHOUT_MAIN_WORLD_HANDLER' }, {}, (response) =>
+        responses.push(response)
+      );
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(responses).toEqual([{ ok: false, mediaCount: null, error: 'timeout' }]);
+
+      docEl.removeEventListener('VSC_MESSAGE', swallowMessage, true);
+      globalThis.chrome.runtime.onMessage.addListener = originalAddListener;
+    });
+  });
 });

@@ -67,6 +67,10 @@ export function createRow(container, columns, data = {}, opts = {}) {
       }
     }
 
+    if (col.label) {
+      el.setAttribute('aria-label', col.label);
+    }
+
     row.appendChild(el);
   }
 
@@ -74,6 +78,7 @@ export function createRow(container, columns, data = {}, opts = {}) {
     const btn = document.createElement('button');
     btn.className = 'removeParent';
     btn.textContent = '\u00d7';
+    btn.setAttribute('aria-label', opts.removeLabel || 'Remove row');
     row.appendChild(btn);
   }
 

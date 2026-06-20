@@ -72,10 +72,6 @@ class EventManager {
    * @private
    */
   handleKeydown(event) {
-    window.VSC.logger.verbose(
-      `Processing keydown event: code=${event.code}, key=${event.key}, keyCode=${event.keyCode}`
-    );
-
     // IME composition and dead key guard
     // 'Process' / keyCode 229 = IME composition active (CJK input)
     // 'Dead' = first keypress of a dead key sequence (e.g. ^ on French keyboard)
@@ -99,6 +95,8 @@ class EventManager {
     if (this.isTypingContext(event)) {
       return false;
     }
+
+    window.VSC.logger.verbose(`Processing shortcut keydown: code=${event.code || 'unknown'}`);
 
     // Ignore keydown event if no media elements are present
     const mediaElements = window.VSC.stateManager
@@ -125,9 +123,7 @@ class EventManager {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
       // Mark as user interaction so an immediately-following ratechange is accepted.
       this.lastUserInteractionAt = event.timeStamp;
-      window.VSC.logger.verbose(
-        `No key binding found for code=${event.code}, keyCode=${event.keyCode}`
-      );
+      window.VSC.logger.verbose(`No key binding found for code=${event.code || 'unknown'}`);
     }
 
     return false;
