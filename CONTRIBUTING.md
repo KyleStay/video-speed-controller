@@ -86,16 +86,27 @@ a POSIX shell. Windows users need:
 
 10. Click `Load unpacked` and select the `dist/` folder (the build output).
 
-11. Try out your changes, make sure they work as expected
+11. For iterative development, keep the same `dist/` folder loaded and run:
 
-12. Commit and push your changes to github
+    ```sh
+    npm run watch
+    ```
+
+    After a rebuild, click the reload button for Video Speed Controller on
+    `chrome://extensions`, then refresh the tab you are testing. Use
+    `npm run clean` when you want to remove generated `dist/` and `release/`
+    output before a fresh build.
+
+12. Try out your changes, make sure they work as expected
+
+13. Commit and push your changes to github
 
     ```sh
     git commit -m "Awesome description of some awesome changes."
     git push
     ```
 
-13. Open your branch up on the github website then click `New pull request` and
+14. Open your branch up on the github website then click `New pull request` and
     write up a description of your changes.
 
 ## Optional

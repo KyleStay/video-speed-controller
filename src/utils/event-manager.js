@@ -112,12 +112,15 @@ class EventManager {
     const keyBinding = this.findMatchingBinding(event);
 
     if (keyBinding) {
-      this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
-
-      if (this.config.settings.exclusiveKeys) {
+      if (this.shouldClaimShortcutEvent()) {
         event.preventDefault();
-        event.stopPropagation();
+        if (event.stopImmediatePropagation) {
+          event.stopImmediatePropagation();
+        } else {
+          event.stopPropagation();
+        }
       }
+      this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
     } else {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
       // Mark as user interaction so an immediately-following ratechange is accepted.
@@ -205,8 +208,32 @@ class EventManager {
    * @private
    */
   isTypingContext(target) {
+    if (!target) {
+      return false;
+    }
+
+    if (target.isContentEditable) {
+      return true;
+    }
+
+    return Boolean(
+      target.closest?.(
+        'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]'
+      )
+    );
+  }
+
+  /**
+   * Decide whether a matched VSC shortcut should block page handlers.
+   * Generic sites keep honoring the user's exclusiveKeys preference. YouTube
+   * attaches aggressive page-level shortcuts, so matched VSC shortcuts are
+   * claimed there without disabling unrelated YouTube shortcuts globally.
+   * @returns {boolean}
+   * @private
+   */
+  shouldClaimShortcutEvent() {
     return (
-      target.nodeName === 'INPUT' || target.nodeName === 'TEXTAREA' || target.isContentEditable
+      this.config.settings.exclusiveKeys || EventManager.isYouTubeHost(window.location.hostname)
     );
   }
 
@@ -443,6 +470,10 @@ class EventManager {
  */
 EventManager.modifiersMatch = function (mods, ctrl, alt, meta, shift) {
   return mods.ctrl === ctrl && mods.alt === alt && mods.meta === meta && mods.shift === shift;
+};
+
+EventManager.isYouTubeHost = function (hostname) {
+  return /(^|\.)youtube\.com$/.test(hostname) || /(^|\.)youtube-nocookie\.com$/.test(hostname);
 };
 
 // Time window (ms) after a user interaction in which an external ratechange is

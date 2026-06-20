@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const extensionRoot = join(__dirname, '../../');
+const distRoot = join(extensionRoot, 'dist');
 
 function validateExtension() {
   console.log('🔍 Validating Video Speed Controller Extension Structure\n');
@@ -29,17 +30,17 @@ function validateExtension() {
     }
   };
 
-  // Check core files
+  // Check core source/template files
   test('manifest.json exists', existsSync(join(extensionRoot, 'manifest.json')));
   test('inject.css exists', existsSync(join(extensionRoot, 'src/styles/inject.css')));
-  test('shadow.css exists', existsSync(join(extensionRoot, 'src/styles/shadow.css')));
 
-  // Check bundled files
-  test('dist/content.js exists', existsSync(join(extensionRoot, 'dist/content.js')));
-  test('dist/inject.js exists', existsSync(join(extensionRoot, 'dist/inject.js')));
-  test('dist/background.js exists', existsSync(join(extensionRoot, 'dist/background.js')));
-  test('dist/popup.js exists', existsSync(join(extensionRoot, 'dist/popup.js')));
-  test('dist/options.js exists', existsSync(join(extensionRoot, 'dist/options.js')));
+  // Check generated unpacked extension files
+  test('dist/manifest.json exists', existsSync(join(distRoot, 'manifest.json')));
+  test('dist/content-bridge.js exists', existsSync(join(distRoot, 'content-bridge.js')));
+  test('dist/inject.js exists', existsSync(join(distRoot, 'inject.js')));
+  test('dist/background.js exists', existsSync(join(distRoot, 'background.js')));
+  test('dist/ui/popup/popup.js exists', existsSync(join(distRoot, 'ui/popup/popup.js')));
+  test('dist/ui/options/options.js exists', existsSync(join(distRoot, 'ui/options/options.js')));
 
   // Check source structure (still needed for unit tests)
   test('src/content/inject.js exists', existsSync(join(extensionRoot, 'src/content/inject.js')));
@@ -53,18 +54,27 @@ function validateExtension() {
   test('ActionHandler exists', existsSync(join(extensionRoot, 'src/core/action-handler.js')));
   test('ShadowDOM manager exists', existsSync(join(extensionRoot, 'src/ui/shadow-dom.js')));
 
-  // Validate manifest.json structure
+  // Validate generated manifest structure and referenced files
   try {
-    const manifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8'));
+    const manifest = JSON.parse(readFileSync(join(distRoot, 'manifest.json'), 'utf8'));
 
     test('Manifest version is 3', manifest.manifest_version === 3);
     test(
       'Content scripts defined',
       manifest.content_scripts && manifest.content_scripts.length > 0
     );
-    test('Content script uses bundled file',
-      manifest.content_scripts[0].js &&
-      manifest.content_scripts[0].js[0] === 'dist/content.js'
+    test(
+      'Bridge content script uses bundled file',
+      manifest.content_scripts[0].js && manifest.content_scripts[0].js[0] === 'content-bridge.js'
+    );
+    test(
+      'Main content script uses bundled file',
+      manifest.content_scripts[1]?.js && manifest.content_scripts[1].js[0] === 'inject.js'
+    );
+    test(
+      'Main content script starts early',
+      manifest.content_scripts[1]?.run_at === 'document_start' &&
+        manifest.content_scripts[1]?.world === 'MAIN'
     );
     test(
       'Required permissions present',
@@ -73,10 +83,25 @@ function validateExtension() {
     test(
       'Content script matches all sites',
       manifest.content_scripts[0].matches &&
-      manifest.content_scripts[0].matches.includes('https://*/*')
+        manifest.content_scripts[0].matches.includes('https://*/*')
     );
+    test(
+      'Background service worker exists',
+      existsSync(join(distRoot, manifest.background.service_worker))
+    );
+    test('Options page exists', existsSync(join(distRoot, manifest.options_ui.page)));
+    test('Popup page exists', existsSync(join(distRoot, manifest.action.default_popup)));
+
+    for (const [index, script] of manifest.content_scripts.entries()) {
+      for (const file of script.js || []) {
+        test(`Content script ${index} JS exists: ${file}`, existsSync(join(distRoot, file)));
+      }
+      for (const file of script.css || []) {
+        test(`Content script ${index} CSS exists: ${file}`, existsSync(join(distRoot, file)));
+      }
+    }
   } catch (error) {
-    test('Manifest.json is valid JSON', false, error.message);
+    test('dist/manifest.json is valid JSON', false, error.message);
   }
 
   // Check main inject script
@@ -91,7 +116,7 @@ function validateExtension() {
 
   // Verify no references to deleted files
   try {
-    const manifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8'));
+    const manifest = JSON.parse(readFileSync(join(distRoot, 'manifest.json'), 'utf8'));
     const manifestStr = JSON.stringify(manifest);
     test('No reference to injector.js', !manifestStr.includes('injector.js'));
     test('No reference to module-loader.js', !manifestStr.includes('module-loader.js'));
@@ -110,6 +135,7 @@ function validateExtension() {
 
     test('Test scripts defined', packageJson.scripts && packageJson.scripts.test);
     test('E2E test script defined', packageJson.scripts && packageJson.scripts['test:e2e']);
+    test('Watch script defined', packageJson.scripts && packageJson.scripts.watch);
     test('Type is module', packageJson.type === 'module');
   } catch (error) {
     test('Package.json is valid', false, error.message);

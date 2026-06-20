@@ -44,7 +44,7 @@
       "exclude_matches": ["https://hangouts.google.com/*", "https://meet.google.com/*"],
       "css": ["styles/inject.css"],
       "js": ["inject.js"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "world": "MAIN"
     }
   ]

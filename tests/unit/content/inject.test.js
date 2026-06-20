@@ -100,6 +100,44 @@ describe('Inject', () => {
     expect(video.vsc.parent).toBe(parentNode);
   });
 
+  it('teardown cleans up early event listeners before full initialization', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const cleanup = vi.fn();
+    extension.initialized = false;
+    extension.eventListenersInitialized = true;
+    extension.eventManager = { cleanup };
+    extension.actionHandler = {};
+
+    extension.teardown();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(extension.eventManager).toBeNull();
+    expect(extension.eventListenersInitialized).toBe(false);
+    expect(extension.teardownRequested).toBe(true);
+
+    extension.teardownRequested = false;
+  });
+
+  it('deferred DOM work is skipped after teardown is requested', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalInjectControllerCSS = extension.injectControllerCSS;
+    window.requestIdleCallback = (callback) => callback();
+    extension.teardownRequested = true;
+    extension.injectControllerCSS = vi.fn();
+
+    extension.deferDOMWork(document);
+
+    expect(extension.injectControllerCSS).not.toHaveBeenCalled();
+    extension.teardownRequested = false;
+    extension.injectControllerCSS = originalInjectControllerCSS;
+    window.requestIdleCallback = originalRequestIdleCallback;
+  });
+
   it('onVideoFound should prefer parentElement when available', async () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();

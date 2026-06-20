@@ -55,6 +55,7 @@ function makeEvent(overrides = {}) {
     target: overrides.target || document.body,
     preventDefault: () => {},
     stopPropagation: () => {},
+    stopImmediatePropagation: () => {},
   };
 }
 
@@ -131,6 +132,202 @@ describe('EventManager Matching', () => {
 
     expect(actions.length).toBe(1);
     expect(actions[0].action).toBe('slower');
+  });
+
+  it('Matched shortcut prevents same-target page capture listeners when exclusiveKeys is enabled', () => {
+    const { config, eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+    config.settings.exclusiveKeys = true;
+
+    eventManager.setupKeyboardShortcuts(document);
+
+    let siteHandled = false;
+    const youtubeLikeHandler = () => {
+      siteHandled = true;
+    };
+    document.addEventListener('keydown', youtubeLikeHandler, true);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyS',
+      key: 's',
+      keyCode: 83,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    document.removeEventListener('keydown', youtubeLikeHandler, true);
+    eventManager.cleanup();
+
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    expect(siteHandled).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('Matched shortcut allows page listeners on generic sites when exclusiveKeys is disabled', () => {
+    const { config, eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+    config.settings.exclusiveKeys = false;
+
+    eventManager.setupKeyboardShortcuts(document);
+
+    let siteHandled = false;
+    const siteHandler = () => {
+      siteHandled = true;
+    };
+    document.addEventListener('keydown', siteHandler, true);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyS',
+      key: 's',
+      keyCode: 83,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    document.removeEventListener('keydown', siteHandler, true);
+    eventManager.cleanup();
+
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    expect(siteHandled).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('YouTube host detection covers YouTube watch and embed domains only', () => {
+    expect(window.VSC.EventManager.isYouTubeHost('www.youtube.com')).toBe(true);
+    expect(window.VSC.EventManager.isYouTubeHost('m.youtube.com')).toBe(true);
+    expect(window.VSC.EventManager.isYouTubeHost('www.youtube-nocookie.com')).toBe(true);
+    expect(window.VSC.EventManager.isYouTubeHost('notyoutube.com')).toBe(false);
+  });
+
+  it('YouTube claim path does not require exclusiveKeys', () => {
+    const { config, eventManager } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+    config.settings.exclusiveKeys = false;
+
+    const originalIsYouTubeHost = window.VSC.EventManager.isYouTubeHost;
+    window.VSC.EventManager.isYouTubeHost = () => true;
+
+    expect(eventManager.shouldClaimShortcutEvent()).toBe(true);
+
+    window.VSC.EventManager.isYouTubeHost = originalIsYouTubeHost;
+  });
+
+  it('Unmatched keys still reach same-target page capture listeners', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    eventManager.setupKeyboardShortcuts(document);
+
+    let siteHandledCount = 0;
+    const youtubeLikeHandler = () => {
+      siteHandledCount++;
+    };
+    document.addEventListener('keydown', youtubeLikeHandler, true);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyK',
+      key: 'k',
+      keyCode: 75,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    document.removeEventListener('keydown', youtubeLikeHandler, true);
+    eventManager.cleanup();
+
+    expect(actions.length).toBe(0);
+    expect(siteHandledCount).toBe(1);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('Matched shortcuts do not fire or block page listeners while typing in editable fields', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    eventManager.setupKeyboardShortcuts(document);
+
+    let siteHandledCount = 0;
+    const youtubeLikeHandler = () => {
+      siteHandledCount++;
+    };
+    document.addEventListener('keydown', youtubeLikeHandler, true);
+
+    const editableTargets = [
+      document.createElement('input'),
+      document.createElement('textarea'),
+      document.createElement('select'),
+      document.createElement('div'),
+      document.createElement('div'),
+    ];
+    editableTargets[3].setAttribute('contenteditable', 'true');
+    editableTargets[4].setAttribute('role', 'textbox');
+
+    editableTargets.forEach((target, index) => {
+      document.body.appendChild(target);
+      const event = new KeyboardEvent('keydown', {
+        code: 'KeyS',
+        key: 's',
+        keyCode: 83,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented, `editable target ${index}`).toBe(false);
+    });
+
+    document.removeEventListener('keydown', youtubeLikeHandler, true);
+    eventManager.cleanup();
+
+    expect(actions.length).toBe(0);
+    expect(siteHandledCount).toBe(editableTargets.length);
   });
 
   it('Simple: Shift+KeyS still matches simple KeyS binding (backward compat)', () => {

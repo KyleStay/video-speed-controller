@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "dev": "node scripts/build.mjs --watch",
+    "dev": "npm run watch",
+    "watch": "node scripts/build.mjs --watch",
     "prebuild": "node scripts/clean.mjs dist",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit/",

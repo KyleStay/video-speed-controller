@@ -1,6 +1,6 @@
 # [Install from Chrome Web Store][chrome-web-store-link]
 
-[![Chrome Web Store][chrome-web-store-version]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-users-badge]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-stars]][chrome-web-store-link]  
+[![Chrome Web Store][chrome-web-store-version]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-users-badge]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-stars]][chrome-web-store-link]
 
 **Video Speed Controller** gives you fine-grained control over any HTML5 video
 or audio element, on any site.
@@ -24,7 +24,6 @@ means higher engagement. With practice, many settle at 2x or above and find it
 HTML5 media elements expose a native playback rate API, but most players hide
 or artificially limit it. Speed adjustments should be effortless and frequent:
 we don't read at a fixed pace, and we shouldn't watch at one either.
-
 
 ## Features
 
@@ -65,6 +64,27 @@ shortcuts with different values for quick toggling. Click **Add New** in
 settings to create additional bindings. Refresh the page after making changes
 for them to take effect.
 
+## Local development
+
+Install dependencies and build the unpacked extension:
+
+```sh
+npm install
+npm run build
+```
+
+Chrome should load the generated `dist/` directory with `Load unpacked` from
+`chrome://extensions`. During development, keep that same `dist/` path loaded
+and run:
+
+```sh
+npm run watch
+```
+
+After a rebuild, click the extension reload button in `chrome://extensions` and
+refresh the tab you are testing. Use `npm run clean` to remove generated build
+output.
+
 ## License
 
 (MIT License) - Copyright (c) 2014 Ilya Grigorik
@@ -73,6 +93,5 @@ for them to take effect.
 [chrome-web-store-users-badge]: https://img.shields.io/chrome-web-store/users/nffaoalbilbmmfgbnbgppjihopabppdk
 [chrome-web-store-stars]: https://img.shields.io/chrome-web-store/stars/nffaoalbilbmmfgbnbgppjihopabppdk
 [github-release-badge]: https://img.shields.io/github/v/release/igrigorik/videospeed
-
 [chrome-web-store-link]: https://chromewebstore.google.com/detail/video-speed-controller/nffaoalbilbmmfgbnbgppjihopabppdk
 [github-release-link]: https://github.com/igrigorik/videospeed/releases
