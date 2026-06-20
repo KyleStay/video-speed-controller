@@ -10,6 +10,8 @@ class VideoSpeedExtension {
     this.mutationObserver = null;
     this.mediaObserver = null;
     this.initialized = false;
+    this.eventListenersInitialized = false;
+    this.teardownRequested = false;
   }
 
   /**
@@ -17,6 +19,8 @@ class VideoSpeedExtension {
    */
   async initialize() {
     try {
+      this.teardownRequested = false;
+
       // Access global modules
       this.VideoController = window.VSC.VideoController;
       this.ActionHandler = window.VSC.ActionHandler;
@@ -38,6 +42,8 @@ class VideoSpeedExtension {
         return;
       }
 
+      this.setupEventPipeline(document);
+
       // Defer DOM work so page frameworks finish init before we mutate.
       this.deferDOMWork(document);
     } catch (error) {
@@ -52,12 +58,20 @@ class VideoSpeedExtension {
    */
   initializeDocument(document) {
     try {
+      if (this.teardownRequested) {
+        return;
+      }
+
       if (window.VSC.initialized) {
         return;
       }
 
       window.VSC.initialized = true;
-      this.eventManager.setupEventListeners(document);
+
+      if (!this.eventListenersInitialized) {
+        this.eventManager.setupEventListeners(document);
+        this.eventListenersInitialized = true;
+      }
 
       this.deferExpensiveOperations(document);
       this.logger.debug('Document initialization completed');
@@ -160,13 +174,15 @@ class VideoSpeedExtension {
    */
   deferDOMWork(document) {
     const doWork = () => {
+      if (this.teardownRequested) {
+        return;
+      }
+
       this.injectControllerCSS();
       this.setupCSSLiveUpdates();
       this.siteHandlerManager.initialize(document);
 
-      this.eventManager = new this.EventManager(this.config, null);
-      this.actionHandler = new this.ActionHandler(this.config, this.eventManager);
-      this.eventManager.actionHandler = this.actionHandler;
+      this.setupEventPipeline(document);
 
       this.setupObservers();
 
@@ -182,6 +198,26 @@ class VideoSpeedExtension {
       requestIdleCallback(doWork);
     } else {
       setTimeout(doWork, 0);
+    }
+  }
+
+  /**
+   * Set up shortcut/rate event handlers as soon as settings are available.
+   * DOM mutations and media scanning stay deferred, but capture listeners need
+   * early registration so page-level shortcut handlers cannot claim VSC keys
+   * first on sites such as YouTube.
+   * @param {Document} document - Document to attach events to
+   */
+  setupEventPipeline(document) {
+    if (!this.eventManager) {
+      this.eventManager = new this.EventManager(this.config, null);
+      this.actionHandler = new this.ActionHandler(this.config, this.eventManager);
+      this.eventManager.actionHandler = this.actionHandler;
+    }
+
+    if (!this.eventListenersInitialized) {
+      this.eventManager.setupEventListeners(document);
+      this.eventListenersInitialized = true;
     }
   }
 
@@ -328,10 +364,11 @@ class VideoSpeedExtension {
    * Counterpart to initialize() — leaves the page as if VSC was never active.
    */
   teardown() {
-    if (!this.initialized) {
+    if (!this.initialized && !this.eventListenersInitialized && !this.eventManager) {
       return;
     }
 
+    this.teardownRequested = true;
     this.logger.info('Tearing down Video Speed Controller');
 
     // Remove all controllers from tracked media elements
@@ -353,6 +390,7 @@ class VideoSpeedExtension {
       this.eventManager.cleanup();
       this.eventManager = null;
     }
+    this.eventListenersInitialized = false;
 
     // Clean up site-specific handlers
     if (this.siteHandlerManager) {

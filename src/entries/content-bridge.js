@@ -6,8 +6,8 @@
  *
  * Settings handshake:
  *   1. Bridge stashes settings in closure, registers VSC_REQUEST_SETTINGS listener
- *   2. MAIN world fires VSC_REQUEST_SETTINGS at document_idle
- *   3. Bridge responds with VSC_SETTINGS_READY (synchronous within same tick)
+ *   2. MAIN world fires VSC_REQUEST_SETTINGS at document_start
+ *   3. Bridge responds with VSC_SETTINGS_READY once chrome.storage resolves
  */
 
 import { isBlacklisted } from '../utils/blacklist.js';
@@ -20,6 +20,32 @@ const SPEED_MAX = 16;
 
 const docEl = document.documentElement;
 let bridgeInitialized = false;
+
+async function loadSettingsPayload() {
+  const settings = await chrome.storage.sync.get(null);
+
+  const disabled = settings.enabled === false;
+  // Legacy blacklist: only checked when siteRules hasn't been initialized yet
+  // (pre-migration devices). Once migration runs, siteRules is the source of
+  // truth. The blacklist is preserved in storage for sync compat with older
+  // extension versions but must not shadow siteRules edits.
+  const blacklisted = !settings.siteRules && isBlacklisted(settings.blacklist, location.href);
+  const siteRuleMatch = matchSiteRule(settings.siteRules, location.href);
+  const siteDisabled = siteRuleMatch && siteRuleMatch.enabled === false;
+  const shouldAbort = disabled || blacklisted || siteDisabled;
+
+  if (shouldAbort) {
+    return { abort: true };
+  }
+
+  const hostname = location.hostname.replace(/^www\./, '');
+
+  // Strip keys the MAIN world shouldn't see
+  delete settings.blacklist;
+  delete settings.enabled;
+
+  return { settings, hostname };
+}
 
 async function init() {
   try {
@@ -34,46 +60,33 @@ async function init() {
     }
     bridgeInitialized = true;
 
-    const settings = await chrome.storage.sync.get(null);
-
-    const disabled = settings.enabled === false;
-    // Legacy blacklist: only checked when siteRules hasn't been initialized yet
-    // (pre-migration devices). Once migration runs, siteRules is the source of
-    // truth. The blacklist is preserved in storage for sync compat with older
-    // extension versions but must not shadow siteRules edits.
-    const blacklisted = !settings.siteRules && isBlacklisted(settings.blacklist, location.href);
-    const siteRuleMatch = matchSiteRule(settings.siteRules, location.href);
-    const siteDisabled = siteRuleMatch && siteRuleMatch.enabled === false;
-    const shouldAbort = disabled || blacklisted || siteDisabled;
+    let settingsPayload = null;
+    const settingsPayloadPromise = loadSettingsPayload().then((payload) => {
+      settingsPayload = payload;
+      return payload;
+    });
 
     // Always respond — inject.js runs unconditionally and needs the abort
     // signal to skip init. { once: true } limits event forgery exposure.
-    if (shouldAbort) {
-      docEl.addEventListener(
-        'VSC_REQUEST_SETTINGS',
-        () => {
-          docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: { abort: true } }));
-        },
-        { once: true }
-      );
-      return;
-    }
-
-    const hostname = location.hostname.replace(/^www\./, '');
-
-    // Strip keys the MAIN world shouldn't see
-    delete settings.blacklist;
-    delete settings.enabled;
-
-    const settingsPayload = { settings, hostname };
-
     docEl.addEventListener(
       'VSC_REQUEST_SETTINGS',
       () => {
-        docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: settingsPayload }));
+        if (settingsPayload) {
+          docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: settingsPayload }));
+          return;
+        }
+
+        settingsPayloadPromise.then((payload) => {
+          docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
+        });
       },
       { once: true }
     );
+
+    settingsPayload = await settingsPayloadPromise;
+    if (settingsPayload.abort) {
+      return;
+    }
 
     // --- Ongoing: storage change relay + lifecycle ---
     chrome.storage.onChanged.addListener((changes, namespace) => {
