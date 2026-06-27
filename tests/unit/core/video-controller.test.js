@@ -373,4 +373,34 @@ describe('VideoController', () => {
     expect(mockVideo.playbackRate).toBe(1.8);
     expect(config.settings.lastSpeed).toBe(1.8);
   });
+
+  // R5: a site handler can hand back an unusable insertion point. The controller
+  // must still attach via a media-parent fallback rather than throwing and
+  // silently dropping the controller.
+  it('attaches via media-parent fallback when positioning has no usable anchor', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo();
+    mockDOM.container.appendChild(mockVideo); // video.parentElement = container
+
+    // Force a degenerate positioning result (null insertion point).
+    const spy = vi
+      .spyOn(window.VSC.siteHandlerManager, 'getControllerPosition')
+      .mockReturnValue({ insertionPoint: null, insertionMethod: 'firstChild', targetParent: null });
+
+    let controller;
+    expect(() => {
+      controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    }).not.toThrow();
+
+    expect(mockVideo.vsc).toBe(controller);
+    // Wrapper landed under the media's real parent.
+    expect(mockDOM.container.contains(controller.div)).toBe(true);
+
+    spy.mockRestore();
+  });
 });

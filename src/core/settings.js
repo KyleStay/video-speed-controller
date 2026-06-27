@@ -159,8 +159,17 @@ if (!window.VSC.VideoSpeedConfig) {
         this.settings.exclusiveKeys = Boolean(storage.exclusiveKeys);
         this.settings.audioBoolean = Boolean(storage.audioBoolean);
         this.settings.startHidden = Boolean(storage.startHidden);
-        this.settings.controllerOpacity = Number(storage.controllerOpacity);
-        this.settings.controllerButtonSize = Number(storage.controllerButtonSize);
+        // Guard against corrupt/non-numeric storage (e.g. failed sync) — a NaN
+        // here would propagate into the shadow-DOM styles. Fall back to defaults.
+        const opacity = Number(storage.controllerOpacity);
+        this.settings.controllerOpacity = Number.isFinite(opacity)
+          ? opacity
+          : window.VSC.Constants.DEFAULT_SETTINGS.controllerOpacity;
+        const buttonSize = Number(storage.controllerButtonSize);
+        this.settings.controllerButtonSize =
+          Number.isFinite(buttonSize) && buttonSize > 0
+            ? buttonSize
+            : window.VSC.Constants.DEFAULT_SETTINGS.controllerButtonSize;
         // One-time migration: drop legacy controllerCSS key, reset to new model.
         if (storage.controllerCSS !== null) {
           window.VSC.StorageManager.remove(['controllerCSS']);

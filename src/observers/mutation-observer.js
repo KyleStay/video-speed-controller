@@ -5,18 +5,24 @@
 window.VSC = window.VSC || {};
 
 class VideoMutationObserver {
-  constructor(config, onVideoFound, onVideoRemoved, mediaObserver) {
+  constructor(config, onVideoFound, onVideoRemoved, mediaObserver, onDocumentReplaced) {
     this.config = config;
     this.onVideoFound = onVideoFound;
     this.onVideoRemoved = onVideoRemoved;
     this.mediaObserver = mediaObserver;
+    this.onDocumentReplacedCallback = onDocumentReplaced || null;
     this.observer = null;
+    this.observedDocument = null;
     this.shadowObservers = new Map();
     this.pendingMutations = [];
     this.mutationCallbackScheduled = false;
     this.mutationCallbackId = null;
     this.mutationCallbackType = null;
     this.active = true;
+    // style/class attribute churn is only worth watching once a media element
+    // exists on the page. Until then we observe a minimal attribute set to
+    // avoid processing constant SPA style/class mutations on media-less pages.
+    this.attributeObservationEnabled = false;
   }
 
   /**
@@ -25,18 +31,47 @@ class VideoMutationObserver {
    */
   start(document) {
     this.active = true;
+    this.observedDocument = document;
     this.observer = new MutationObserver((mutations) => {
       this.scheduleMutationProcessing(mutations);
     });
 
-    const observerOptions = {
-      attributeFilter: ['aria-hidden', 'data-focus-method', 'style', 'class'],
+    this.observer.observe(document, this.buildObserverOptions());
+    window.VSC.logger.debug('Video mutation observer started');
+  }
+
+  /**
+   * Build observer options. style/class are only included once media has been
+   * seen (see enableAttributeObservation).
+   * @returns {MutationObserverInit}
+   * @private
+   */
+  buildObserverOptions() {
+    const attributeFilter = ['aria-hidden', 'data-focus-method'];
+    if (this.attributeObservationEnabled) {
+      attributeFilter.push('style', 'class');
+    }
+    return {
+      attributeFilter,
       childList: true,
       subtree: true,
     };
+  }
 
-    this.observer.observe(document, observerOptions);
-    window.VSC.logger.debug('Video mutation observer started');
+  /**
+   * Upgrade the root observer to also watch style/class once a media element
+   * exists. Idempotent and cheap to call on every video attach.
+   */
+  enableAttributeObservation() {
+    if (this.attributeObservationEnabled || !this.active) {
+      return;
+    }
+    this.attributeObservationEnabled = true;
+    if (this.observer && this.observedDocument) {
+      // Re-observing the same node replaces its options with the fuller filter.
+      this.observer.observe(this.observedDocument, this.buildObserverOptions());
+      window.VSC.logger.debug('Enabled style/class observation after first media element');
+    }
   }
 
   /**
@@ -88,16 +123,32 @@ class VideoMutationObserver {
       return;
     }
 
-    mutations.forEach((mutation) => {
+    let sawRemoval = false;
+    for (const mutation of mutations) {
+      // A document replacement (handled below) tears this observer down
+      // mid-batch; bail out so we don't keep operating on stale state.
+      if (!this.active) {
+        return;
+      }
       switch (mutation.type) {
         case 'childList':
+          if (mutation.removedNodes && mutation.removedNodes.length > 0) {
+            sawRemoval = true;
+          }
           this.processChildListMutation(mutation);
           break;
         case 'attributes':
           this.processAttributeMutation(mutation);
           break;
       }
-    });
+    }
+
+    // Removed subtrees may have contained observed shadow roots; drop observers
+    // whose host is no longer connected so they don't accumulate over an SPA
+    // session (memory + wasted CPU on every mutation).
+    if (sawRemoval && this.shadowObservers.size > 0) {
+      this.pruneDetachedShadowObservers();
+    }
   }
 
   /**
@@ -108,6 +159,12 @@ class VideoMutationObserver {
   processChildListMutation(mutation) {
     // Handle added nodes
     mutation.addedNodes.forEach((node) => {
+      // A prior node in this batch may have triggered a document-replacement
+      // teardown; stop touching the (now stale) tree.
+      if (!this.active) {
+        return;
+      }
+
       // Only process element nodes (nodeType 1)
       if (!node || node.nodeType !== Node.ELEMENT_NODE) {
         return;
@@ -344,12 +401,32 @@ class VideoMutationObserver {
   }
 
   /**
-   * Handle document replacement
+   * Disconnect observers for shadow roots whose host has left the DOM.
+   * @private
+   */
+  pruneDetachedShadowObservers() {
+    for (const [shadowRoot, shadowObserver] of this.shadowObservers) {
+      const host = shadowRoot.host;
+      if (!host || host.isConnected === false) {
+        shadowObserver.disconnect();
+        this.shadowObservers.delete(shadowRoot);
+        window.VSC.logger.debug('Pruned shadow observer for detached host');
+      }
+    }
+  }
+
+  /**
+   * Handle document replacement (e.g. a site that rewrites the page via
+   * document.write). The previous observers, listeners, controllers, and CSS
+   * were all bound to the now-detached document, so trigger a full
+   * reinitialization on the new document via the injected callback.
    * @private
    */
   onDocumentReplaced() {
-    // This callback should trigger reinitialization
-    window.VSC.logger.warn('Document replacement detected - full reinitialization needed');
+    window.VSC.logger.warn('Document replacement detected - triggering reinitialization');
+    if (typeof this.onDocumentReplacedCallback === 'function') {
+      this.onDocumentReplacedCallback();
+    }
   }
 
   /**

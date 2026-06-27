@@ -84,6 +84,18 @@ class EventManager {
       return;
     }
 
+    // Fast path: if there is no controlled media on this page, there is no
+    // shortcut to run. Checked before the dedup signature string and the
+    // (composedPath-walking) typing-context check so media-less pages — the
+    // overwhelming common case for a global content script — pay almost nothing
+    // per keystroke.
+    const mediaElements = window.VSC.stateManager
+      ? window.VSC.stateManager.getControlledElements()
+      : [];
+    if (!mediaElements.length) {
+      return false;
+    }
+
     // Event deduplication — include code+key to handle empty-code cases
     const eventSignature = `${event.code}_${event.key}_${event.timeStamp}_${event.type}`;
     if (this.lastKeyEventSignature === eventSignature) {
@@ -96,14 +108,8 @@ class EventManager {
       return false;
     }
 
-    window.VSC.logger.verbose(`Processing shortcut keydown: code=${event.code || 'unknown'}`);
-
-    // Ignore keydown event if no media elements are present
-    const mediaElements = window.VSC.stateManager
-      ? window.VSC.stateManager.getControlledElements()
-      : [];
-    if (!mediaElements.length) {
-      return false;
+    if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
+      window.VSC.logger.verbose(`Processing shortcut keydown: code=${event.code || 'unknown'}`);
     }
 
     // Find matching key binding using the three-tier algorithm
@@ -123,7 +129,9 @@ class EventManager {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
       // Mark as user interaction so an immediately-following ratechange is accepted.
       this.lastUserInteractionAt = event.timeStamp;
-      window.VSC.logger.verbose(`No key binding found for code=${event.code || 'unknown'}`);
+      if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
+        window.VSC.logger.verbose(`No key binding found for code=${event.code || 'unknown'}`);
+      }
     }
 
     return false;

@@ -16,6 +16,7 @@ class VideoSpeedExtension {
     this.pendingVideoElements = new Set();
     this.cssLiveUpdateHandler = null;
     this.scheduledWork = new Set();
+    this.documentReplacementInProgress = false;
   }
 
   /**
@@ -147,6 +148,14 @@ class VideoSpeedExtension {
       () => {
         try {
           if (this.teardownRequested || !this.mediaObserver) {
+            return;
+          }
+
+          // Skip the heavier multi-walk scan on frames with no media signal at
+          // all (common case: text pages, ad/tracking iframes). Never skips when
+          // a shadow host exists, so encapsulated players are still found.
+          if (!this.mediaObserver.hasMediaIndicators(document)) {
+            this.logger.debug('Skipping comprehensive scan — no media indicators in frame');
             return;
           }
 
@@ -347,8 +356,35 @@ class VideoSpeedExtension {
       this.config,
       (video, parent) => this.onVideoFound(video, parent),
       (video) => this.onVideoRemoved(video),
-      this.mediaObserver
+      this.mediaObserver,
+      () => this.handleDocumentReplaced()
     );
+  }
+
+  /**
+   * Recover from a full document replacement (e.g. document.write). Everything
+   * VSC attached lived on the now-detached document, so tear down and
+   * reinitialize against the new one. Guarded so overlapping replacements
+   * during page load don't stack reinitializations.
+   */
+  handleDocumentReplaced() {
+    if (this.documentReplacementInProgress) {
+      return;
+    }
+    this.documentReplacementInProgress = true;
+    this.logger.info('Reinitializing after document replacement');
+    try {
+      this.teardown();
+    } catch (error) {
+      this.logger.error(`Teardown during document-replacement recovery failed: ${error.message}`);
+    }
+    this.initialize()
+      .catch((error) => {
+        this.logger.error(`Reinitialization after document replacement failed: ${error.message}`);
+      })
+      .finally(() => {
+        this.documentReplacementInProgress = false;
+      });
   }
 
   /**
@@ -358,6 +394,16 @@ class VideoSpeedExtension {
    */
   onVideoFound(video, parent, options = {}) {
     try {
+      // A media element exists on the page (even if not yet valid/attachable) —
+      // start watching style/class mutations so a later visibility/validity
+      // change on it is observed. No-op after the first call. Done before the
+      // validity gate so hidden/deferred/temporarily-invalid media still arms
+      // observation. (Truly media-less frames never reach onVideoFound, so
+      // P3's "don't watch until media exists" win is preserved.)
+      if (this.mutationObserver) {
+        this.mutationObserver.enableAttributeObservation();
+      }
+
       if (this.mediaObserver && !this.mediaObserver.isValidMediaElement(video)) {
         this.logger.debug('Video element is not valid for controller attachment');
         this.clearPendingVideoAttachment(video);
@@ -429,11 +475,22 @@ class VideoSpeedExtension {
     });
 
     const fallbackTimer = setTimeout(() => {
+      if (this.teardownRequested) {
+        return;
+      }
+      // If the element left the DOM while we waited, release its listeners and
+      // drop it from the pending set so a detached node isn't retained.
+      if (!video.isConnected) {
+        this.clearPendingVideoAttachment(video);
+        return;
+      }
       // Metadata-only and custom-player media can stay at readyState 1 for a
       // long time. Attach after a bounded wait once a source exists.
       if (video.readyState >= 1 || video.currentSrc || video.src) {
         attach();
       }
+      // Still connected but no source yet — leave the once-listeners in place;
+      // they fire (and self-clean) if/when the element finally loads.
     }, 1500);
 
     this.pendingVideoAttachments.set(video, { attach, events, fallbackTimer });

@@ -320,4 +320,166 @@ describe('MutationObserver', () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(observer.shadowObservers.size).toBe(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // P3: style/class attribute observation deferred until first media element
+  // ---------------------------------------------------------------------------
+
+  describe('deferred attribute observation (P3)', () => {
+    it('does not watch style/class before any media is seen', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      const options = observer.buildObserverOptions();
+      expect(observer.attributeObservationEnabled).toBe(false);
+      expect(options.attributeFilter).not.toContain('style');
+      expect(options.attributeFilter).not.toContain('class');
+      // Minimal attributes still watched for the Apple TV / shadow cases.
+      expect(options.attributeFilter).toContain('aria-hidden');
+    });
+
+    it('enableAttributeObservation adds style/class and re-observes the document', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      observer.start(document);
+      const observeSpy = vi.spyOn(observer.observer, 'observe');
+
+      observer.enableAttributeObservation();
+
+      expect(observer.attributeObservationEnabled).toBe(true);
+      const options = observer.buildObserverOptions();
+      expect(options.attributeFilter).toContain('style');
+      expect(options.attributeFilter).toContain('class');
+      // Re-observed with the upgraded filter.
+      expect(observeSpy).toHaveBeenCalledWith(document, expect.objectContaining({ subtree: true }));
+
+      observer.stop();
+    });
+
+    it('enableAttributeObservation is idempotent', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      observer.start(document);
+      const observeSpy = vi.spyOn(observer.observer, 'observe');
+
+      observer.enableAttributeObservation();
+      observer.enableAttributeObservation();
+      observer.enableAttributeObservation();
+
+      expect(observeSpy).toHaveBeenCalledTimes(1);
+      observer.stop();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // R3: shadow observers pruned when their host leaves the DOM
+  // ---------------------------------------------------------------------------
+
+  describe('shadow observer pruning (R3)', () => {
+    it('prunes observers whose host is disconnected', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+
+      const connectedHost = document.createElement('div');
+      document.body.appendChild(connectedHost);
+      const connectedRoot = connectedHost.attachShadow({ mode: 'open' });
+
+      const detachedHost = document.createElement('div'); // never added to DOM
+      const detachedRoot = detachedHost.attachShadow({ mode: 'open' });
+
+      observer.observeShadowRoot(connectedRoot);
+      observer.observeShadowRoot(detachedRoot);
+      expect(observer.shadowObservers.size).toBe(2);
+
+      observer.pruneDetachedShadowObservers();
+
+      expect(observer.shadowObservers.has(connectedRoot)).toBe(true);
+      expect(observer.shadowObservers.has(detachedRoot)).toBe(false);
+      expect(observer.shadowObservers.size).toBe(1);
+
+      connectedHost.remove();
+    });
+
+    it('processMutations prunes detached shadow observers after a removal', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      const detachedHost = document.createElement('div');
+      const detachedRoot = detachedHost.attachShadow({ mode: 'open' });
+      observer.observeShadowRoot(detachedRoot);
+      expect(observer.shadowObservers.size).toBe(1);
+
+      // A childList mutation that removed a node triggers the prune pass.
+      observer.processMutations([
+        { type: 'childList', addedNodes: [], removedNodes: [document.createElement('span')] },
+      ]);
+
+      expect(observer.shadowObservers.size).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // R2: document replacement triggers reinitialization callback
+  // ---------------------------------------------------------------------------
+
+  describe('document replacement recovery (R2)', () => {
+    it('invokes the onDocumentReplaced callback when documentElement is re-added', () => {
+      const onReplaced = vi.fn();
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {},
+        null,
+        onReplaced
+      );
+
+      observer.processChildListMutation({
+        type: 'childList',
+        addedNodes: [document.documentElement],
+        removedNodes: [],
+        target: document,
+      });
+
+      expect(onReplaced).toHaveBeenCalledOnce();
+    });
+
+    it('stops processing remaining added nodes once teardown deactivates it', () => {
+      const onVideoFound = vi.fn();
+      // Callback simulates the extension tearing the observer down mid-batch.
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        onVideoFound,
+        () => {},
+        null,
+        () => {
+          observer.active = false;
+        }
+      );
+
+      const trailingVideo = document.createElement('video');
+      observer.processChildListMutation({
+        type: 'childList',
+        addedNodes: [document.documentElement, trailingVideo],
+        removedNodes: [],
+        target: document,
+      });
+
+      // The video after the documentElement node must not be processed against
+      // the now-stale tree.
+      expect(onVideoFound).not.toHaveBeenCalled();
+    });
+  });
 });

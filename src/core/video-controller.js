@@ -206,25 +206,46 @@ class VideoController {
       this.video
     );
 
-    switch (positioning.insertionMethod) {
-      case 'beforeParent':
-        positioning.insertionPoint.parentElement.insertBefore(fragment, positioning.insertionPoint);
-        break;
+    const point = positioning.insertionPoint;
+    const method = positioning.insertionMethod;
 
-      case 'afterParent':
-        positioning.insertionPoint.parentElement.insertBefore(
-          fragment,
-          positioning.insertionPoint.nextSibling
-        );
-        break;
+    // 'beforeParent'/'afterParent' need the insertion point's parentElement;
+    // 'firstChild' needs the insertion point itself. A site handler can hand us
+    // a null or detached node (e.g. parent.parentElement when the media sits
+    // directly under <body>), which would throw and silently drop the
+    // controller. Validate and fall back to a sane same-document anchor.
+    const needsParent = method === 'beforeParent' || method === 'afterParent';
+    const canUseRequested = point && (needsParent ? Boolean(point.parentElement) : true);
 
-      case 'firstChild':
-      default:
-        positioning.insertionPoint.insertBefore(fragment, positioning.insertionPoint.firstChild);
-        break;
+    if (canUseRequested) {
+      switch (method) {
+        case 'beforeParent':
+          point.parentElement.insertBefore(fragment, point);
+          break;
+        case 'afterParent':
+          point.parentElement.insertBefore(fragment, point.nextSibling);
+          break;
+        case 'firstChild':
+        default:
+          point.insertBefore(fragment, point.firstChild);
+          break;
+      }
+      window.VSC.logger.debug(`Controller inserted using ${method} method`);
+      return;
     }
 
-    window.VSC.logger.debug(`Controller inserted using ${positioning.insertionMethod} method`);
+    // Fallback: attach as a sibling of the media element so the controller still
+    // appears, even when the handler's preferred anchor is unavailable.
+    const fallbackParent = this.video.parentElement || this.parent;
+    if (fallbackParent) {
+      fallbackParent.insertBefore(fragment, fallbackParent.firstChild);
+      window.VSC.logger.warn(
+        `Controller insertion point unavailable for "${method}"; used media parent fallback`
+      );
+      return;
+    }
+
+    window.VSC.logger.error('Unable to insert controller: no valid insertion point or parent');
   }
 
   /**

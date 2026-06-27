@@ -32,6 +32,36 @@ describe('EventManager', () => {
     expect(eventManager.coolDown).toBe(false);
   });
 
+  it('handleKeydown takes the no-media fast path before building a signature (P5)', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const actionHandler = new window.VSC.ActionHandler(config, null);
+    const eventManager = new window.VSC.EventManager(config, actionHandler);
+
+    // No controlled media on the page.
+    window.VSC.stateManager.controllers.clear();
+
+    const typingSpy = vi.spyOn(eventManager, 'isTypingContext');
+
+    const event = {
+      isComposing: false,
+      keyCode: 83,
+      key: 's',
+      code: 'KeyS',
+      timeStamp: 123,
+      type: 'keydown',
+    };
+    const result = eventManager.handleKeydown(event);
+
+    expect(result).toBe(false);
+    // Fast path returns before the typing-context walk and signature assignment.
+    expect(typingSpy).not.toHaveBeenCalled();
+    expect(eventManager.lastKeyEventSignature).toBeNull();
+
+    typingSpy.mockRestore();
+  });
+
   it('refreshCoolDown should activate cooldown period', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();

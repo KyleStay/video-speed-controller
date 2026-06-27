@@ -20,11 +20,21 @@ class NetflixHandler extends window.VSC.BaseSiteHandler {
    * @returns {Object} Positioning information
    */
   getControllerPosition(parent, _video) {
-    // Insert before parent to bypass Netflix's overlay
+    // Insert before parent to bypass Netflix's overlay. If parent has no
+    // parentElement (media directly under a root node), fall back to inserting
+    // into parent so the controller still attaches instead of throwing.
+    const grandparent = parent?.parentElement;
+    if (grandparent) {
+      return {
+        insertionPoint: grandparent,
+        insertionMethod: 'beforeParent',
+        targetParent: grandparent,
+      };
+    }
     return {
-      insertionPoint: parent.parentElement,
-      insertionMethod: 'beforeParent',
-      targetParent: parent.parentElement,
+      insertionPoint: parent,
+      insertionMethod: 'firstChild',
+      targetParent: parent,
     };
   }
 
@@ -62,11 +72,11 @@ class NetflixHandler extends window.VSC.BaseSiteHandler {
   initialize(document) {
     super.initialize(document);
 
-    // Netflix-specific script injection is handled by content script (injector.js)
-    // since Chrome APIs are not available in injected page context
-    window.VSC.logger.debug(
-      'Netflix handler initialized - script injection handled by content script'
-    );
+    // The Netflix seek listener (src/site-handlers/scripts/netflix.js) is
+    // bundled into the MAIN-world inject script via inject-entry.js — it runs
+    // in page context where window.netflix's player API is reachable. No
+    // separate injection step is needed here.
+    window.VSC.logger.debug('Netflix handler initialized');
   }
 
   /**

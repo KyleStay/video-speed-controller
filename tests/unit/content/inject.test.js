@@ -120,6 +120,70 @@ describe('Inject', () => {
     extension.teardownRequested = false;
   });
 
+  it('handleDocumentReplaced tears down then reinitializes (R2)', async () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const teardown = vi.spyOn(extension, 'teardown').mockImplementation(() => {});
+    const initialize = vi.spyOn(extension, 'initialize').mockResolvedValue(undefined);
+
+    extension.documentReplacementInProgress = false;
+    extension.handleDocumentReplaced();
+
+    expect(teardown).toHaveBeenCalledOnce();
+    expect(initialize).toHaveBeenCalledOnce();
+
+    // The in-progress guard resets after initialize settles.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(extension.documentReplacementInProgress).toBe(false);
+
+    teardown.mockRestore();
+    initialize.mockRestore();
+  });
+
+  it('arms attribute observation even when discovered media is not yet valid (P3 regression guard)', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const enableAttributeObservation = vi.fn();
+    const prevMutationObserver = extension.mutationObserver;
+    const prevMediaObserver = extension.mediaObserver;
+    extension.mutationObserver = { enableAttributeObservation };
+    // Force the media to be treated as invalid so onVideoFound early-returns.
+    extension.mediaObserver = {
+      isValidMediaElement: () => false,
+    };
+
+    const video = document.createElement('video');
+    extension.onVideoFound(video, document.body);
+
+    // Even though no controller attached, style/class observation must be armed
+    // so a later reveal of this video is caught.
+    expect(enableAttributeObservation).toHaveBeenCalledOnce();
+    expect(video.vsc).toBeUndefined();
+
+    extension.mutationObserver = prevMutationObserver;
+    extension.mediaObserver = prevMediaObserver;
+  });
+
+  it('handleDocumentReplaced is re-entrancy guarded (R2)', () => {
+    extension = window.VSC_controller;
+    const teardown = vi.spyOn(extension, 'teardown').mockImplementation(() => {});
+    const initialize = vi.spyOn(extension, 'initialize').mockReturnValue(new Promise(() => {}));
+
+    extension.documentReplacementInProgress = false;
+    extension.handleDocumentReplaced(); // starts; leaves flag set (initialize never resolves)
+    extension.handleDocumentReplaced(); // should be ignored while in progress
+
+    expect(teardown).toHaveBeenCalledOnce();
+    expect(initialize).toHaveBeenCalledOnce();
+
+    teardown.mockRestore();
+    initialize.mockRestore();
+    extension.documentReplacementInProgress = false;
+  });
+
   it('deferred DOM work is skipped after teardown is requested', () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();

@@ -22,7 +22,9 @@ class YouTubeHandler extends window.VSC.BaseSiteHandler {
   getControllerPosition(parent, _video) {
     // YouTube requires special positioning to ensure controller is on top.
     // Default: insert into the .html5-video-player (one level up from video container).
-    let targetParent = parent.parentElement;
+    // Fall back to parent when there's no ancestor (defensive: avoids a null
+    // insertion point that would drop the controller).
+    let targetParent = parent?.parentElement || parent;
 
     // Embedded YouTube has a #player-controls overlay that sits as a sibling of
     // .html5-video-player and creates a separate stacking context, intercepting
