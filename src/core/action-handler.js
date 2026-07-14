@@ -68,6 +68,16 @@ class ActionHandler {
         this.seek(video, value);
         break;
 
+      case 'rewindFrame':
+        window.VSC.logger.debug('Step back one frame');
+        this.stepFrame(video, -1, value);
+        break;
+
+      case 'advanceFrame':
+        window.VSC.logger.debug('Step forward one frame');
+        this.stepFrame(video, 1, value);
+        break;
+
       case 'faster': {
         window.VSC.logger.debug('Increase speed');
         this.adjustSpeed(video, value, { relative: true });
@@ -182,6 +192,44 @@ class ActionHandler {
   seek(video, seekSeconds) {
     // Use site-specific seeking (handlers return true if they handle it)
     window.VSC.siteHandlerManager.handleSeek(video, seekSeconds);
+  }
+
+  /**
+   * Step the video by exactly one frame.
+   *
+   * Product rules encoded here:
+   *   - Only while paused. Frame-stepping a playing video fights the play loop
+   *     and isn't useful, so it's a silent no-op (we never auto-pause).
+   *   - Video only. Frames are meaningless for <audio> — no-op.
+   *
+   * Frame size = detected fps (measured by the controller's rVFC burst sampler)
+   * when available, else the binding's configurable fallback fps. Step amount is
+   * `1 / fps` seconds, routed through the normal seek path so site handlers'
+   * bounds-checking applies (handleSeek clamps to [0, duration]).
+   *
+   * This writes `currentTime`, not `playbackRate`, so it never touches the
+   * ratechange cooldown / fight-back machinery.
+   *
+   * @param {HTMLMediaElement} video - Media element
+   * @param {number} direction - -1 to step back, +1 to step forward
+   * @param {number} fallbackFps - Binding value: fps used when none is detected
+   */
+  stepFrame(video, direction, fallbackFps) {
+    if (video.tagName !== 'VIDEO') {
+      window.VSC.logger.debug('stepFrame ignored: not a video element');
+      return;
+    }
+    if (!video.paused) {
+      window.VSC.logger.debug('stepFrame ignored: only steps while paused');
+      return;
+    }
+
+    // Sanitize: a detected 0/NaN falls through to the fallback; a malformed
+    // fallback (e.g. an imported binding value of -30, which is truthy and would
+    // reverse the step direction) falls through to 30. fps must be finite and > 0.
+    const candidate = video.vsc?.detectedFps || fallbackFps || 30;
+    const fps = Number.isFinite(candidate) && candidate > 0 ? candidate : 30;
+    this.seek(video, direction * (1 / fps));
   }
 
   /**

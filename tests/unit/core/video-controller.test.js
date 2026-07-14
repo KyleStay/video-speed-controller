@@ -373,4 +373,237 @@ describe('VideoController', () => {
     expect(mockVideo.playbackRate).toBe(1.8);
     expect(config.settings.lastSpeed).toBe(1.8);
   });
+
+  // --- Frame-rate detection (rVFC burst for frame-step shortcuts) ---
+
+  /**
+   * Attach a controllable requestVideoFrameCallback mock to a video.
+   * Returns helpers to drive frames and observe the pending/cancelled state.
+   */
+  function installRvfcMock(video) {
+    let nextHandle = 1;
+    const pending = new Map();
+    const cancelled = [];
+
+    video.requestVideoFrameCallback = (cb) => {
+      const handle = nextHandle++;
+      pending.set(handle, cb);
+      return handle;
+    };
+    video.cancelVideoFrameCallback = (handle) => {
+      cancelled.push(handle);
+      pending.delete(handle);
+    };
+
+    // The burst keeps at most one callback registered at a time; drive it.
+    const frame = (mediaTime, presentedFrames) => {
+      const entry = [...pending.entries()][0];
+      if (!entry) {
+        return false;
+      }
+      const [handle, cb] = entry;
+      pending.delete(handle);
+      cb(0, { mediaTime, presentedFrames });
+      return true;
+    };
+
+    return { pending, cancelled, frame };
+  }
+
+  it('fps detection: rVFC burst converges to a detected fps then stops', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+    const { pending, frame } = installRvfcMock(mockVideo);
+
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    expect(controller.detectedFps).toBe(null);
+
+    // Four 30fps frames: the first seeds the delta baseline, the next three
+    // produce three agreeing samples (FPS_MIN_SAMPLES) → convergence.
+    frame(1 / 30, 1);
+    frame(2 / 30, 2);
+    frame(3 / 30, 3);
+    frame(4 / 30, 4);
+
+    expect(controller.detectedFps).toBe(30);
+    // Burst ended: nothing pending → zero steady-state per-frame cost.
+    expect(pending.size).toBe(0);
+
+    controller.remove();
+  });
+
+  it('fps detection: snaps ΔpresentedFrames/ΔmediaTime to the nearest common rate', () => {
+    const snap = window.VSC.VideoController.snapToCommonFps;
+    expect(snap(29.9)).toBe(29.97);
+    expect(snap(59.8)).toBe(59.94);
+    expect(snap(24.01)).toBe(24);
+    // 42fps is >5% from any common rate → kept raw.
+    expect(snap(42)).toBe(42);
+  });
+
+  it('fps detection: teardown cancels the pending rVFC callback (no leak)', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+    const { pending, cancelled } = installRvfcMock(mockVideo);
+
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    // Construction armed exactly one in-flight callback.
+    expect(pending.size).toBe(1);
+    const handle = [...pending.keys()][0];
+
+    controller.remove();
+
+    expect(cancelled).toContain(handle);
+    expect(pending.size).toBe(0);
+    expect(controller.vfcHandle).toBe(null);
+  });
+
+  it('fps detection: re-arms on source change (emptied) and resets detectedFps', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+    const { pending, frame } = installRvfcMock(mockVideo);
+
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    frame(1 / 30, 1);
+    frame(2 / 30, 2);
+    frame(3 / 30, 3);
+    frame(4 / 30, 4);
+    expect(controller.detectedFps).toBe(30);
+
+    // Source swap: detectedFps clears and a fresh burst arms.
+    mockVideo.dispatchEvent({ type: 'emptied' });
+    expect(controller.detectedFps).toBe(null);
+    expect(pending.size).toBe(1);
+
+    controller.remove();
+  });
+
+  it('fps detection: a stale callback after remove() does not re-arm (disposed guard)', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+
+    // Capture the in-flight sampler, but make cancel a no-op so the callback
+    // "survives" teardown — the disposed flag must still prevent re-arming.
+    let capturedCb = null;
+    let registerCount = 0;
+    mockVideo.requestVideoFrameCallback = (cb) => {
+      capturedCb = cb;
+      registerCount++;
+      return registerCount;
+    };
+    mockVideo.cancelVideoFrameCallback = () => {}; // cancel fails to actually cancel
+
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    expect(registerCount).toBe(1);
+
+    controller.remove();
+    expect(controller.disposed).toBe(true);
+
+    // Fire the stale callback that cancel failed to remove.
+    capturedCb(0, { mediaTime: 0.1, presentedFrames: 3 });
+
+    // It must NOT have registered another callback on the detached controller.
+    expect(registerCount).toBe(1);
+  });
+
+  it('fps detection: remove() fully tears down even if cancelVideoFrameCallback throws', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+    mockVideo.requestVideoFrameCallback = () => 1;
+    // A hostile/broken page accessor that throws on the very lookup.
+    Object.defineProperty(mockVideo, 'cancelVideoFrameCallback', {
+      configurable: true,
+      get() {
+        throw new Error('page tampered with cancelVideoFrameCallback');
+      },
+    });
+
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    expect(window.VSC.stateManager.controllers.size).toBe(1);
+
+    // remove() must not throw and must complete teardown regardless.
+    expect(() => controller.remove()).not.toThrow();
+    expect(mockVideo.vsc).toBe(undefined);
+    expect(window.VSC.stateManager.controllers.size).toBe(0);
+    expect(controller.handleFpsReset).toBe(null);
+  });
+
+  it('fps detection: no burst when requestVideoFrameCallback is unavailable', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(mockVideo);
+    // No requestVideoFrameCallback (default mock) — must not throw, no handle.
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+
+    expect(controller.detectedFps).toBe(null);
+    expect(controller.vfcHandle).toBe(null);
+    expect(controller.handleFpsReset).toBe(null);
+
+    controller.remove();
+  });
+
+  // R5: a site handler can hand back an unusable insertion point. The controller
+  // must still attach via a media-parent fallback rather than throwing and
+  // silently dropping the controller.
+  it('attaches via media-parent fallback when positioning has no usable anchor', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const mockVideo = createMockVideo();
+    mockDOM.container.appendChild(mockVideo); // video.parentElement = container
+
+    // Force a degenerate positioning result (null insertion point).
+    const spy = vi
+      .spyOn(window.VSC.siteHandlerManager, 'getControllerPosition')
+      .mockReturnValue({ insertionPoint: null, insertionMethod: 'firstChild', targetParent: null });
+
+    let controller;
+    expect(() => {
+      controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    }).not.toThrow();
+
+    expect(mockVideo.vsc).toBe(controller);
+    // Wrapper landed under the media's real parent.
+    expect(mockDOM.container.contains(controller.div)).toBe(true);
+
+    spy.mockRestore();
+  });
 });

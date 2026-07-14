@@ -90,7 +90,7 @@ import {
  *   1. Predefined bindings — hardcoded map, zero ambiguity
  *   2. Custom bindings — KEYCODE_TO_CODE best-effort lookup
  *   3. Unmappable keyCodes — set code: null (already broken, user re-records)
- *   4. Ensure all 9 predefined actions exist (replaces ensureDisplayBinding)
+ *   4. Ensure all predefined actions exist (replaces ensureDisplayBinding)
  *
  * Single atomic chrome.storage.sync.set() call. Idempotent — safe to re-run.
  */
@@ -105,10 +105,12 @@ async function migrateKeyBindingsV2() {
       return;
     }
 
-    // Idempotency: skip if already fully migrated.
-    // Don't trust schemaVersion alone — verify bindings actually have code fields.
-    if (storage.schemaVersion === 2 && bindings.every((b) => b.code !== undefined)) {
-      console.log('[VSC] Migration: already at v2, skipping');
+    // Idempotency: skip if already at or beyond v2 (>= keeps this forward
+    // compatible — a v3 store doesn't need the v2 pass and must not be rewritten
+    // back to schemaVersion 2). Don't trust the version alone — verify bindings
+    // actually have code fields, so a downgraded/corrupt store still re-migrates.
+    if (storage.schemaVersion >= 2 && bindings.every((b) => b.code !== undefined)) {
+      console.log('[VSC] Migration: already at v2+, skipping');
       return;
     }
 
@@ -161,7 +163,7 @@ async function migrateKeyBindingsV2() {
       };
     });
 
-    // Phase 4: Ensure all 9 predefined actions exist
+    // Phase 4: Ensure all predefined actions exist
     const existingActions = new Set(migrated.map((b) => b.action));
     for (const action of PREDEFINED_ACTIONS) {
       if (!existingActions.has(action)) {
@@ -190,6 +192,53 @@ async function migrateKeyBindingsV2() {
 }
 
 /**
+ * Migrate key bindings to schema v3: add the frame-step predefined actions
+ * (rewindFrame "," and advanceFrame ".") for users upgrading from v2.
+ *
+ * Idempotent — only appends an action that's absent, then stamps
+ * schemaVersion: 3 in a single atomic set. Existing custom and predefined
+ * bindings are preserved untouched. Fresh installs already have these actions
+ * (DEFAULT_SETTINGS derives keyBindings from PREDEFINED_ACTIONS), so this is a
+ * no-op for them.
+ */
+async function migrateKeyBindingsV3() {
+  try {
+    const storage = await chrome.storage.sync.get(null);
+    const bindings = storage.keyBindings;
+
+    // No bindings → fresh install, v3 defaults applied directly.
+    if (!bindings || !Array.isArray(bindings) || bindings.length === 0) {
+      return;
+    }
+
+    const has = (action) => bindings.some((b) => b.action === action);
+
+    // Fully migrated already — nothing to do.
+    if (storage.schemaVersion >= 3 && has('rewindFrame') && has('advanceFrame')) {
+      return;
+    }
+
+    const migrated = bindings.slice();
+    let added = 0;
+    for (const action of ['rewindFrame', 'advanceFrame']) {
+      if (!has(action)) {
+        migrated.push({ action, ...DEFAULT_BINDINGS[action], predefined: true });
+        added++;
+      }
+    }
+
+    await chrome.storage.sync.set({
+      keyBindings: migrated,
+      schemaVersion: 3,
+    });
+
+    console.log(`[VSC] Migration v3: added ${added} frame-step binding(s)`);
+  } catch (error) {
+    console.error('[VSC] Key binding v3 migration failed:', error);
+  }
+}
+
+/**
  * Listen for storage changes (extension enabled/disabled)
  */
 chrome.storage.onChanged.addListener((changes, namespace) => {
@@ -205,6 +254,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log('Video Speed Controller installed/updated');
   await migrateConfig();
   await migrateKeyBindingsV2();
+  await migrateKeyBindingsV3();
   await initializeIcon();
 });
 

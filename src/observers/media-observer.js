@@ -24,15 +24,20 @@ class MediaElementObserver {
     const regularMedia = Array.from(document.querySelectorAll(mediaTagSelector));
     mediaElements.push(...regularMedia);
 
-    // Find media elements in shadow DOMs recursively
-    function findShadowMedia(root, selector) {
+    // Find media elements in shadow DOMs recursively. Depth-capped to match
+    // DomUtils.getShadow and guard against pathological/cyclic shadow trees
+    // that would otherwise blow the stack or hang the main thread.
+    function findShadowMedia(root, selector, depth = 0) {
       const results = [];
+      if (depth > MediaElementObserver.MAX_SHADOW_DEPTH) {
+        return results;
+      }
       // Add any matching elements in current shadow root
       results.push(...root.querySelectorAll(selector));
       // Recursively check all elements with shadow roots
       root.querySelectorAll('*').forEach((element) => {
         if (element.shadowRoot) {
-          results.push(...findShadowMedia(element.shadowRoot, selector));
+          results.push(...findShadowMedia(element.shadowRoot, selector, depth + 1));
         }
       });
       return results;
@@ -143,6 +148,45 @@ class MediaElementObserver {
   }
 
   /**
+   * Cheap pre-check for the comprehensive scan. Returns false only when the
+   * frame has no media-bearing signal at all, so we can skip the heavier
+   * multi-walk scanAll() on the common no-media frame (articles, ad iframes,
+   * tracking frames). Never returns false when a shadow host exists, so
+   * encapsulated custom-element players are still discovered — reliability is
+   * favored over the optimization.
+   * @param {Document} document - Document to check
+   * @returns {boolean} True if a comprehensive scan is warranted
+   */
+  hasMediaIndicators(document) {
+    try {
+      const audioEnabled = this.config.settings.audioBoolean;
+      const lightSelector = audioEnabled ? 'video,audio,iframe' : 'video,iframe';
+      if (document.querySelector(lightSelector)) {
+        return true;
+      }
+
+      // Known site with custom container selectors → always scan.
+      if (this.siteHandler.getVideoContainerSelectors().length > 0) {
+        return true;
+      }
+
+      // Any shadow host means media could be encapsulated where querySelector
+      // can't see it. Iterate the live collection so we stop at the first hit.
+      const all = document.getElementsByTagName('*');
+      for (let i = 0; i < all.length; i++) {
+        if (all[i].shadowRoot) {
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      // On any error, don't skip — favor finding media over the optimization.
+      window.VSC.logger.debug(`hasMediaIndicators check failed, will scan: ${error.message}`);
+      return true;
+    }
+  }
+
+  /**
    * Comprehensive scan for all media elements
    * @param {Document} document - Document to scan
    * @returns {Array<HTMLMediaElement>} All found media elements
@@ -247,6 +291,10 @@ class MediaElementObserver {
     return positioning.targetParent || media.parentElement;
   }
 }
+
+// Maximum shadow-DOM recursion depth for media discovery (mirrors
+// DomUtils.getShadow's cap).
+MediaElementObserver.MAX_SHADOW_DEPTH = 10;
 
 // Create singleton instance
 window.VSC.MediaElementObserver = MediaElementObserver;

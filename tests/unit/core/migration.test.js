@@ -24,6 +24,22 @@ const DEFAULT_V2_BINDINGS = {
   faster: { code: 'KeyD', key: 68, keyCode: 68, displayKey: 'd', value: 0.1, force: false },
   rewind: { code: 'KeyZ', key: 90, keyCode: 90, displayKey: 'z', value: 10, force: false },
   advance: { code: 'KeyX', key: 88, keyCode: 88, displayKey: 'x', value: 10, force: false },
+  rewindFrame: {
+    code: 'Comma',
+    key: 188,
+    keyCode: 188,
+    displayKey: ',',
+    value: 30,
+    modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+  },
+  advanceFrame: {
+    code: 'Period',
+    key: 190,
+    keyCode: 190,
+    displayKey: '.',
+    value: 30,
+    modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+  },
   reset: { code: 'KeyR', key: 82, keyCode: 82, displayKey: 'r', value: 1.0, force: false },
   fast: { code: 'KeyG', key: 71, keyCode: 71, displayKey: 'g', value: 1.8, force: false },
   display: { code: 'KeyV', key: 86, keyCode: 86, displayKey: 'v', value: 0, force: false },
@@ -42,7 +58,7 @@ function migrateBindings(storage) {
     return { skipped: 'no-bindings' };
   }
 
-  if (storage.schemaVersion === 2 && bindings.every((b) => b.code !== undefined)) {
+  if (storage.schemaVersion >= 2 && bindings.every((b) => b.code !== undefined)) {
     return { skipped: 'already-v2' };
   }
 
@@ -84,6 +100,35 @@ function migrateBindings(storage) {
     schemaVersion: 2,
     stats: { predefinedCount, customCount, unmappableCount },
   };
+}
+
+/**
+ * Extracted v3 migration logic — mirrors migrateKeyBindingsV3() in background.js.
+ * Adds the frame-step predefined actions to an existing (v2) binding set.
+ */
+function migrateBindingsV3(storage) {
+  const bindings = storage.keyBindings;
+
+  if (!bindings || !Array.isArray(bindings) || bindings.length === 0) {
+    return { skipped: 'no-bindings' };
+  }
+
+  const has = (action) => bindings.some((b) => b.action === action);
+
+  if (storage.schemaVersion >= 3 && has('rewindFrame') && has('advanceFrame')) {
+    return { skipped: 'already-v3' };
+  }
+
+  const migrated = bindings.slice();
+  let added = 0;
+  for (const action of ['rewindFrame', 'advanceFrame']) {
+    if (!has(action)) {
+      migrated.push({ action, ...DEFAULT_V2_BINDINGS[action], predefined: true });
+      added++;
+    }
+  }
+
+  return { keyBindings: migrated, schemaVersion: 3, added };
 }
 
 describe('Migration', () => {
@@ -220,6 +265,26 @@ describe('Migration', () => {
     expect(slower.code).toBe('KeyS');
   });
 
+  it('schemaVersion 3 with all code fields should skip v2 (forward compatible)', () => {
+    // Regression: after restore_defaults / a v3 migration, storage is v3. The v2
+    // skip guard must be >= so it does NOT rewrite the store back to v2.
+    const bindings = [
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+        predefined: true,
+      },
+    ];
+
+    const result = migrateBindings({ keyBindings: bindings, schemaVersion: 3 });
+    expect(result.skipped).toBe('already-v2');
+  });
+
   it('schemaVersion 2 with all code fields should skip', () => {
     const bindings = [
       {
@@ -279,6 +344,93 @@ describe('Migration', () => {
     const result = migrateBindings({ keyBindings: v1Bindings, schemaVersion: 1 });
     const slower = result.keyBindings.find((b) => b.action === 'slower');
     expect(slower.modifiers).toBe(undefined);
+  });
+
+  // --- v3 migration: frame-step actions ---
+
+  const v2PredefinedBindings = () => [
+    { action: 'slower', ...DEFAULT_V2_BINDINGS.slower, predefined: true },
+    { action: 'faster', ...DEFAULT_V2_BINDINGS.faster, predefined: true },
+    { action: 'rewind', ...DEFAULT_V2_BINDINGS.rewind, predefined: true },
+    { action: 'advance', ...DEFAULT_V2_BINDINGS.advance, predefined: true },
+    { action: 'reset', ...DEFAULT_V2_BINDINGS.reset, predefined: true },
+    { action: 'fast', ...DEFAULT_V2_BINDINGS.fast, predefined: true },
+    { action: 'display', ...DEFAULT_V2_BINDINGS.display, predefined: true },
+    { action: 'mark', ...DEFAULT_V2_BINDINGS.mark, predefined: true },
+    { action: 'jump', ...DEFAULT_V2_BINDINGS.jump, predefined: true },
+  ];
+
+  it('v3 adds both frame-step bindings to a v2 user and stamps schemaVersion 3', () => {
+    const result = migrateBindingsV3({ keyBindings: v2PredefinedBindings(), schemaVersion: 2 });
+
+    expect(result.schemaVersion).toBe(3);
+    expect(result.added).toBe(2);
+
+    const rewindFrame = result.keyBindings.find((b) => b.action === 'rewindFrame');
+    expect(rewindFrame).toBeDefined();
+    expect(rewindFrame.code).toBe('Comma');
+    expect(rewindFrame.keyCode).toBe(188);
+    expect(rewindFrame.value).toBe(30);
+    expect(rewindFrame.predefined).toBe(true);
+    expect(rewindFrame.modifiers).toEqual({ ctrl: false, alt: false, shift: false, meta: false });
+
+    const advanceFrame = result.keyBindings.find((b) => b.action === 'advanceFrame');
+    expect(advanceFrame).toBeDefined();
+    expect(advanceFrame.code).toBe('Period');
+    expect(advanceFrame.keyCode).toBe(190);
+  });
+
+  it('v3 is idempotent — re-running does not duplicate the frame-step bindings', () => {
+    const first = migrateBindingsV3({ keyBindings: v2PredefinedBindings(), schemaVersion: 2 });
+    const second = migrateBindingsV3({ keyBindings: first.keyBindings, schemaVersion: 3 });
+
+    expect(second.skipped).toBe('already-v3');
+
+    const count = (action) => first.keyBindings.filter((b) => b.action === action).length;
+    expect(count('rewindFrame')).toBe(1);
+    expect(count('advanceFrame')).toBe(1);
+  });
+
+  it('v3 preserves existing custom bindings untouched', () => {
+    const bindings = [
+      ...v2PredefinedBindings(),
+      {
+        action: 'pause',
+        code: 'Space',
+        key: 32,
+        keyCode: 32,
+        displayKey: 'Space',
+        value: 0,
+        predefined: false,
+      },
+    ];
+
+    const result = migrateBindingsV3({ keyBindings: bindings, schemaVersion: 2 });
+
+    const pause = result.keyBindings.find((b) => b.action === 'pause');
+    expect(pause).toBeDefined();
+    expect(pause.code).toBe('Space');
+    expect(pause.predefined).toBe(false);
+    // The two frame-step actions were appended alongside the custom binding.
+    expect(result.keyBindings.length).toBe(bindings.length + 2);
+  });
+
+  it('v3 only adds the missing action when one already exists', () => {
+    const bindings = [
+      ...v2PredefinedBindings(),
+      { action: 'rewindFrame', ...DEFAULT_V2_BINDINGS.rewindFrame, predefined: true },
+    ];
+
+    const result = migrateBindingsV3({ keyBindings: bindings, schemaVersion: 2 });
+
+    expect(result.added).toBe(1);
+    expect(result.keyBindings.filter((b) => b.action === 'rewindFrame').length).toBe(1);
+    expect(result.keyBindings.filter((b) => b.action === 'advanceFrame').length).toBe(1);
+  });
+
+  it('v3 skips fresh installs (no bindings in storage)', () => {
+    const result = migrateBindingsV3({ keyBindings: [] });
+    expect(result.skipped).toBe('no-bindings');
   });
 
   it('displayKeyFromCode should produce correct labels', () => {

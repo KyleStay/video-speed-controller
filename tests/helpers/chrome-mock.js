@@ -25,13 +25,23 @@ export const chromeMock = {
       get: (keys, callback) => {
         // Simulate async behavior
         setTimeout(() => {
-          const result =
-            typeof keys === 'object' && keys !== null
-              ? Object.keys(keys).reduce((acc, key) => {
-                  acc[key] = mockStorage[key] !== undefined ? mockStorage[key] : keys[key];
-                  return acc;
-                }, {})
-              : { ...mockStorage };
+          let result;
+          if (Array.isArray(keys)) {
+            // Array form: return only keys that exist (matches real chrome).
+            result = keys.reduce((acc, key) => {
+              if (mockStorage[key] !== undefined) {
+                acc[key] = mockStorage[key];
+              }
+              return acc;
+            }, {});
+          } else if (typeof keys === 'object' && keys !== null) {
+            result = Object.keys(keys).reduce((acc, key) => {
+              acc[key] = mockStorage[key] !== undefined ? mockStorage[key] : keys[key];
+              return acc;
+            }, {});
+          } else {
+            result = { ...mockStorage };
+          }
           callback(result);
         }, 10);
       },

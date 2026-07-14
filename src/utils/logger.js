@@ -109,6 +109,19 @@ if (!window.VSC.logger) {
     }
 
     /**
+     * Whether a message at the given level would currently be emitted.
+     * Use this to guard expensive log-argument construction on hot paths:
+     *   if (logger.canLog(LOG_LEVELS.DEBUG)) logger.debug(`${expensive()}`);
+     * Returns true before verbosity is configured so early messages still
+     * buffer and replay against the user's real level.
+     * @param {number} level - Log level from LOG_LEVELS
+     * @returns {boolean}
+     */
+    canLog(level) {
+      return !this._ready || this.verbosity >= level;
+    }
+
+    /**
      * Log a message with specified level
      * @param {string} message - Message to log
      * @param {number} level - Log level (optional, uses default if not specified)

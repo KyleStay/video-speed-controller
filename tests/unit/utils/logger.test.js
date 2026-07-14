@@ -111,6 +111,23 @@ describe('Logger', () => {
     expect(capture.calls.length).toBe(countAfterFirst);
   });
 
+  it('canLog reflects configured verbosity after setVerbosity (P5 guard)', () => {
+    const logger = createLogger();
+    logger.setVerbosity(LOG_LEVELS().WARNING); // verbosity 3
+
+    expect(logger.canLog(LOG_LEVELS().ERROR)).toBe(true); // 2 <= 3
+    expect(logger.canLog(LOG_LEVELS().WARNING)).toBe(true); // 3 <= 3
+    expect(logger.canLog(LOG_LEVELS().INFO)).toBe(false); // 4 > 3
+    expect(logger.canLog(LOG_LEVELS().DEBUG)).toBe(false); // 5 > 3
+    expect(logger.canLog(LOG_LEVELS().VERBOSE)).toBe(false); // 6 > 3
+  });
+
+  it('canLog returns true before verbosity is configured (preserve buffering)', () => {
+    const logger = createLogger(); // _ready = false
+    expect(logger.canLog(LOG_LEVELS().DEBUG)).toBe(true);
+    expect(logger.canLog(LOG_LEVELS().VERBOSE)).toBe(true);
+  });
+
   it('convenience methods (error, warn, info, debug) buffer correctly', () => {
     const logger = createLogger();
 

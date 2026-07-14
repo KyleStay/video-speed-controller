@@ -12,6 +12,7 @@
 
 import { isBlacklisted } from '../utils/blacklist.js';
 import { matchSiteRule } from '../utils/site-pattern.js';
+import { SYNCED_SETTING_KEYS } from '../utils/setting-keys.js';
 
 // Speed limits for page→bridge write validation.
 // Duplicated from constants.js (ISOLATED world can't import page modules).
@@ -22,7 +23,10 @@ const docEl = document.documentElement;
 let bridgeInitialized = false;
 
 async function loadSettingsPayload() {
-  const settings = await chrome.storage.sync.get(null);
+  // Bounded fetch (not get(null)): this content script runs in every frame, so
+  // we pull only the keys the controller actually uses instead of the whole
+  // sync store. SYNCED_SETTING_KEYS is the shared contract with the MAIN world.
+  const settings = await chrome.storage.sync.get(SYNCED_SETTING_KEYS);
 
   const disabled = settings.enabled === false;
   // Legacy blacklist: only checked when siteRules hasn't been initialized yet
