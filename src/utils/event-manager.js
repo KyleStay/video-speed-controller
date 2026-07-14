@@ -28,7 +28,10 @@ class EventManager {
     // there is no controlled media, request a one-off synchronous rescan so a
     // late-loaded video can be acted on by the same keypress. Throttled via
     // lastRescanAt. Wired by the extension (see inject.js setupEventPipeline).
-    this.lastRescanAt = 0;
+    // Seed with NEVER_RESCANNED (not 0): event.timeStamp is relative to the page
+    // time origin, so a 0 seed would throttle away the first rescan for the whole
+    // first second after load — exactly when late media is most likely to appear.
+    this.lastRescanAt = EventManager.NEVER_RESCANNED;
     this.requestMediaRescan = null;
   }
 
@@ -563,8 +566,9 @@ class EventManager {
     }
     this.fightCount = 0;
 
-    // Reset keypress-rescan state (teardown discipline).
-    this.lastRescanAt = 0;
+    // Reset keypress-rescan state (teardown discipline). Reset to NEVER_RESCANNED
+    // so the first rescan after a re-init is never throttled away (see constructor).
+    this.lastRescanAt = EventManager.NEVER_RESCANNED;
     this.requestMediaRescan = null;
   }
 }
@@ -618,6 +622,11 @@ EventManager.FIGHT_WINDOW_MS = EventManager.MAX_COOLDOWN_MS + 1000;
 // Minimum interval (ms) between keypress-triggered media rescans, so mashing a
 // VSC-bound key on a genuinely media-less frame can't spin the scan repeatedly.
 EventManager.MEDIA_RESCAN_THROTTLE_MS = 1000;
+
+// Sentinel for "no rescan has happened yet" — chosen so `now - lastRescanAt` is
+// always >= the throttle window, i.e. the first rescan is never suppressed
+// regardless of how early (small event.timeStamp) the first bound key arrives.
+EventManager.NEVER_RESCANNED = Number.NEGATIVE_INFINITY;
 
 // Create singleton instance
 window.VSC.EventManager = EventManager;

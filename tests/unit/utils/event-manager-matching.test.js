@@ -1127,6 +1127,18 @@ describe('EventManager Matching', () => {
     input.remove();
   });
 
+  it('Rescan: first rescan is not throttled even with a tiny (page-start) timeStamp', () => {
+    // Regression: seeding lastRescanAt=0 threw away the first rescan for the
+    // whole first second after load (event.timeStamp is page-relative). The
+    // NEVER_RESCANNED sentinel makes the first bound keypress always scan.
+    const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => false);
+    eventManager.requestMediaRescan = rescan;
+
+    eventManager.handleKeydown(makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 5 }));
+    expect(rescan).toHaveBeenCalledOnce();
+  });
+
   it('Rescan: throttled to once per MEDIA_RESCAN_THROTTLE_MS window', () => {
     const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
     const rescan = vi.fn(() => false);
@@ -1185,7 +1197,9 @@ describe('EventManager Matching', () => {
 
     eventManager.cleanup();
 
-    expect(eventManager.lastRescanAt).toBe(0);
+    // Reset to the "never rescanned" sentinel so the first rescan after a
+    // re-init is not throttled away (event.timeStamp is page-relative).
+    expect(eventManager.lastRescanAt).toBe(window.VSC.EventManager.NEVER_RESCANNED);
     expect(eventManager.requestMediaRescan).toBeNull();
   });
 });
