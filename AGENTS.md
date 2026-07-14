@@ -182,3 +182,20 @@ A change is done when **all** of the following hold:
 
 CI (`.github/workflows/ci.yml`) runs lint → build:release → test → package on
 pushes/PRs to `main`. Keep the branch list in sync with the default branch.
+
+## Codex usage — context-window efficiency
+
+When driving this repo through Codex (or any token-metered agent), keep reads
+and command output bounded:
+
+- Prefer bounded reads over dumping whole files: `sed -n '1,120p' file.log`,
+  `rg -n "error" src --max-count 20`, `head -n 40 README.md`, `tail -n 25 diagnostics.log`.
+- Cap listings: `ls src --color=never | head -n 50`; avoid open-ended directory traversals.
+- Query telemetry summarized first — counts, aggregates, and top-N before wide rows:
+  `SELECT error_code, COUNT(*) FROM telemetry GROUP BY error_code ORDER BY COUNT(*) DESC LIMIT 10;`,
+  then fetch a single id only if needed.
+- After edits, scope re-checks: `git diff --name-only` then `rg -n "TODO|FIXME" <changed file>`;
+  batch nearby checks in one pass (`rg -n "TODO|FIXME|XXX" src --max-count 80`).
+- Keep output small: pipe to `head`/`tail`/line limits; replace broad logs with summaries
+  (`tail -n 200 app.log | rg -c "ERROR"`). Summarize prior findings in one short list rather
+  than copying long command history or whole transcripts across turns.
