@@ -23,6 +23,13 @@ class EventManager {
     // USER_GESTURE_WINDOW_MS of this is treated as intentional and accepted
     // immediately rather than fought — handles native site speed controls.
     this.lastUserInteractionAt = 0;
+
+    // Keypress-triggered rescan safety net: when a VSC-bound key is pressed but
+    // there is no controlled media, request a one-off synchronous rescan so a
+    // late-loaded video can be acted on by the same keypress. Throttled via
+    // lastRescanAt. Wired by the extension (see inject.js setupEventPipeline).
+    this.lastRescanAt = 0;
+    this.requestMediaRescan = null;
   }
 
   /**
@@ -36,34 +43,49 @@ class EventManager {
   }
 
   /**
-   * Set up keyboard shortcuts
-   * @param {Document} document - Document to attach events to
+   * Set up keyboard shortcuts.
+   * Listeners attach to `window` (and the top window from a same-origin iframe),
+   * not to a document — the `_document` argument is accepted only for symmetry
+   * with the sibling `setup*` methods and is intentionally unused.
    */
-  setupKeyboardShortcuts(document) {
-    const docs = [document];
+  setupKeyboardShortcuts(_document) {
+    // Attach on `window`, not `document`. `window` is the top of the capture
+    // chain, so a listener registered at document_start fires before any
+    // page-level handler regardless of where the page attaches its own. A
+    // document-level capture listener loses to an ancestor (window) capture
+    // listener the page adds later — which is exactly how YouTube's Polymer app
+    // reclaims keys like `s` after it finishes booting. Registering first on
+    // `window` keeps VSC ahead of that.
+    const attach = (target) => {
+      try {
+        const keydownHandler = (event) => this.handleKeydown(event);
+        target.addEventListener('keydown', keydownHandler, true);
+
+        // Store reference for cleanup
+        if (!this.listeners.has(target)) {
+          this.listeners.set(target, []);
+        }
+        this.listeners.get(target).push({
+          type: 'keydown',
+          handler: keydownHandler,
+          useCapture: true,
+        });
+      } catch {
+        // Inaccessible target (cross-origin top window) — ignore.
+      }
+    };
+
+    attach(window);
 
     try {
-      if (window.VSC.inIframe()) {
-        docs.push(window.top.document);
+      // From a same-origin iframe, also claim keys at the top window so
+      // shortcuts work while focus is in the frame.
+      if (window.VSC.DomUtils.inIframe() && window.top && window.top !== window) {
+        attach(window.top);
       }
     } catch {
-      // Cross-origin iframe - ignore
+      // Cross-origin iframe — window.top is inaccessible; ignore.
     }
-
-    docs.forEach((doc) => {
-      const keydownHandler = (event) => this.handleKeydown(event);
-      doc.addEventListener('keydown', keydownHandler, true);
-
-      // Store reference for cleanup
-      if (!this.listeners.has(doc)) {
-        this.listeners.set(doc, []);
-      }
-      this.listeners.get(doc).push({
-        type: 'keydown',
-        handler: keydownHandler,
-        useCapture: true,
-      });
-    });
   }
 
   /**
@@ -84,16 +106,68 @@ class EventManager {
       return;
     }
 
-    // Fast path: if there is no controlled media on this page, there is no
-    // shortcut to run. Checked before the dedup signature string and the
+    // Fast path: if there is no controlled media on this page, there is usually
+    // no shortcut to run. Checked before the dedup signature string and the
     // (composedPath-walking) typing-context check so media-less pages — the
     // overwhelming common case for a global content script — pay almost nothing
     // per keystroke.
-    const mediaElements = window.VSC.stateManager
+    let mediaElements = window.VSC.stateManager
       ? window.VSC.stateManager.getControlledElements()
       : [];
     if (!mediaElements.length) {
-      return false;
+      // Reactive safety net for late-loaded media: a VSC-bound key was pressed
+      // but no controller exists yet (e.g. a lazily-loaded embed the observers
+      // haven't picked up). Do a one-off, throttled, synchronous rescan; if a
+      // ready video attaches, fall through and act on the SAME keypress.
+      //
+      // Order matters for the perf priority: only the cheap array-`find`
+      // binding lookup runs for irrelevant keys. The composedPath-walking
+      // typing check and the scan run only for a bound key.
+      const keyBinding = this.findMatchingBinding(event);
+      if (!keyBinding) {
+        // Diagnostic for shortcut-retention loss (e.g. YouTube reclaiming `s`).
+        // If this fires on the failing keypress, our controller was dropped — the
+        // controller-drop path, healed by SPA-navigation recovery. If it does NOT
+        // fire yet the shortcut still fails, the event never reached us — the
+        // capture-chain path, healed by the window-level capture listener.
+        // Guarded by canLog so the media-less common case stays near-zero cost.
+        if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
+          window.VSC.logger.verbose(
+            `Shortcut keydown ignored — no controlled media (code=${event.code || 'unknown'})`
+          );
+        }
+        return false;
+      }
+
+      // Don't scan while the user is typing — they're not invoking a shortcut.
+      if (this.isTypingContext(event)) {
+        return false;
+      }
+
+      const now = event.timeStamp || performance.now();
+      if (
+        !this.requestMediaRescan ||
+        now - this.lastRescanAt < EventManager.MEDIA_RESCAN_THROTTLE_MS
+      ) {
+        return false;
+      }
+      // Stamp before invoking so key-mashing on a genuinely media-less frame
+      // can't spin the scan more than once per throttle window.
+      this.lastRescanAt = now;
+
+      if (!this.requestMediaRescan()) {
+        // Nothing ready attached (media still loading was primed, not attached).
+        return false;
+      }
+
+      mediaElements = window.VSC.stateManager
+        ? window.VSC.stateManager.getControlledElements()
+        : [];
+      if (!mediaElements.length) {
+        return false;
+      }
+      // A ready video attached synchronously — fall through to the normal
+      // dedup → typing → binding → claim/run block and act on this keypress.
     }
 
     // Event deduplication — include code+key to handle empty-code cases
@@ -488,6 +562,10 @@ class EventManager {
       this.fightTimer = null;
     }
     this.fightCount = 0;
+
+    // Reset keypress-rescan state (teardown discipline).
+    this.lastRescanAt = 0;
+    this.requestMediaRescan = null;
   }
 }
 
@@ -536,6 +614,10 @@ EventManager.MAX_FIGHT_COUNT = 5;
 
 // Fight detection: reset fight count after this quiet period (ms)
 EventManager.FIGHT_WINDOW_MS = EventManager.MAX_COOLDOWN_MS + 1000;
+
+// Minimum interval (ms) between keypress-triggered media rescans, so mashing a
+// VSC-bound key on a genuinely media-less frame can't spin the scan repeatedly.
+EventManager.MEDIA_RESCAN_THROTTLE_MS = 1000;
 
 // Create singleton instance
 window.VSC.EventManager = EventManager;

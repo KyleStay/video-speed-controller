@@ -32,7 +32,7 @@ describe('EventManager', () => {
     expect(eventManager.coolDown).toBe(false);
   });
 
-  it('handleKeydown takes the no-media fast path before building a signature (P5)', async () => {
+  it('handleKeydown takes the no-media fast path for a non-VSC key before building a signature (P5)', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
 
@@ -44,11 +44,14 @@ describe('EventManager', () => {
 
     const typingSpy = vi.spyOn(eventManager, 'isTypingContext');
 
+    // KeyK is not a VSC binding — the no-media branch must short-circuit on the
+    // cheap findMatchingBinding lookup, before the typing-context walk, the
+    // signature assignment, and any rescan.
     const event = {
       isComposing: false,
-      keyCode: 83,
-      key: 's',
-      code: 'KeyS',
+      keyCode: 75,
+      key: 'k',
+      code: 'KeyK',
       timeStamp: 123,
       type: 'keydown',
     };

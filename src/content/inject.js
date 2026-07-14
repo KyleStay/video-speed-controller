@@ -15,6 +15,8 @@ class VideoSpeedExtension {
     this.pendingVideoAttachments = new WeakMap();
     this.pendingVideoElements = new Set();
     this.cssLiveUpdateHandler = null;
+    this.spaNavigationHandler = null;
+    this.spaNavigationDocument = null;
     this.scheduledWork = new Set();
     this.documentReplacementInProgress = false;
   }
@@ -140,6 +142,52 @@ class VideoSpeedExtension {
   }
 
   /**
+   * Synchronous, one-off rescan triggered by a keypress when no controlled
+   * media exists yet (EventManager.requestMediaRescan). Lets a late-loaded
+   * video be attached and acted on by the SAME keypress: a ready video
+   * (readyState >= 2) attaches+registers synchronously here; a still-loading
+   * one is primed via the existing deferred path (onVideoFound) and acted on a
+   * beat later. Mirrors the gating of the deferred/comprehensive scans so
+   * media-less frames stay cheap, and relies on onVideoFound being idempotent
+   * (skips media that already has a controller).
+   * @returns {boolean} True if controlled media exists after the rescan.
+   */
+  rescanForMediaSync() {
+    try {
+      if (this.teardownRequested || !this.mediaObserver) {
+        return false;
+      }
+
+      const lightMedia = this.mediaObserver.scanForMediaLight(document);
+      lightMedia.forEach((media) => {
+        this.onVideoFound(media, media.parentElement || media.parentNode);
+      });
+
+      // Escalate to the heavier multi-walk scan only if the light scan attached
+      // nothing and the frame actually has a media signal (covers shadow-DOM-only
+      // players). Mirrors scheduleComprehensiveScan's hasMediaIndicators gate so
+      // media-less frames stay cheap.
+      const stateManager = window.VSC.stateManager;
+      if (
+        (!stateManager || stateManager.getControlledElements().length === 0) &&
+        this.mediaObserver.hasMediaIndicators(document)
+      ) {
+        const comprehensiveMedia = this.mediaObserver.scanAll(document);
+        comprehensiveMedia.forEach((media) => {
+          if (!media.vsc) {
+            this.onVideoFound(media, media.parentElement || media.parentNode);
+          }
+        });
+      }
+
+      return Boolean(stateManager && stateManager.getControlledElements().length > 0);
+    } catch (error) {
+      this.logger.error(`Keypress-triggered media rescan failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Schedule a comprehensive scan if the light scan didn't find anything
    * @param {Document} document - Document to scan comprehensively
    */
@@ -196,6 +244,8 @@ class VideoSpeedExtension {
       this.setupEventPipeline(document);
 
       this.setupObservers();
+
+      this.setupSpaNavigationRecovery();
 
       this.initializeWhenReady(document, (doc) => {
         this.initializeDocument(doc);
@@ -259,6 +309,11 @@ class VideoSpeedExtension {
       this.eventManager = new this.EventManager(this.config, null);
       this.actionHandler = new this.ActionHandler(this.config, this.eventManager);
       this.eventManager.actionHandler = this.actionHandler;
+      // Reactive safety net: a VSC-bound keypress with no controlled media asks
+      // for a synchronous rescan so a late-loaded video is acted on by the same
+      // keypress. Local wiring (mirrors actionHandler) keeps EventManager
+      // decoupled from the extension/mediaObserver.
+      this.eventManager.requestMediaRescan = () => this.rescanForMediaSync();
     }
 
     if (!this.eventListenersInitialized) {
@@ -359,6 +414,52 @@ class VideoSpeedExtension {
       this.mediaObserver,
       () => this.handleDocumentReplaced()
     );
+  }
+
+  /**
+   * Recover controllers after an in-app (SPA) navigation that swaps media
+   * without replacing the document — YouTube's most common case. When the
+   * `<video>` is swapped out, our controller is dropped; once that happens
+   * EventManager.handleKeydown takes its no-media fast path and stops claiming
+   * shortcut keys, so the site (e.g. YouTube) reclaims keys like `s`. Re-scanning
+   * on navigation re-attaches the controller and restores shortcut claiming.
+   *
+   * No polling: we react to navigation events and defer the scan to idle so the
+   * media-less common case stays cheap. onVideoFound is idempotent (skips media
+   * that already has a controller), so a redundant scan is harmless.
+   */
+  setupSpaNavigationRecovery() {
+    if (this.spaNavigationHandler) {
+      return;
+    }
+
+    this.spaNavigationHandler = () => {
+      if (this.teardownRequested || !this.mediaObserver) {
+        return;
+      }
+      // Respect the media-less-frame perf priority (P2): only rescan when the
+      // frame actually has a media signal. hasMediaIndicators never skips when a
+      // shadow host exists, so encapsulated players still trigger recovery, and
+      // when media is absent there is nothing to recover anyway.
+      if (!this.mediaObserver.hasMediaIndicators(document)) {
+        return;
+      }
+      this.logger.debug('SPA navigation detected — rescanning for media');
+      // Defer: let the framework swap in the new player before we scan.
+      this.scheduleDeferredWork(() => this.deferredMediaScan(document), {
+        idle: true,
+        delay: 200,
+      });
+    };
+
+    // Capture the document we register on so teardown removes the listener from
+    // the same object even if `document` is later replaced (handleDocumentReplaced).
+    // yt-navigate-finish bubbles, so listening at the document catches it.
+    this.spaNavigationDocument = document;
+    // YouTube's Polymer app fires this after in-app navigation.
+    this.spaNavigationDocument.addEventListener('yt-navigate-finish', this.spaNavigationHandler);
+    // Generic SPA fallback (history navigation) for other sites.
+    window.addEventListener('popstate', this.spaNavigationHandler);
   }
 
   /**
@@ -545,6 +646,16 @@ class VideoSpeedExtension {
     if (this.mutationObserver) {
       this.mutationObserver.stop();
       this.mutationObserver = null;
+    }
+
+    // Remove SPA navigation recovery listeners — from the same document we
+    // registered on, not the live global (which may have been replaced).
+    if (this.spaNavigationHandler) {
+      const navDoc = this.spaNavigationDocument || document;
+      navDoc.removeEventListener('yt-navigate-finish', this.spaNavigationHandler);
+      window.removeEventListener('popstate', this.spaNavigationHandler);
+      this.spaNavigationHandler = null;
+      this.spaNavigationDocument = null;
     }
 
     // Remove keyboard/ratechange listeners
