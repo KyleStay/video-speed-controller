@@ -53,10 +53,17 @@ we don't read at a fixed pace, and we shouldn't watch at one either.
 - **R** - reset playback speed to 1.0x
 - **Z** - rewind video by 10 seconds
 - **X** - advance video by 10 seconds
+- **,** - step back one frame (only while paused)
+- **.** - step forward one frame (only while paused)
 - **G** - toggle between current and preferred speed
 - **V** - show/hide the controller
 - **M** - set a marker at current position
 - **J** - jump back to the previously set marker
+
+The frame-step keys (**,** / **.**) act only while the video is paused and step
+by one frame at the video's detected frame rate. When the frame rate can't be
+measured, they fall back to a configurable frames-per-second value (default 30)
+set in the shortcut's value field. They apply to video only, not audio.
 
 All shortcuts are fully customizable in the extension's settings page. You can
 reassign keys, add modifier combinations, and define multiple preferred-speed

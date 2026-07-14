@@ -7,8 +7,11 @@
  */
 
 /**
- * Hardcoded mapping for the 9 predefined bindings. Zero ambiguity —
- * these are the exact physical keys the extension has always used.
+ * Hardcoded mapping for the original 9 legacy predefined bindings. Zero
+ * ambiguity — these are the exact physical keys the extension shipped with in
+ * the v1 (keyCode) era, used only by the v1→v2 migration's Phase 1. Actions
+ * added later (e.g. the frame-step pair) never existed as v1 keyCodes, so they
+ * arrive via DEFAULT_BINDINGS in migration Phase 4 instead of this map.
  */
 export const PREDEFINED_CODE_MAP = Object.freeze({
   83: { code: 'KeyS', displayKey: 's' }, // slower
@@ -208,6 +211,8 @@ export const PREDEFINED_ACTIONS = [
   'faster',
   'rewind',
   'advance',
+  'rewindFrame',
+  'advanceFrame',
   'reset',
   'fast',
   'display',
@@ -225,6 +230,28 @@ export const DEFAULT_BINDINGS = Object.freeze({
   faster: { code: 'KeyD', key: 68, keyCode: 68, displayKey: 'd', value: 0.1 },
   rewind: { code: 'KeyZ', key: 90, keyCode: 90, displayKey: 'z', value: 10 },
   advance: { code: 'KeyX', key: 88, keyCode: 88, displayKey: 'x', value: 10 },
+  // Frame-step actions carry an explicit all-false `modifiers` object so the
+  // matcher routes them through the chord tier (exact modifier match). That
+  // makes bare "," / "." shift-exclusive: Shift+"," ("<") and Shift+"." (">")
+  // fall through to the site, so YouTube's decrease/increase-speed keys survive.
+  // `value` is the fallback frames-per-second used when live fps detection
+  // (requestVideoFrameCallback) is unavailable — see VideoController fps burst.
+  rewindFrame: {
+    code: 'Comma',
+    key: 188,
+    keyCode: 188,
+    displayKey: ',',
+    value: 30,
+    modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+  },
+  advanceFrame: {
+    code: 'Period',
+    key: 190,
+    keyCode: 190,
+    displayKey: '.',
+    value: 30,
+    modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+  },
   reset: { code: 'KeyR', key: 82, keyCode: 82, displayKey: 'r', value: 1.0 },
   fast: { code: 'KeyG', key: 71, keyCode: 71, displayKey: 'g', value: 1.8 },
   display: { code: 'KeyV', key: 86, keyCode: 86, displayKey: 'v', value: 0 },

@@ -1091,6 +1091,125 @@ describe('ActionHandler', () => {
     config.save = originalSave;
   });
 
+  // --- Frame-step (rewindFrame / advanceFrame) ---
+
+  it('stepFrame: paused video advances currentTime by 1/fps using fallback fps', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const video = createTestVideoWithController(config, actionHandler, {
+      paused: true,
+      currentTime: 50,
+      duration: 100,
+    });
+    // No requestVideoFrameCallback on the mock → detectedFps stays null.
+    expect(video.vsc.detectedFps).toBe(null);
+
+    actionHandler.runAction('advanceFrame', 30);
+    expect(video.currentTime).toBeCloseTo(50 + 1 / 30, 5);
+
+    actionHandler.runAction('rewindFrame', 30);
+    expect(video.currentTime).toBeCloseTo(50, 5);
+  });
+
+  it('stepFrame: uses detectedFps over the fallback when available', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const video = createTestVideoWithController(config, actionHandler, {
+      paused: true,
+      currentTime: 20,
+      duration: 100,
+    });
+    video.vsc.detectedFps = 60; // e.g. measured 60fps clip
+
+    actionHandler.runAction('advanceFrame', 30); // fallback 30 must be ignored
+    expect(video.currentTime).toBeCloseTo(20 + 1 / 60, 5);
+  });
+
+  it('stepFrame: playing video is a no-op (only steps while paused)', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const video = createTestVideoWithController(config, actionHandler, {
+      paused: false,
+      currentTime: 40,
+      duration: 100,
+    });
+
+    actionHandler.runAction('advanceFrame', 30);
+    expect(video.currentTime).toBe(40);
+  });
+
+  it('stepFrame: a malformed negative fallback fps does not reverse direction', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const video = createTestVideoWithController(config, actionHandler, {
+      paused: true,
+      currentTime: 50,
+      duration: 100,
+    });
+
+    // Imported binding value of -30 is truthy — without sanitizing it would make
+    // advanceFrame seek backwards. It must fall back to a positive 30fps step.
+    actionHandler.runAction('advanceFrame', -30);
+    expect(video.currentTime).toBeCloseTo(50 + 1 / 30, 5);
+  });
+
+  it('stepFrame: no-op on <audio> elements (frames are meaningless)', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    const audioLike = { tagName: 'AUDIO', paused: true, currentTime: 10, vsc: {} };
+    actionHandler.stepFrame(audioLike, 1, 30);
+    expect(audioLike.currentTime).toBe(10);
+  });
+
+  it('stepFrame: clamps at 0 and at duration', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+
+    // At the start: stepping back stays at 0.
+    const atStart = createTestVideoWithController(config, actionHandler, {
+      paused: true,
+      currentTime: 0,
+      duration: 100,
+    });
+    actionHandler.runAction('rewindFrame', 30);
+    expect(atStart.currentTime).toBe(0);
+    if (window.VSC.stateManager) {
+      window.VSC.stateManager.controllers.clear();
+    }
+
+    // At the end: stepping forward stays at duration.
+    const atEnd = createTestVideoWithController(config, actionHandler, {
+      paused: true,
+      currentTime: 100,
+      duration: 100,
+    });
+    actionHandler.runAction('advanceFrame', 30);
+    expect(atEnd.currentTime).toBe(100);
+  });
+
   it('reset action should work with keyboard event simulation', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();

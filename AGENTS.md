@@ -62,14 +62,24 @@ with direct `chrome.*` access.
 
 - `entries/` — esbuild entry points only (`content-bridge`, `inject-entry`).
 - `content/inject.js` — `VideoSpeedExtension`: lifecycle (initialize/teardown),
-  deferred scanning, controller attach/detach, document-replacement recovery.
+  deferred scanning, controller attach/detach, document-replacement recovery,
+  SPA-navigation recovery (`setupSpaNavigationRecovery` re-scans on
+  `yt-navigate-finish`/`popstate` so a media swap that drops the controller
+  doesn't permanently surrender shortcut keys to the site).
 - `core/`
   - `settings.js` — `VideoSpeedConfig`: load/save, debounced speed writes,
     migrations, self-echo guard.
   - `storage-manager.js` — context-aware storage (chrome vs bridge).
   - `state-manager.js` — registry of controlled media elements.
-  - `action-handler.js` — executes shortcut actions (speed/seek/mark/…).
-  - `video-controller.js` — per-media controller + DOM insertion.
+  - `action-handler.js` — executes shortcut actions (speed/seek/mark/frame-step/…).
+    `stepFrame` (the `,`/`.` frame-step actions) seeks by `1/fps` **video-only**
+    and **only while paused**; it writes `currentTime` via the seek path, never
+    `playbackRate`, so it never touches the ratechange cooldown/fight machinery.
+  - `video-controller.js` — per-media controller + DOM insertion. Also runs a
+    **frame-rate detection burst** (`requestVideoFrameCallback`) that measures
+    real fps while the video plays, snaps to a common rate, caches it on
+    `controller.detectedFps`, then stops (zero steady-state cost). Frame-step
+    uses `detectedFps`, falling back to the binding's configurable fps value.
 - `observers/`
   - `media-observer.js` — light/comprehensive media scanning (incl. shadow DOM,
     depth-capped); `hasMediaIndicators` gate.
@@ -93,13 +103,38 @@ with direct `chrome.*` access.
 - **World rules**: ISOLATED code must not import page modules that populate
   `window.VSC`; MAIN code must not call `chrome.*`. Cross only via the bridge.
 - **Teardown discipline**: anything you register (DOM listener, `MutationObserver`,
-  `setTimeout`/`requestIdleCallback`, shadow observer, adopted stylesheet) must be
-  removed in the matching `teardown()`/`cleanup()`/`stop()`. The extension is
-  fully torn down and re-initialized on enable-toggle and on document replacement.
+  `setTimeout`/`requestIdleCallback`, shadow observer, adopted stylesheet,
+  `requestVideoFrameCallback`) must be removed in the matching
+  `teardown()`/`cleanup()`/`stop()`. The extension is fully torn down and
+  re-initialized on enable-toggle and on document replacement. Specifically,
+  `VideoController.remove()` must `cancelVideoFrameCallback` any pending fps-burst
+  handle and remove the `emptied`/`loadstart` re-arm listeners — the fps burst
+  must never leak across teardown / re-init / document replacement.
 - **Reliability guards**: wrap `chrome.*` and page-API access in try/catch;
   treat cross-origin frames as inaccessible; never assume `parentElement`
   exists — site handlers fall back to the media's own parent
   (`VideoController.insertIntoDOM`).
+- **Shortcut capture**: the keydown listener attaches on `window` (capture
+  phase), not `document` — `window` is the top of the capture chain, so a
+  `document_start` listener stays ahead of page-level handlers a site
+  (e.g. YouTube's Polymer app) adds later. `handleKeydown` only claims a key
+  when there is controlled media, so a dropped controller silently surrenders
+  keys; SPA-navigation recovery (above) re-attaches it. As a reactive safety net
+  for media that loads _after_ the initial scans, a VSC-bound keypress with no
+  controlled media triggers a one-off, throttled, **synchronous** rescan
+  (`EventManager.requestMediaRescan` → `inject.js` `rescanForMediaSync`): a ready
+  video (`readyState >= 2`) attaches synchronously and the same keypress acts on
+  it; a still-loading one is primed (not force-attached) and handled a beat later.
+  A cross-origin embed in an iframe is a separate context the parent frame can
+  never reach — VSC's own instance inside that frame handles it.
+- **Shift-exclusive frame-step keys**: `rewindFrame` (`,`) and `advanceFrame`
+  (`.`) carry an explicit **all-false `modifiers` object** in `DEFAULT_BINDINGS`.
+  That routes them through `findMatchingBinding`'s chord tier (exact modifier
+  match), so bare `,`/`.` fire but `Shift+,`/`Shift+.` (`<`/`>`) do **not** — they
+  fall through to YouTube's decrease/increase-speed keys. The options recorder
+  re-stamps this all-false object when a bare key is re-recorded for these
+  actions (`SHIFT_EXCLUSIVE_ACTIONS` in `options.js`), so re-recording can't
+  silently downgrade them to a shift-catching simple binding.
 - **Performance guards**: prefer `scheduleDeferredWork`/`requestIdleCallback`;
   don't watch `style`/`class` mutations until the first media element exists
   (`MutationObserver.enableAttributeObservation`); skip the comprehensive scan on

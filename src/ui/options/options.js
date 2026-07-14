@@ -90,12 +90,22 @@ function syncCSSScroll() {
   }
 }
 
+// Predefined actions that must stay shift-exclusive: their default key ("," /
+// ".") produces a different, site-owned key when shifted ("<" / ">" = YouTube
+// speed controls). A simple (modifier-less) binding would also fire on Shift,
+// so when the user re-records one of these with a bare key we stamp an explicit
+// all-false modifiers object — routing it through the matcher's exact-match
+// chord tier. Mirrors DEFAULT_BINDINGS in key-maps.js.
+export const SHIFT_EXCLUSIVE_ACTIONS = new Set(['rewindFrame', 'advanceFrame']);
+
 // Action labels — shared by predefined and custom shortcut rows
-const ACTION_OPTIONS = [
+export const ACTION_OPTIONS = [
   ['slower', 'Decrease speed'],
   ['faster', 'Increase speed'],
   ['rewind', 'Rewind'],
   ['advance', 'Advance'],
+  ['rewindFrame', 'Rewind frame'],
+  ['advanceFrame', 'Advance frame'],
   ['reset', 'Reset speed'],
   ['fast', 'Preferred speed'],
   ['muted', 'Mute'],
@@ -714,6 +724,13 @@ function createKeyBindings(item) {
     binding.modifiers = input.modifiers;
   }
 
+  // Keep frame-step bindings shift-exclusive even after a bare-key re-record.
+  // Without this, a re-recorded "," would become a simple binding that also
+  // fires on Shift+"," ("<"), hijacking YouTube's decrease-speed key.
+  if (!binding.modifiers && input.code && SHIFT_EXCLUSIVE_ACTIONS.has(action)) {
+    binding.modifiers = { ctrl: false, alt: false, shift: false, meta: false };
+  }
+
   keyBindings.push(binding);
 }
 
@@ -1010,7 +1027,7 @@ async function restore_defaults() {
       window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
     }
 
-    const defaults = { ...window.VSC.Constants.DEFAULT_SETTINGS, schemaVersion: 2 };
+    const defaults = { ...window.VSC.Constants.DEFAULT_SETTINGS, schemaVersion: 3 };
     const ok = await window.VSC.videoSpeedConfig.save(defaults);
     if (!ok) {
       throw new Error('failed to write defaults to storage');

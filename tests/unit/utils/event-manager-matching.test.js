@@ -292,6 +292,101 @@ describe('EventManager Matching', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it('claims keys ahead of a window-capture listener the page registers later', () => {
+    // Regression: YouTube's Polymer app attaches a window-level capture keydown
+    // handler after it boots. A document-level VSC listener loses to it (window
+    // capture precedes document capture), letting the site reclaim keys like `s`
+    // "after a while". VSC must attach on `window` and register first.
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    const originalIsShortcutClaimHost = window.VSC.EventManager.isShortcutClaimHost;
+    window.VSC.EventManager.isShortcutClaimHost = () => true;
+
+    // VSC registers first (mirrors document_start injection)...
+    eventManager.setupKeyboardShortcuts(document);
+
+    // ...the page then adds its own window-capture handler later.
+    let siteHandled = false;
+    const pageWindowHandler = () => {
+      siteHandled = true;
+    };
+    window.addEventListener('keydown', pageWindowHandler, true);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyS',
+      key: 's',
+      keyCode: 83,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    window.removeEventListener('keydown', pageWindowHandler, true);
+    eventManager.cleanup();
+    window.VSC.EventManager.isShortcutClaimHost = originalIsShortcutClaimHost;
+
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    expect(siteHandled).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('uses DomUtils.inIframe (not the nonexistent window.VSC.inIframe) for the iframe branch', () => {
+    // Regression: window.VSC.inIframe is undefined — the helper lives at
+    // window.VSC.DomUtils.inIframe. The old call threw (swallowed by try/catch),
+    // so the top-window listener was silently never attached from an iframe.
+    const { eventManager } = setupEnv([
+      { action: 'slower', code: 'KeyS', key: 83, keyCode: 83, value: 0.1, force: false },
+    ]);
+
+    expect(window.VSC.inIframe).toBeUndefined();
+    const inIframeSpy = vi.spyOn(window.VSC.DomUtils, 'inIframe');
+
+    // Must not throw, and must consult the real helper.
+    expect(() => eventManager.setupKeyboardShortcuts(document)).not.toThrow();
+    expect(inIframeSpy).toHaveBeenCalled();
+
+    inIframeSpy.mockRestore();
+    eventManager.cleanup();
+  });
+
+  it('cleanup removes the window-level keydown listener', () => {
+    const { eventManager, actions } = setupEnv([
+      {
+        action: 'slower',
+        code: 'KeyS',
+        key: 83,
+        keyCode: 83,
+        displayKey: 's',
+        value: 0.1,
+        force: false,
+      },
+    ]);
+
+    eventManager.setupKeyboardShortcuts(document);
+    eventManager.cleanup();
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'KeyS',
+      key: 's',
+      keyCode: 83,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+
+    expect(actions.length).toBe(0);
+  });
+
   it('Unmatched keys still reach same-target page capture listeners', () => {
     const { eventManager, actions } = setupEnv([
       {
@@ -846,5 +941,251 @@ describe('EventManager Matching', () => {
     );
     expect(actions.length).toBe(2);
     expect(actions[1].action).toBe('ctrl-s-action');
+  });
+
+  // --- Frame-step bindings: shift-exclusivity (YouTube "<" / ">" survive) ---
+
+  const FRAME_STEP_BINDINGS = [
+    {
+      action: 'rewindFrame',
+      code: 'Comma',
+      key: 188,
+      keyCode: 188,
+      displayKey: ',',
+      value: 30,
+      modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+    },
+    {
+      action: 'advanceFrame',
+      code: 'Period',
+      key: 190,
+      keyCode: 190,
+      displayKey: '.',
+      value: 30,
+      modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+    },
+  ];
+
+  it('Frame-step: bare Comma matches rewindFrame', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Comma', key: ',', keyCode: 188, timeStamp: 3100 })
+    );
+    expect(actions).toEqual([{ action: 'rewindFrame', value: 30 }]);
+  });
+
+  it('Frame-step: bare Period matches advanceFrame', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Period', key: '.', keyCode: 190, timeStamp: 3200 })
+    );
+    expect(actions).toEqual([{ action: 'advanceFrame', value: 30 }]);
+  });
+
+  it('Frame-step: Shift+Comma ("<") does NOT match rewindFrame', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Comma', key: '<', keyCode: 188, shiftKey: true, timeStamp: 3300 })
+    );
+    expect(actions.length).toBe(0);
+  });
+
+  it('Frame-step: Shift+Period (">") does NOT match advanceFrame', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Period', key: '>', keyCode: 190, shiftKey: true, timeStamp: 3400 })
+    );
+    expect(actions.length).toBe(0);
+  });
+
+  it('Frame-step: Ctrl+Comma / Alt+Comma / Meta+Comma do NOT match', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Comma', key: ',', keyCode: 188, ctrlKey: true, timeStamp: 3500 })
+    );
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Comma', key: ',', keyCode: 188, altKey: true, timeStamp: 3510 })
+    );
+    eventManager.handleKeydown(
+      makeEvent({ code: 'Comma', key: ',', keyCode: 188, metaKey: true, timeStamp: 3520 })
+    );
+    expect(actions.length).toBe(0);
+  });
+
+  it('Frame-step: empty event.code + keyCode 188 (no modifiers) matches rewindFrame', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(makeEvent({ code: '', key: ',', keyCode: 188, timeStamp: 3600 }));
+    expect(actions).toEqual([{ action: 'rewindFrame', value: 30 }]);
+  });
+
+  it('Frame-step: empty event.code + keyCode 188 + Shift does NOT match', () => {
+    const { eventManager, actions } = setupEnv(FRAME_STEP_BINDINGS);
+    eventManager.handleKeydown(
+      makeEvent({ code: '', key: '<', keyCode: 188, shiftKey: true, timeStamp: 3700 })
+    );
+    expect(actions.length).toBe(0);
+  });
+
+  // --- Keypress-triggered media rescan (late-loaded video safety net) ---
+
+  /** Env with bindings but NO controlled media registered. */
+  function setupNoMediaEnv(keyBindings) {
+    const config = window.VSC.videoSpeedConfig;
+    config._loaded = true;
+    config.settings.keyBindings = keyBindings;
+
+    const actions = [];
+    const actionHandler = {
+      runAction: (action, value, _event) => actions.push({ action, value }),
+    };
+
+    const eventManager = new window.VSC.EventManager(config, actionHandler);
+    return { config, eventManager, actions };
+  }
+
+  const SLOWER_BINDING = {
+    action: 'slower',
+    code: 'KeyS',
+    key: 83,
+    keyCode: 83,
+    displayKey: 's',
+    value: 0.1,
+    force: false,
+  };
+
+  /** Register a connected, controlled video so getControlledElements sees it. */
+  function registerControlledVideo() {
+    const video = createMockVideo({ playbackRate: 1.0 });
+    mockDOM.container.appendChild(video);
+    video.vsc = { div: document.createElement('div'), speedIndicator: { textContent: '1.00' } };
+    window.VSC.stateManager.controllers.set('late-video', {
+      element: video,
+      videoSrc: 'late',
+      tagName: 'VIDEO',
+      created: Date.now(),
+      isActive: true,
+    });
+    return video;
+  }
+
+  it('Rescan: no media + non-VSC key does NOT request a rescan', () => {
+    const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => false);
+    eventManager.requestMediaRescan = rescan;
+
+    const result = eventManager.handleKeydown(
+      makeEvent({ code: 'KeyK', key: 'k', keyCode: 75, timeStamp: 2000 })
+    );
+
+    expect(rescan).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+  });
+
+  it('Rescan: no media + VSC key + ready video attaches → action runs on same keypress', () => {
+    const { eventManager, actions } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => {
+      registerControlledVideo();
+      return true;
+    });
+    eventManager.requestMediaRescan = rescan;
+
+    eventManager.handleKeydown(makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 2100 }));
+
+    expect(rescan).toHaveBeenCalledOnce();
+    expect(actions).toEqual([{ action: 'slower', value: 0.1 }]);
+    expect(eventManager.lastKeyEventSignature).toBe('KeyS_s_2100_keydown');
+  });
+
+  it('Rescan: no media + VSC key + rescan finds nothing → no action', () => {
+    const { eventManager, actions } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => false);
+    eventManager.requestMediaRescan = rescan;
+
+    const result = eventManager.handleKeydown(
+      makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 2200 })
+    );
+
+    expect(rescan).toHaveBeenCalledOnce();
+    expect(actions.length).toBe(0);
+    expect(result).toBe(false);
+  });
+
+  it('Rescan: does not run while typing in an editable context', () => {
+    const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => false);
+    eventManager.requestMediaRescan = rescan;
+
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    eventManager.handleKeydown({
+      ...makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 2300 }),
+      composedPath: () => [input, document.body, document, window],
+    });
+
+    expect(rescan).not.toHaveBeenCalled();
+    input.remove();
+  });
+
+  it('Rescan: throttled to once per MEDIA_RESCAN_THROTTLE_MS window', () => {
+    const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
+    const rescan = vi.fn(() => false);
+    eventManager.requestMediaRescan = rescan;
+
+    const throttle = window.VSC.EventManager.MEDIA_RESCAN_THROTTLE_MS;
+    // First press → scans.
+    eventManager.handleKeydown(
+      makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 10000 })
+    );
+    // Within the window → suppressed.
+    eventManager.handleKeydown(
+      makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 10000 + throttle - 1 })
+    );
+    expect(rescan).toHaveBeenCalledOnce();
+
+    // After the window → scans again.
+    eventManager.handleKeydown(
+      makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 10000 + throttle + 1 })
+    );
+    expect(rescan).toHaveBeenCalledTimes(2);
+  });
+
+  it('Rescan: no-op (returns false) when requestMediaRescan is unwired', () => {
+    const { eventManager, actions } = setupNoMediaEnv([SLOWER_BINDING]);
+    eventManager.requestMediaRescan = null;
+
+    let result;
+    expect(() => {
+      result = eventManager.handleKeydown(
+        makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 2400 })
+      );
+    }).not.toThrow();
+    expect(result).toBe(false);
+    expect(actions.length).toBe(0);
+  });
+
+  it('Rescan: post-rescan path still deduplicates a repeated event', () => {
+    const { eventManager, actions } = setupNoMediaEnv([SLOWER_BINDING]);
+    eventManager.requestMediaRescan = vi.fn(() => {
+      registerControlledVideo();
+      return true;
+    });
+
+    const event = makeEvent({ code: 'KeyS', key: 's', keyCode: 83, timeStamp: 2500 });
+    eventManager.handleKeydown(event);
+    eventManager.handleKeydown(event);
+
+    expect(actions.length).toBe(1);
+  });
+
+  it('Rescan: cleanup resets lastRescanAt and requestMediaRescan', () => {
+    const { eventManager } = setupNoMediaEnv([SLOWER_BINDING]);
+    eventManager.requestMediaRescan = vi.fn(() => false);
+    eventManager.lastRescanAt = 12345;
+
+    eventManager.cleanup();
+
+    expect(eventManager.lastRescanAt).toBe(0);
+    expect(eventManager.requestMediaRescan).toBeNull();
   });
 });

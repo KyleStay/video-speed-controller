@@ -27,6 +27,18 @@ class VideoController {
     this.positionBeforeJump = null;
     this.initMetadataHandler = null;
 
+    // Live frame-rate detection state (used by the frame-step shortcuts).
+    // null = not yet measured; frame-step falls back to the binding's fps value.
+    this.detectedFps = null;
+    this.vfcHandle = null;
+    this.fpsSamples = [];
+    this.lastVfcMeta = null;
+    this.handleFpsReset = null;
+    this.vfcCallbackCount = 0;
+    // Set once in remove(): a rVFC callback already in flight must not touch the
+    // detached video or re-arm itself after teardown.
+    this.disposed = false;
+
     // Attach controller to video element first (needed for adjustSpeed)
     target.vsc = this;
 
@@ -49,7 +61,174 @@ class VideoController {
     // Set up mutation observer for src changes
     this.setupMutationObserver();
 
+    // Start measuring the real frame rate (video-only, zero steady-state cost).
+    this.setupFpsDetection();
+
     window.VSC.logger.info('VideoController initialized for video element');
+  }
+
+  /**
+   * Begin detecting the media's real frame rate for the frame-step shortcuts.
+   *
+   * Uses requestVideoFrameCallback, which exists on <video> only. If the API is
+   * unavailable (older browsers, <audio>), we stay silent and frame-step uses
+   * the binding's fallback fps. A short burst samples a few frames while the
+   * video plays, snaps the estimate to the nearest common rate, then stops —
+   * so there is no per-frame cost once fps is known.
+   * @private
+   */
+  setupFpsDetection() {
+    // Reliability priority #1: fps detection is a best-effort enhancement and
+    // must never break controller attachment. The page runs in the MAIN world
+    // and could have replaced/wrapped the media API, so guard the whole setup.
+    try {
+      if (typeof this.video.requestVideoFrameCallback !== 'function') {
+        return;
+      }
+
+      this.startFpsBurst();
+
+      // Re-arm on source change — a new media source can have a different fps.
+      this.handleFpsReset = () => {
+        this.detectedFps = null;
+        this.startFpsBurst();
+      };
+      this.video.addEventListener('emptied', this.handleFpsReset);
+      this.video.addEventListener('loadstart', this.handleFpsReset);
+    } catch (e) {
+      window.VSC.logger.warn(`fps detection setup failed: ${e?.message}`);
+    }
+  }
+
+  /**
+   * (Re)start the rVFC sampling burst. Idempotent — cancels any in-flight
+   * callback first so re-arming never leaves two bursts running.
+   * @private
+   */
+  startFpsBurst() {
+    this.stopFpsBurst();
+    this.fpsSamples = [];
+    this.lastVfcMeta = null;
+    this.vfcCallbackCount = 0;
+
+    if (this.disposed || typeof this.video.requestVideoFrameCallback !== 'function') {
+      return;
+    }
+
+    const sampler = (_now, metadata) => {
+      this.vfcHandle = null;
+
+      // Torn down while this callback was in flight (cancel unavailable/failed):
+      // do not touch the detached video or re-arm. Hard stop against post-remove
+      // leaks — the re-arm listeners are already gone and we must not resurrect.
+      if (this.disposed) {
+        return;
+      }
+
+      this.vfcCallbackCount += 1;
+      this.collectFpsSample(metadata);
+
+      // Bound the burst by callback count — NOT by useful-sample count — so
+      // variable-frame-rate or looping media, whose frames may never yield a
+      // valid sample, can't re-register forever. Once fps is known, or the cap
+      // is hit, the burst stops and steady-state per-frame cost returns to zero.
+      if (
+        this.detectedFps === null &&
+        this.vfcCallbackCount < VideoController.FPS_MAX_CALLBACKS &&
+        typeof this.video.requestVideoFrameCallback === 'function'
+      ) {
+        this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
+      }
+    };
+
+    this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
+  }
+
+  /**
+   * Fold one rVFC metadata reading into the running fps estimate.
+   * Estimates fps as ΔpresentedFrames / ΔmediaTime between successive frames,
+   * which stays correct across dropped frames and playback-rate changes.
+   * @param {VideoFrameCallbackMetadata} metadata
+   * @private
+   */
+  collectFpsSample(metadata) {
+    if (
+      !metadata ||
+      typeof metadata.mediaTime !== 'number' ||
+      typeof metadata.presentedFrames !== 'number'
+    ) {
+      return;
+    }
+
+    const prev = this.lastVfcMeta;
+    this.lastVfcMeta = {
+      mediaTime: metadata.mediaTime,
+      presentedFrames: metadata.presentedFrames,
+    };
+
+    if (!prev) {
+      return; // Need two readings to form a delta.
+    }
+
+    const dt = metadata.mediaTime - prev.mediaTime;
+    const df = metadata.presentedFrames - prev.presentedFrames;
+    // Skip non-progress intervals (paused, seeked backward, repeated frame).
+    if (dt <= 0 || df <= 0) {
+      return;
+    }
+
+    const fps = df / dt;
+    if (!Number.isFinite(fps) || fps <= 0 || fps > 1000) {
+      return;
+    }
+
+    this.fpsSamples.push(fps);
+    this.maybeFinalizeFps();
+  }
+
+  /**
+   * Commit a detected fps once the recent samples agree, then end the burst.
+   * @private
+   */
+  maybeFinalizeFps() {
+    const samples = this.fpsSamples;
+    if (samples.length < VideoController.FPS_MIN_SAMPLES) {
+      return;
+    }
+
+    const recent = samples.slice(-VideoController.FPS_MIN_SAMPLES);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const stable = recent.every(
+      (s) => Math.abs(s - avg) / avg <= VideoController.FPS_STABILITY_TOLERANCE
+    );
+    if (!stable) {
+      return;
+    }
+
+    this.detectedFps = VideoController.snapToCommonFps(avg);
+    window.VSC.logger.debug(`Detected frame rate: ${this.detectedFps} fps`);
+    this.stopFpsBurst();
+  }
+
+  /**
+   * Cancel any pending rVFC callback. Safe to call repeatedly.
+   * @private
+   */
+  stopFpsBurst() {
+    // The API lookup and call are both inside the try: this runs during
+    // remove(), and a hostile/broken page-defined accessor on
+    // cancelVideoFrameCallback must never throw out of teardown and abort the
+    // rest of remove() (listener removal, observer disconnect, state unregister).
+    // The disposed flag is the real leak guard; cancel is best-effort.
+    try {
+      if (this.vfcHandle !== null && typeof this.video.cancelVideoFrameCallback === 'function') {
+        this.video.cancelVideoFrameCallback(this.vfcHandle);
+      }
+    } catch {
+      // Handle already fired/invalid, or a page accessor threw — ignore.
+    } finally {
+      this.vfcHandle = null;
+    }
   }
 
   /**
@@ -335,6 +514,18 @@ class VideoController {
       this.video.removeEventListener('seeked', this.handleSeek);
     }
 
+    // Stop fps detection: mark disposed first (a rVFC callback already in flight
+    // must not re-arm even if cancel is unavailable), cancel any pending callback,
+    // and remove the re-arm listeners. Nothing may leak across teardown /
+    // document replacement.
+    this.disposed = true;
+    this.stopFpsBurst();
+    if (this.handleFpsReset) {
+      this.video.removeEventListener('emptied', this.handleFpsReset);
+      this.video.removeEventListener('loadstart', this.handleFpsReset);
+      this.handleFpsReset = null;
+    }
+
     // Disconnect mutation observer
     if (this.targetObserver) {
       this.targetObserver.disconnect();
@@ -440,6 +631,46 @@ class VideoController {
     }
   }
 }
+
+// --- Frame-rate detection tunables ---
+
+// Common broadcast/film frame rates. A raw estimate within FPS_SNAP_TOLERANCE
+// of one of these snaps to it; otherwise the raw value is kept.
+VideoController.COMMON_FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+
+// Consecutive agreeing samples required before committing a detected fps.
+VideoController.FPS_MIN_SAMPLES = 3;
+
+// Hard cap on rVFC callbacks per burst before giving up. Bounds the burst by
+// callbacks (not useful samples) so variable-frame-rate or looping media, whose
+// frames may never produce a valid sample, can't re-register forever. ~60
+// callbacks is a second or two of playback — ample to converge on real fps.
+VideoController.FPS_MAX_CALLBACKS = 60;
+
+// Recent samples must agree within this relative spread to be considered stable.
+VideoController.FPS_STABILITY_TOLERANCE = 0.05;
+
+// Snap a raw estimate to a common rate only when within this relative distance.
+VideoController.FPS_SNAP_TOLERANCE = 0.05;
+
+/**
+ * Snap a raw fps estimate to the nearest common frame rate when close enough,
+ * else return the raw value unchanged.
+ * @param {number} raw - Raw fps estimate
+ * @returns {number} Snapped or raw fps
+ */
+VideoController.snapToCommonFps = function (raw) {
+  let best = raw;
+  let bestDelta = Infinity;
+  for (const candidate of VideoController.COMMON_FPS) {
+    const delta = Math.abs(candidate - raw);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = candidate;
+    }
+  }
+  return bestDelta / raw <= VideoController.FPS_SNAP_TOLERANCE ? best : raw;
+};
 
 // Create singleton instance
 window.VSC.VideoController = VideoController;
