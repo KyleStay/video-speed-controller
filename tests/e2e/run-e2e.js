@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * E2E test runner for Video Speed Controller Chrome Extension
+ * E2E test runner for the StayFast Video Chrome extension
  * Usage: node tests/e2e/run-e2e.js [youtube|basic|all]
  */
 
@@ -22,7 +22,7 @@ try {
 }
 
 async function runE2ETests() {
-  console.log('🎭 Video Speed Controller - E2E Test Runner\n');
+  console.log('🎭 StayFast Video - E2E Test Runner\n');
 
   let totalPassed = 0;
   let totalFailed = 0;

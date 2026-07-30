@@ -4,7 +4,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs-extra';
 import { createRequire } from 'module';
-import { BROWSERS, createBrowserManifest, getBuildTarget } from './browser-config.mjs';
+import {
+  RELEASE_READY_BROWSERS,
+  createBrowserManifest,
+  getBuildTarget,
+} from './browser-config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +22,7 @@ const isRelease = process.env.RELEASE === '1';
 const isAllBrowsers = process.argv.includes('--all');
 const browserArgument = process.argv.find((argument) => argument.startsWith('--browser='));
 const explicitBrowser = browserArgument?.split('=', 2)[1];
-const requestedBrowsers = isAllBrowsers ? BROWSERS : [explicitBrowser || 'chrome'];
+const requestedBrowsers = isAllBrowsers ? RELEASE_READY_BROWSERS : [explicitBrowser || 'chrome'];
 
 if (isWatch && (isAllBrowsers || explicitBrowser)) {
   throw new Error('Watch mode uses the default Chrome dist/. Omit --all and --browser.');

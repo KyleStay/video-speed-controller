@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { ZipArchive } from 'archiver';
-import { BROWSERS } from './browser-config.mjs';
+import { BROWSERS, RELEASE_READY_BROWSERS } from './browser-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -23,7 +23,7 @@ async function packageBrowser(targetBrowser, useLegacyDist = false) {
     : path.join(rootDir, 'dist', targetBrowser);
   const zipName = useLegacyDist
     ? `videospeed-${pkg.version}.zip`
-    : `${pkg.name}-${targetBrowser}-${pkg.version}.zip`;
+    : `stayfast-video-${targetBrowser}-${pkg.version}.zip`;
   const zipPath = path.join(releaseDir, zipName);
 
   // Verify dist exists
@@ -76,7 +76,7 @@ async function packageBrowser(targetBrowser, useLegacyDist = false) {
 
 async function packageRelease() {
   if (packageAll) {
-    for (const targetBrowser of BROWSERS) {
+    for (const targetBrowser of RELEASE_READY_BROWSERS) {
       await packageBrowser(targetBrowser);
     }
     return;
@@ -85,6 +85,11 @@ async function packageRelease() {
   if (browser) {
     if (!BROWSERS.includes(browser)) {
       throw new Error(`Unsupported browser "${browser}". Expected one of: ${BROWSERS.join(', ')}`);
+    }
+    if (!RELEASE_READY_BROWSERS.includes(browser)) {
+      throw new Error(
+        `${browser} is experimental and not release-package ready. Build conversion input with npm run build:${browser}.`
+      );
     }
     await packageBrowser(browser);
     return;
