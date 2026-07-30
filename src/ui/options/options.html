@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
   <head>
-    <title>Video Speed Controller: Options</title>
+    <title>StayFast Video: Settings</title>
     <link rel="stylesheet" href="options.css" />
     <script src="options.js"></script>
   </head>
@@ -9,7 +9,12 @@
   <body>
     <header>
       <nav class="header-tabs" role="tablist" aria-label="Options sections">
-        <img src="../../assets/icons/icon48.png" alt="" class="header-icon" />
+        <span class="header-brand">
+          <img src="../../assets/icons/icon48.png" alt="" class="header-icon" />
+          <span class="header-brand-copy"
+            ><strong>StayFast Video</strong><small>by StayTech</small></span
+          >
+        </span>
         <button
           id="tab-settings"
           class="header-tab active"
@@ -39,6 +44,16 @@
           tabindex="-1"
         >
           FAQ
+        </button>
+        <button
+          id="tab-about"
+          class="header-tab"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-about"
+          tabindex="-1"
+        >
+          About
         </button>
       </nav>
       <div class="split-button">
@@ -212,8 +227,8 @@ vsc-controller { top: 50px !important; }
           <ul>
             <li>In a new tab, navigate to <code>chrome://extensions</code></li>
             <li>
-              Find "Video Speed Controller" extension in the list and enable "Allow access to file
-              URLs" and/or "Allow in Incognito".
+              Find "StayFast Video" in the list and enable "Allow access to file URLs" and/or "Allow
+              in Incognito".
             </li>
           </ul>
 
@@ -315,10 +330,51 @@ vsc-controller { top: 50px !important; }
             keyboard shortcuts work identically for audio.
           </p>
         </div>
-        <div class="row">
-          <button id="about" class="secondary">About Video Speed Controller</button>
-          <button id="feedback" class="secondary">Send Feedback</button>
+        <div class="row"><button id="feedback" class="secondary">Send Feedback</button></div>
+      </section>
+    </div>
+
+    <!-- ============ ABOUT TAB ============ -->
+    <div id="panel-about" role="tabpanel" aria-labelledby="tab-about" hidden>
+      <section class="about-hero" aria-labelledby="about-title">
+        <img src="../../assets/icons/icon128.png" alt="" class="about-icon" />
+        <div>
+          <p class="about-kicker">Every video. Your speed.</p>
+          <h2 id="about-title">StayFast Video</h2>
+          <p class="about-byline">A StayTech-maintained open-source edition.</p>
         </div>
+      </section>
+
+      <section class="about-card" aria-labelledby="about-lineage">
+        <h3 id="about-lineage">Open-source lineage</h3>
+        <p>
+          StayFast Video incorporates and modifies
+          <a href="https://github.com/igrigorik/videospeed" target="_blank" rel="noreferrer"
+            >Video Speed Controller</a
+          >, originally created by Ilya Grigorik and used under the MIT License.
+        </p>
+        <p>
+          This edition is independently developed and maintained by StayTech. StayTech is not
+          affiliated with or endorsed by the original project or its contributors.
+        </p>
+        <div class="about-links" aria-label="Project resources">
+          <a
+            href="https://github.com/KyleStay/video-speed-controller"
+            target="_blank"
+            rel="noreferrer"
+            >StayFast source</a
+          >
+          <a href="../../LICENSE" target="_blank" rel="noreferrer">Complete MIT License</a>
+          <a href="../../PRIVACY.md" target="_blank" rel="noreferrer">Privacy</a>
+        </div>
+      </section>
+
+      <section class="about-card" aria-labelledby="about-privacy">
+        <h3 id="about-privacy">Private by design</h3>
+        <p>
+          No StayTech account, advertising, analytics, or external service. Your preferences stay in
+          browser storage or your browser's own settings sync.
+        </p>
       </section>
     </div>
   </body>
