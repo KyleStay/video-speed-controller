@@ -29,7 +29,6 @@
     "release:browsers": "npm run build:release:browsers && node scripts/package-release.js --all",
     "package:chrome": "node scripts/package-release.js --browser=chrome",
     "package:firefox": "node scripts/package-release.js --browser=firefox",
-    "package:safari": "node scripts/package-release.js --browser=safari",
     "release:github": "node scripts/github-release.js",
     "clean": "node scripts/clean.mjs dist release",
     "prepare": "husky"

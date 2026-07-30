@@ -6,7 +6,7 @@ StayFast Video incorporates and modifies software from
 [Video Speed Controller](https://github.com/igrigorik/videospeed), originally
 created by Ilya Grigorik.
 
-Copyright © 2014 Ilya Grigorik  
+Copyright © 2014 Ilya Grigorik
 Licensed under the MIT License
 
 StayFast Video is an independently developed and maintained StayTech edition.

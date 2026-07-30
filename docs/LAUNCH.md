@@ -39,8 +39,10 @@ Build from shared source, but treat each package as its own release candidate:
 
 1. Verify and submit the Chrome package.
 2. Verify and submit the Firefox package.
-3. Verify and submit the Safari web extension and containing Apple app.
-4. Announce a platform only after its listing is approved and installable.
+3. Keep Safari experimental until a tested MAIN-world bootstrap and blank-frame
+   strategy replace the unsupported manifest behavior.
+4. Only then verify and submit the Safari web extension and containing Apple app.
+5. Announce a platform only after its listing is approved and installable.
 
 Document browser-specific differences rather than claiming parity before it is
 tested.

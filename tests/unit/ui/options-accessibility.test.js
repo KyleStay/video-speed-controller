@@ -243,4 +243,21 @@ describe('Options accessibility and CSS safety', () => {
     expect(optionsHtml).toContain('href="../../LICENSE"');
     expect(optionsHtml).toContain('href="https://github.com/KyleStay/video-speed-controller"');
   });
+
+  it('uses document language and keeps non-tab branding outside the tablist', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    const tablist = parsed.querySelector('[role="tablist"]');
+
+    expect(parsed.documentElement.lang).toBe('en');
+    expect(tablist).not.toBeNull();
+    expect([...tablist.children].every((child) => child.getAttribute('role') === 'tab')).toBe(true);
+    expect(tablist.querySelector('.header-brand')).toBeNull();
+    expect(parsed.querySelector('header > .header-brand')).not.toBeNull();
+  });
+
+  it('keeps dark-mode visited links readable with the high-contrast text token', () => {
+    expect(optionsCss).toMatch(
+      /@media \(prefers-color-scheme: dark\)[\s\S]*a:visited\s*\{\s*color: var\(--md-on-primary-container\);/
+    );
+  });
 });

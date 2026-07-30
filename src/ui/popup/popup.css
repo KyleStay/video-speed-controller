@@ -282,7 +282,7 @@ body {
 
 /* Reset button special styling */
 .reset-btn {
-  background: linear-gradient(135deg, var(--md-primary), #087ea4);
+  background: var(--md-primary);
   color: var(--md-on-primary);
   border-color: var(--md-primary);
   font-size: 14px;

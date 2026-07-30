@@ -1,5 +1,5 @@
 /**
- * Video Speed Controller — Main Content Script
+ * StayFast Video — Main Content Script
  */
 
 class VideoSpeedExtension {
@@ -39,7 +39,7 @@ class VideoSpeedExtension {
       this.MediaElementObserver = window.VSC.MediaElementObserver;
       this.MESSAGE_TYPES = window.VSC.Constants.MESSAGE_TYPES;
 
-      this.logger.info('Video Speed Controller starting...');
+      this.logger.info('StayFast Video starting...');
 
       this.config = window.VSC.videoSpeedConfig;
       await this.config.load();
@@ -54,7 +54,7 @@ class VideoSpeedExtension {
       // Defer DOM work so page frameworks finish init before we mutate.
       this.deferDOMWork(document);
     } catch (error) {
-      this.logger.error(`Failed to initialize Video Speed Controller: ${error.message}`);
+      this.logger.error(`Failed to initialize StayFast Video: ${error.message}`);
       this.logger.error(`Error stack: ${error.stack}`);
     }
   }
@@ -251,7 +251,7 @@ class VideoSpeedExtension {
         this.initializeDocument(doc);
       });
 
-      this.logger.info('Video Speed Controller initialized successfully');
+      this.logger.info('StayFast Video initialized successfully');
       this.initialized = true;
     };
 
@@ -626,7 +626,7 @@ class VideoSpeedExtension {
     }
 
     this.teardownRequested = true;
-    this.logger.info('Tearing down Video Speed Controller');
+    this.logger.info('Tearing down StayFast Video');
 
     this.clearScheduledWork();
 

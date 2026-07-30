@@ -1,5 +1,5 @@
 /**
- * YouTube E2E tests for Video Speed Controller extension
+ * YouTube E2E tests for the StayFast Video extension
  */
 
 import {

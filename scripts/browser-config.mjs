@@ -1,8 +1,9 @@
 const BROWSERS = Object.freeze(['chrome', 'firefox', 'safari']);
+const RELEASE_READY_BROWSERS = Object.freeze(['chrome', 'firefox']);
 
 const BUILD_TARGETS = Object.freeze({
   chrome: 'chrome114',
-  firefox: 'firefox128',
+  firefox: 'firefox140',
   safari: 'safari18',
 });
 
@@ -36,7 +37,7 @@ function createBrowserManifest(baseManifest, browser, version) {
     manifest.browser_specific_settings = {
       gecko: {
         id: 'stayfast-video@staytech.co',
-        strict_min_version: '128.0',
+        strict_min_version: '140.0',
         data_collection_permissions: {
           required: ['none'],
         },
@@ -59,4 +60,4 @@ function getBuildTarget(browser) {
   return BUILD_TARGETS[browser];
 }
 
-export { BROWSERS, createBrowserManifest, getBuildTarget };
+export { BROWSERS, RELEASE_READY_BROWSERS, createBrowserManifest, getBuildTarget };

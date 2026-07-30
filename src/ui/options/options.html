@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <title>StayFast Video: Settings</title>
     <link rel="stylesheet" href="options.css" />
@@ -8,13 +8,13 @@
 
   <body>
     <header>
+      <div class="header-brand">
+        <img src="../../assets/icons/icon48.png" alt="" class="header-icon" />
+        <span class="header-brand-copy"
+          ><strong>StayFast Video</strong><small>by StayTech</small></span
+        >
+      </div>
       <nav class="header-tabs" role="tablist" aria-label="Options sections">
-        <span class="header-brand">
-          <img src="../../assets/icons/icon48.png" alt="" class="header-icon" />
-          <span class="header-brand-copy"
-            ><strong>StayFast Video</strong><small>by StayTech</small></span
-          >
-        </span>
         <button
           id="tab-settings"
           class="header-tab active"
@@ -221,14 +221,22 @@ vsc-controller { top: 50px !important; }
             The speed controls are not showing up for local videos or Incognito mode?
           </h4>
           <p>
-            To enable playback of local media (e.g. File &gt; Open File) or Incognito mode, you need
-            to manually grant additional permissions to the extension.
+            Local-file and private-browsing access are optional browser permissions. Open your
+            browser's extension or add-on manager, select StayFast Video, and enable file URL access
+            and/or private browsing if those controls are available.
           </p>
           <ul>
-            <li>In a new tab, navigate to <code>chrome://extensions</code></li>
             <li>
-              Find "StayFast Video" in the list and enable "Allow access to file URLs" and/or "Allow
-              in Incognito".
+              Chrome and compatible browsers may label these controls “Allow access to file URLs”
+              and “Allow in Incognito.”
+            </li>
+            <li>
+              Firefox may offer “Run in Private Windows”; local-file access depends on Firefox's
+              extension support and permissions.
+            </li>
+            <li>
+              Safari does not support StayFast Video on local <code>file://</code> URLs. Private
+              browsing availability depends on the Safari version and extension settings.
             </li>
           </ul>
 

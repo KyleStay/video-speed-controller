@@ -83,7 +83,7 @@ async function createRelease() {
 
   try {
     const result = run(
-      `gh release create ${tag} ${zipPath} --title "Video Speed Controller ${tag}" --notes-file ${notesFile} --draft`
+      `gh release create ${tag} ${zipPath} --title "StayFast Video ${tag}" --notes-file ${notesFile} --draft`
     );
     console.log(`✅ Draft release created: ${result}`);
     console.log('   Review and publish at the URL above.');

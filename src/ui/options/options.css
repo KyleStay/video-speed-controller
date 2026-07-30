@@ -47,7 +47,7 @@
   }
 
   a:visited {
-    color: var(--md-primary-container);
+    color: var(--md-on-primary-container);
   }
 }
 

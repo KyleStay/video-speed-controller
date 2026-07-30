@@ -12,14 +12,16 @@ scripts remain identical so the ISOLATED bridge, MAIN-world controller,
 | `npm run build`                  | Development Chrome build in `dist/`                    |
 | `npm run build:chrome`           | Chrome build in `dist/chrome/`                         |
 | `npm run build:firefox`          | Firefox build in `dist/firefox/`                       |
-| `npm run build:safari`           | Safari web-extension input in `dist/safari/`           |
-| `npm run build:browsers`         | All three development builds                           |
-| `npm run build:release:browsers` | Minified builds for all browsers                       |
-| `npm run release:browsers`       | Minified builds plus one ZIP per browser in `release/` |
+| `npm run build:safari`           | Experimental Safari conversion input in `dist/safari/` |
+| `npm run build:browsers`         | Chrome and Firefox development builds                  |
+| `npm run build:release:browsers` | Minified Chrome and Firefox builds                     |
+| `npm run release:browsers`       | Release-ready Chrome and Firefox ZIPs in `release/`    |
 
-Individual browser ZIPs can be recreated from existing builds with
-`npm run package:chrome`, `npm run package:firefox`, or
-`npm run package:safari`.
+Release-ready browser ZIPs can be recreated from existing builds with
+`npm run package:chrome` or `npm run package:firefox`. New per-browser archives
+are named `stayfast-video-<browser>-<version>.zip`. The historical
+`npm run release` workflow intentionally retains its `videospeed-<version>.zip`
+Chrome archive name for compatibility.
 
 ## Platform notes
 
@@ -31,9 +33,9 @@ worker and retains `minimum_chrome_version` from the shared manifest.
 ### Firefox
 
 Firefox uses an MV3 background event page (`background.scripts`) because it
-does not support `background.service_worker`. Firefox 128 is the minimum
-because the extension depends on declarative MAIN-world content scripts. The
-generated manifest includes the extension ID required for MV3 signing and
+does not support `background.service_worker`. Firefox 140 is the minimum
+because the manifest's `data_collection_permissions` metadata begins there.
+The generated manifest includes the extension ID required for MV3 signing and
 declares that the extension transmits no data.
 
 The build is an unsigned AMO input. Test it with a current Firefox release and
@@ -42,11 +44,16 @@ approval or signing.
 
 ### Safari
 
-`dist/safari/` and its ZIP contain web-extension resources only. They are input
-for Apple's Safari Web Extension Converter or an Xcode Safari Extension App
-target; they are not an App Store app, signed product, or submission artifact.
+`dist/safari/` is experimental conversion input only. It is not included in
+aggregate builds or release packages and is not an App Store submission
+artifact. Safari's converter currently reports the manifest `world` and
+`match_about_blank` content-script keys as unsupported, so this output cannot
+yet preserve StayFast Video's required ISOLATED-bridge/MAIN-controller
+architecture or blank-frame behavior.
 
-Before distribution, convert/import the resources into the native containing
-app, configure Apple identifiers and signing in Xcode, then test MAIN-world
-execution, cross-origin frames, file URLs, storage sync, popup/options pages,
-and enable/disable lifecycle on each supported macOS and iOS Safari version.
+Safari must remain experimental until it has a tested MAIN-world bootstrap and
+blank-frame strategy. Then convert/import the resources into the native
+containing app, configure Apple identifiers and signing in Xcode, and test
+MAIN-world execution, cross-origin frames, storage sync, popup/options pages,
+and enable/disable lifecycle on every supported macOS and iOS Safari version.
+Safari does not support local `file://` playback for this extension.

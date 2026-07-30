@@ -6,10 +6,14 @@ promise, privacy statement, and attribution consistent.
 
 ## Identity
 
-**Product name:** StayFast Video  
-**Store title:** StayFast Video: Speed Controller  
-**Endorsement:** by StayTech  
-**Tagline:** Every video. Your speed.  
+**Product name:** StayFast Video
+
+**Store title:** StayFast Video: Speed Controller
+
+**Endorsement:** by StayTech
+
+**Tagline:** Every video. Your speed.
+
 **Category:** Productivity
 
 ## Short description
