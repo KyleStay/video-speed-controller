@@ -141,6 +141,9 @@ describe('Popup accessibility', () => {
   });
 
   it('uses custom validation and visible disabled states for popup controls', () => {
+    expect(popupHtml).toContain('<title>StayFast Video</title>');
+    expect(popupHtml).toContain('Every video. Your speed.');
+    expect(popupHtml).toContain('by StayTech');
     expect(popupHtml).toContain('id="custom-speed-form"');
     expect(popupHtml).toContain('novalidate');
     expect(popupCss).toContain('.control-btn:disabled');

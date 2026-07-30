@@ -1,20 +1,20 @@
-/* Material Design Variables */
 :root {
-  /* Light theme */
-  --md-surface: #ffffff;
-  --md-surface-variant: #f3f3f3;
-  --md-surface-container: #fafafa;
-  --md-on-surface: #1c1b1f;
-  --md-on-surface-variant: #49454f;
-  --md-primary: #6750a4;
-  --md-primary-container: #eaddff;
+  --md-surface: #f7f9fc;
+  --md-surface-variant: #edf2f7;
+  --md-surface-container: #ffffff;
+  --md-on-surface: #0c1f33;
+  --md-on-surface-variant: #4a6175;
+  --md-primary: #075985;
+  --md-primary-container: #d9f3fb;
   --md-on-primary: #ffffff;
-  --md-on-primary-container: #21005d;
-  --md-outline: #79747e;
-  --md-outline-variant: #cac4d0;
-  --md-shadow: rgba(0, 0, 0, 0.1);
-  --md-shadow-2: rgba(0, 0, 0, 0.15);
-  --md-shadow-3: rgba(0, 0, 0, 0.2);
+  --md-on-primary-container: #063b54;
+  --md-outline: #71869a;
+  --md-outline-variant: #cbd6df;
+  --md-shadow: rgba(12, 31, 51, 0.1);
+  --md-shadow-2: rgba(12, 31, 51, 0.16);
+  --md-shadow-3: rgba(12, 31, 51, 0.22);
+  --brand-accent: #16b8d4;
+  --brand-ink: #09243b;
 
   /* Power button states */
   --power-enabled: #34a853;
@@ -25,23 +25,21 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Dark theme */
-    --md-surface: #131316;
-    --md-surface-variant: #2b2930;
-    --md-surface-container: #1f1f23;
-    --md-on-surface: #e6e0e9;
-    --md-on-surface-variant: #cac4cf;
-    --md-primary: #d0bcff;
-    --md-primary-container: #4f378b;
-    --md-on-primary: #371e73;
-    --md-on-primary-container: #eaddff;
-    --md-outline: #938f99;
-    --md-outline-variant: #49454f;
+    --md-surface: #081725;
+    --md-surface-variant: #10283b;
+    --md-surface-container: #0c2032;
+    --md-on-surface: #edf8fc;
+    --md-on-surface-variant: #b7cbd7;
+    --md-primary: #43d1e9;
+    --md-primary-container: #123d52;
+    --md-on-primary: #052735;
+    --md-on-primary-container: #d9f8ff;
+    --md-outline: #7e98a8;
+    --md-outline-variant: #284459;
     --md-shadow: rgba(0, 0, 0, 0.3);
     --md-shadow-2: rgba(0, 0, 0, 0.4);
     --md-shadow-3: rgba(0, 0, 0, 0.5);
 
-    /* Power button states for dark mode */
     --power-enabled: #5bb974;
     --power-disabled: #f28b82;
     --power-enabled-bg: rgba(91, 185, 116, 0.12);
@@ -73,14 +71,67 @@ body {
 body {
   background-color: var(--md-surface);
   color: var(--md-on-surface);
-  min-width: 280px;
-  width: 280px;
+  min-width: 304px;
+  width: 304px;
 }
 
 /* Popup container */
 .popup-container {
   padding: 0;
   background-color: var(--md-surface);
+}
+
+.brand-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 16px 18px 14px;
+  overflow: hidden;
+  color: #edfaff;
+  background:
+    radial-gradient(circle at 92% -30%, rgba(34, 211, 238, 0.32), transparent 58%),
+    linear-gradient(135deg, #071d31, #0d3a55);
+}
+
+.brand-header::after {
+  position: absolute;
+  right: -22px;
+  bottom: -42px;
+  width: 108px;
+  height: 108px;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  border-radius: 50%;
+  content: '';
+}
+
+.brand-icon {
+  width: 38px;
+  height: 38px;
+}
+
+.brand-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.brand-copy strong {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.brand-copy span,
+.brand-byline {
+  color: #b9d7e5;
+  font-size: 11px;
+}
+
+.brand-byline {
+  position: absolute;
+  top: 7px;
+  right: 10px;
 }
 
 /* Footer */
@@ -167,7 +218,27 @@ body {
 
 /* Speed section */
 .speed-section {
-  padding: 20px 20px 16px 20px;
+  padding: 18px 18px 16px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.eyebrow {
+  color: var(--md-on-surface);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.speed-range {
+  color: var(--md-on-surface-variant);
+  font-size: 11px;
 }
 
 /* Speed controls */
@@ -211,7 +282,7 @@ body {
 
 /* Reset button special styling */
 .reset-btn {
-  background-color: var(--md-primary);
+  background: linear-gradient(135deg, var(--md-primary), #087ea4);
   color: var(--md-on-primary);
   border-color: var(--md-primary);
   font-size: 14px;
@@ -266,7 +337,7 @@ body {
 
 /* Active state for preset buttons */
 .preset-btn.active {
-  background-color: var(--md-primary);
+  background: var(--md-primary);
   color: var(--md-on-primary);
   border-color: var(--md-primary);
   box-shadow: 0 2px 4px var(--md-shadow);
@@ -446,16 +517,12 @@ body {
 /* Responsive adjustments */
 @media (max-width: 320px) {
   body {
-    min-width: 260px;
-    width: 260px;
+    min-width: 280px;
+    width: 280px;
   }
 
   .popup-container {
     padding: 0;
-  }
-
-  .header {
-    padding: 12px 16px;
   }
 
   .speed-section {

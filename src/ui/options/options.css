@@ -1,19 +1,18 @@
 /* Material Design Variables - matching popup.css */
 :root {
-  /* Light theme */
-  --md-surface: #ffffff;
-  --md-surface-variant: #f3f3f3;
-  --md-surface-container: #fafafa;
-  --md-on-surface: #1c1b1f;
-  --md-on-surface-variant: #49454f;
-  --md-primary: #6750a4;
-  --md-primary-container: #eaddff;
+  --md-surface: #f7f9fc;
+  --md-surface-variant: #edf2f7;
+  --md-surface-container: #ffffff;
+  --md-on-surface: #0c1f33;
+  --md-on-surface-variant: #4a6175;
+  --md-primary: #075985;
+  --md-primary-container: #d9f3fb;
   --md-on-primary: #ffffff;
-  --md-on-primary-container: #21005d;
-  --md-outline: #79747e;
-  --md-outline-variant: #cac4d0;
-  --md-shadow: rgba(0, 0, 0, 0.1);
-  --md-shadow-2: rgba(0, 0, 0, 0.15);
+  --md-on-primary-container: #063b54;
+  --md-outline: #71869a;
+  --md-outline-variant: #cbd6df;
+  --md-shadow: rgba(12, 31, 51, 0.1);
+  --md-shadow-2: rgba(12, 31, 51, 0.16);
   --vsc-success: #137333;
   --vsc-success-container: rgba(19, 115, 51, 0.15);
 
@@ -26,18 +25,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Dark theme */
-    --md-surface: #131316;
-    --md-surface-variant: #2b2930;
-    --md-surface-container: #1f1f23;
-    --md-on-surface: #e6e0e9;
-    --md-on-surface-variant: #cac4cf;
-    --md-primary: #d0bcff;
-    --md-primary-container: #4f378b;
-    --md-on-primary: #371e73;
-    --md-on-primary-container: #eaddff;
-    --md-outline: #938f99;
-    --md-outline-variant: #49454f;
+    --md-surface: #081725;
+    --md-surface-variant: #10283b;
+    --md-surface-container: #0c2032;
+    --md-on-surface: #edf8fc;
+    --md-on-surface-variant: #b7cbd7;
+    --md-primary: #43d1e9;
+    --md-primary-container: #123d52;
+    --md-on-primary: #052735;
+    --md-on-primary-container: #d9f8ff;
+    --md-outline: #7e98a8;
+    --md-outline-variant: #284459;
     --md-shadow: rgba(0, 0, 0, 0.3);
     --md-shadow-2: rgba(0, 0, 0, 0.4);
     --vsc-success: #81c995;
@@ -94,10 +92,32 @@ header {
 }
 
 .header-icon {
-  width: 24px;
-  height: 24px;
-  align-self: center;
-  margin-right: 8px;
+  width: 32px;
+  height: 32px;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-right: 10px;
+}
+
+.header-brand-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.header-brand-copy strong {
+  color: var(--md-on-surface);
+  font-size: 13px;
+}
+
+.header-brand-copy small {
+  color: var(--md-on-surface-variant);
+  font-size: 10px;
 }
 
 .header-tabs {
@@ -796,6 +816,88 @@ button:active {
   margin-top: 0;
 }
 
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 32px;
+  padding: 24px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 18px;
+  color: #edfaff;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(34, 211, 238, 0.28), transparent 52%),
+    linear-gradient(135deg, #071d31, #0d3a55);
+}
+
+.about-icon {
+  width: 72px;
+  height: 72px;
+}
+
+.about-kicker,
+.about-byline {
+  margin: 0;
+  color: #b9d7e5;
+}
+
+.about-kicker {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.about-hero h2 {
+  margin: 2px 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.about-card {
+  margin: 16px 0 0;
+  padding: 20px 24px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 14px;
+  background: var(--md-surface-container);
+}
+
+.about-card h3 {
+  margin: 0 0 8px;
+}
+
+.about-card p {
+  margin: 8px 0;
+  color: var(--md-on-surface-variant);
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.about-links a {
+  padding: 7px 12px;
+  border: 1px solid var(--md-outline);
+  border-radius: 999px;
+  color: var(--md-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.about-links a:hover {
+  border-color: var(--md-primary);
+  background: var(--md-primary-container);
+}
+
+.about-links a:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
 /* FAQ table of contents */
 .faq-toc {
   margin: 0 0 12px;
@@ -862,6 +964,10 @@ button:active {
     width: 100%;
     min-width: 0;
     overflow-x: auto;
+  }
+
+  .header-brand-copy {
+    display: none;
   }
 
   .header-tab {
