@@ -1,29 +1,56 @@
-# Privacy Policy
-Last updated: 05/01/2024
+# StayFast Video Privacy Policy
 
-## Information Collection and Use
-We do not collect any health, financial and payment, authentication, personal communications, location, web history, user activity, website content information, or other types of personally identifiable information.
+Last updated: July 30, 2026
 
-## Data Usage
-* Personally Identifiable Information: We do not collect any personally identifiable information.
-* Health Information: We do not collect any health information.
-* Financial and Payment Information: We do not collect any financial information.
-* Authentication Information: We do not collect any authentication information.
-* Personal Communications: We do not collect any personal communications.
-* Location: We do not collect any location information.
-* Web History: We do not collect any web history information.
-* User Activity: We do not collect any user activity data.
-* Website Content: We do not collect any content from the websites you visit.
+StayFast Video is built to control media playback without collecting information
+about you or your browsing.
 
+## What StayTech collects
 
-## Data Transfer and Sale
-We follow these standards to ensure the protection of your privacy:
+StayTech does not collect, receive, sell, or share personal information, browsing
+history, website content, media history, usage analytics, crash telemetry, or
+advertising identifiers through StayFast Video.
 
-1. We do not sell or transfer user data to third parties, outside of the approved use cases.
-2. We do not use or transfer user data for purposes that are unrelated to the item's single purpose.
+StayFast Video has no StayTech account, advertising, analytics, or backend
+service.
 
-## Changes to This Privacy Policy
-We may update our Privacy Policy from time to time. Thus, we advise you to review this page periodically for any changes. We will notify you of any changes by posting the new Privacy Policy on this page.
+## Information stored by the extension
 
-## Contact Us
-If you have any questions or suggestions about our Privacy Policy, do not hesitate to contact us by opening a discussion the extension repository or contacting the author via information provided in GitHub profile.
+The extension stores only the preferences needed to provide its features, such
+as keyboard shortcuts, playback-speed preferences, controller appearance, and
+the sites where you choose to customize or disable it.
+
+These preferences are stored using your browser's extension storage. Depending
+on your browser settings, the browser vendor may synchronize some preferences
+between browsers where you are signed in. That synchronization is provided by
+the browser vendor under its own privacy policy; StayTech does not receive the
+synced data.
+
+StayFast Video reads the media elements and page state needed to show controls
+and carry out your commands. This processing happens locally in your browser.
+The extension does not transmit page content or browsing activity to StayTech.
+
+## Permissions
+
+- **Storage** is used to save extension preferences.
+- **Website access** is needed to add playback controls to HTML5 video and audio
+  on pages you visit. This access is used locally for the extension's single
+  purpose and is not used to build a browsing history.
+
+## Data retention and deletion
+
+Because StayTech does not collect extension data, StayTech has no user data to
+retain or delete. You can remove locally stored preferences by resetting the
+extension, clearing its data in your browser, or uninstalling it. Synced copies
+may remain subject to your browser vendor's controls and retention practices.
+
+## Changes
+
+Material changes to this policy will be published with a new “Last updated”
+date. StayTech will not introduce data collection without updating this policy
+and the relevant browser-store disclosures.
+
+## Contact
+
+For privacy questions, use the support channel linked from the public source
+repository or visit [staytech.co/stayfast](https://staytech.co/stayfast).
