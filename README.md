@@ -1,104 +1,98 @@
-# [Install from Chrome Web Store][chrome-web-store-link]
+# StayFast Video
 
-[![Chrome Web Store][chrome-web-store-version]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-users-badge]][chrome-web-store-link] [![Chrome Web Store Users][chrome-web-store-stars]][chrome-web-store-link]
+**Every video. Your speed.**
 
-**Video Speed Controller** gives you fine-grained control over any HTML5 video
-or audio element, on any site.
+StayFast Video by StayTech adds powerful, precise playback controls to HTML5
+video and audio across the web. It is free and open source, with no account,
+advertising, analytics, or StayTech backend.
 
-## The science of accelerated playback
-
-**TL;DR** -- faster playback translates to better engagement and retention.
-
-The average adult reads at [250-300 words per minute][wpm-study] (wpm). Speech
-averages ~150 wpm; slide presentations often closer to 100 wpm. Given the
-choice, most viewers [speed up playback to ~1.3-1.5x][ms-study] to close the
-gap. Accelerated viewing [keeps attention longer][byu-study] -- faster delivery
-means higher engagement. With practice, many settle at 2x or above and find it
-[uncomfortable to return to 1x][mit-study].
-
-[wpm-study]: http://www.paperbecause.com/PIOP/files/f7/f7bb6bc5-2c4a-466f-9ae7-b483a2c0dca4.pdf
-[ms-study]: http://research.microsoft.com/en-us/um/redmond/groups/coet/compression/chi99/paper.pdf
-[byu-study]: http://www.enounce.com/docs/BYUPaper020319.pdf
-[mit-study]: http://alumni.media.mit.edu/~barons/html/avios92.html#beasleyalteredspeech
-
-HTML5 media elements expose a native playback rate API, but most players hide
-or artificially limit it. Speed adjustments should be effortless and frequent:
-we don't read at a fixed pace, and we shouldn't watch at one either.
+> StayFast Video is in active development. Official browser-store links will be
+> added here after each listing is approved.
 
 ## Features
 
-- **Universal** - works on any site with HTML5 media: YouTube, Netflix,
-  Coursera, podcasts, local files, etc.
-- **Video and audio** - controls both `<video>` and `<audio>` elements.
-- **Fine-grained speed** - 0.07x to 16x in configurable increments.
-- **Per-site speed rules** - set a default playback speed for specific domains
-  (e.g., always 2x on lecture sites).
-- **Per-site disable** - turn off the controller on sites where you don't
-  want it.
-- **Remember speed** - optionally persist your last speed across sessions
-  and tabs.
-- **Speed fightback** - automatically re-applies your chosen speed when a
-  site's player tries to reset it.
-- **Draggable overlay** - reposition the on-video speed indicator anywhere
-  you like.
-- **Fully customizable shortcuts** - remap every key, add modifier combos
-  (Ctrl, Shift, Alt), create multiple preferred-speed toggles.
-- **Custom controller CSS** - style or reposition the overlay with your own
-  CSS rules.
+- **Control across sites** — works with HTML5 video and audio, including media
+  inside supported embedded players and dynamic pages.
+- **Fine-grained speed** — choose speeds from 0.07× to 16× in configurable
+  increments.
+- **Precise navigation** — seek by custom intervals, set and revisit markers,
+  and step through video frame by frame while paused.
+- **Custom keyboard control** — remap actions, use modifier chords, and create
+  multiple preferred-speed shortcuts.
+- **Per-site intelligence** — choose site-specific speeds or disable the
+  controller where you do not want it.
+- **Resilient playback preferences** — optionally remember your speed and
+  reapply it when a player attempts to reset it.
+- **Adaptable controller** — reposition the on-media indicator and customize
+  its appearance.
+- **Private by design** — playback and page processing stay in your browser.
+  See the [privacy policy](PRIVACY.md) for details.
 
 ## Default keyboard shortcuts
 
-- **S** - decrease playback speed
-- **D** - increase playback speed
-- **R** - reset playback speed to 1.0x
-- **Z** - rewind video by 10 seconds
-- **X** - advance video by 10 seconds
-- **,** - step back one frame (only while paused)
-- **.** - step forward one frame (only while paused)
-- **G** - toggle between current and preferred speed
-- **V** - show/hide the controller
-- **M** - set a marker at current position
-- **J** - jump back to the previously set marker
+| Key | Action                                         |
+| --- | ---------------------------------------------- |
+| `S` | Decrease playback speed                        |
+| `D` | Increase playback speed                        |
+| `R` | Reset playback speed to 1.0×                   |
+| `Z` | Rewind by 10 seconds                           |
+| `X` | Advance by 10 seconds                          |
+| `,` | Step back one frame while paused               |
+| `.` | Step forward one frame while paused            |
+| `G` | Toggle between the current and preferred speed |
+| `V` | Show or hide the controller                    |
+| `M` | Set a marker at the current position           |
+| `J` | Return to the saved marker                     |
 
-The frame-step keys (**,** / **.**) act only while the video is paused and step
-by one frame at the video's detected frame rate. When the frame rate can't be
-measured, they fall back to a configurable frames-per-second value (default 30)
-set in the shortcut's value field. They apply to video only, not audio.
+Frame stepping is video-only. StayFast Video uses the detected frame rate when
+available and otherwise uses the configurable fallback (30 fps by default).
+All shortcuts and their values can be changed in the extension settings.
 
-All shortcuts are fully customizable in the extension's settings page. You can
-reassign keys, add modifier combinations, and define multiple preferred-speed
-shortcuts with different values for quick toggling. Click **Add New** in
-settings to create additional bindings. Refresh the page after making changes
-for them to take effect.
+## Install for local development
 
-## Local development
-
-Install dependencies and build the unpacked extension:
+Requirements: a current Node.js release compatible with the version in
+`.nvmrc`, npm, and a Chromium-based browser.
 
 ```sh
 npm install
 npm run build
 ```
 
-Chrome should load the generated `dist/` directory with `Load unpacked` from
-`chrome://extensions`. During development, keep that same `dist/` path loaded
-and run:
+In Chrome, open `chrome://extensions`, enable Developer mode, select **Load
+unpacked**, and choose this repository's generated `dist/` directory.
+
+For development rebuilds:
 
 ```sh
 npm run watch
 ```
 
-After a rebuild, click the extension reload button in `chrome://extensions` and
-refresh the tab you are testing. Use `npm run clean` to remove generated build
-output.
+Reload the extension and the page under test after a rebuild. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for project checks and contribution guidance.
+
+## Privacy
+
+StayFast Video stores its settings in browser extension storage. It does not
+send browsing activity, page content, or playback history to StayTech. It has no
+StayTech account, ads, analytics, or external service. Read the complete
+[privacy policy](PRIVACY.md).
+
+## Open-source lineage
+
+StayFast Video is an independently developed and maintained StayTech edition of
+the open-source
+[Video Speed Controller](https://github.com/igrigorik/videospeed) project,
+originally created by Ilya Grigorik.
+
+StayTech is not affiliated with or endorsed by the original project or its
+contributors. The original copyright and MIT license are preserved. See
+[Open-source acknowledgments](docs/ATTRIBUTION.md) for details.
 
 ## License
 
-(MIT License) - Copyright (c) 2014 Ilya Grigorik
+Licensed under the [MIT License](LICENSE).
 
-[chrome-web-store-version]: https://img.shields.io/chrome-web-store/v/nffaoalbilbmmfgbnbgppjihopabppdk?label=Chrome%20Web%20Store
-[chrome-web-store-users-badge]: https://img.shields.io/chrome-web-store/users/nffaoalbilbmmfgbnbgppjihopabppdk
-[chrome-web-store-stars]: https://img.shields.io/chrome-web-store/stars/nffaoalbilbmmfgbnbgppjihopabppdk
-[github-release-badge]: https://img.shields.io/github/v/release/igrigorik/videospeed
-[chrome-web-store-link]: https://chromewebstore.google.com/detail/video-speed-controller/nffaoalbilbmmfgbnbgppjihopabppdk
-[github-release-link]: https://github.com/igrigorik/videospeed/releases
+- Copyright © 2014 Ilya Grigorik
+- Copyright © 2026 StayTech for modifications
+
+The StayFast Video product and branding are maintained by StayTech.
