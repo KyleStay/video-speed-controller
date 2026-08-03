@@ -26,13 +26,13 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: '1'
       - run: npm audit --audit-level=high
       - run: npm run lint
-      - run: npm run build:release
+      - run: npm run build:release:chrome
       - run: npm test
-      - run: node scripts/package-release.js
+      - run: npm run package:chrome
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: videospeed-release-node-${{ matrix.node-version }}
-          path: release/videospeed-*.zip
+          name: stayfast-video-chrome-node-${{ matrix.node-version }}
+          path: release/stayfast-video-chrome-*.zip
           retention-days: 7

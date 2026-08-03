@@ -19,7 +19,7 @@ window.VSC = window.VSC || {};
 
 let keyBindings = [];
 
-const TAB_NAMES = ['settings', 'advanced', 'faq'];
+const TAB_NAMES = ['settings', 'advanced', 'faq', 'about'];
 const CONTROLLER_OPACITY_LIMITS = { min: 0, max: 1 };
 const CONTROLLER_BUTTON_SIZE_LIMITS = { min: 10, max: 32 };
 
@@ -1121,7 +1121,7 @@ async function handleImportFile(event) {
     }
 
     if (!imported || typeof imported !== 'object' || !Array.isArray(imported.keyBindings)) {
-      throw new Error('File does not look like a Video Speed Controller settings file');
+      throw new Error('File does not look like a StayFast Video settings file');
     }
 
     if (typeof imported.customCSS === 'string') {
@@ -1317,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('restore').addEventListener('click', async (e) => {
     e.preventDefault();
     const confirmed = window.confirm(
-      'Reset all Video Speed Controller settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
+      'Reset all StayFast Video settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
     );
     if (!confirmed) {
       return;
@@ -1357,13 +1357,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateCSSHighlight();
   validateControllerCSS(cssTextarea.value);
 
-  // About and feedback buttons are optional in branded builds.
-  document.getElementById('about')?.addEventListener('click', () => {
-    window.open('https://github.com/igrigorik/videospeed');
-  });
-
   document.getElementById('feedback')?.addEventListener('click', () => {
-    window.open('https://github.com/igrigorik/videospeed/issues');
+    window.open('https://github.com/KyleStay/video-speed-controller/issues');
   });
 
   function eventCaller(event, className, funcName) {

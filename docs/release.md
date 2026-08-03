@@ -19,8 +19,8 @@ Both modes inject the version from `package.json` into the manifest identically.
 # 1. Bump version (creates a commit automatically)
 npm version patch   # or minor, major
 
-# 2. Run the release pipeline: clean -> test -> build:release -> zip
-npm run release
+# 2. Run the Chrome release pipeline: clean -> lint -> test -> build -> zip
+npm run release:chrome
 
 # 3. Tag and push
 git tag v$(node -p "require('./package.json').version")
@@ -30,17 +30,21 @@ git push origin main --tags
 npm run release:github
 
 # 5. Review the draft on GitHub, then publish
-# 6. Upload release/videospeed-*.zip to the Chrome Web Store
+# 6. Upload release/stayfast-video-chrome-*.zip to the Chrome Web Store
 ```
 
-## What `npm run release` does
+## What `npm run release:chrome` does
 
-1. **`prerelease`** -- runs `clean` (removes `dist/` and `release/`) then `npm test`
-2. **`build:release`** -- runs esbuild with `RELEASE=1` (minification enabled)
-3. **`package-release.js`** -- creates `release/videospeed-{version}.zip`:
+1. **`clean`** -- removes `dist/` and `release/`
+2. **`lint`** -- checks source and tests with ESLint
+3. **`test`** -- runs the complete Vitest suite
+4. **`build:release:chrome`** -- builds a minified Chrome package under
+   `dist/chrome/`
+5. **`package:chrome`** -- creates
+   `release/stayfast-video-chrome-{version}.zip`:
    - Validates manifest version matches `package.json`
    - Excludes source maps and `.DS_Store`
-   - Warns if the zip exceeds the Chrome Web Store 128 MB limit
+   - Warns if the zip exceeds the Chrome Web Store 2 GB limit
 
 ## What `npm run release:github` does
 
@@ -52,10 +56,11 @@ npm run release:github
 
 ## Quality gates
 
-| Hook       | Runs                                               | When              |
-| ---------- | -------------------------------------------------- | ----------------- |
-| Pre-commit | `lint-staged` (eslint + prettier on changed files) | Every commit      |
-| Pre-push   | `npm run lint` + `npm test`                        | Every push        |
-| CI         | lint, build:release, test, package zip             | Push/PR to master |
+| Hook       | Runs                                               | When                      |
+| ---------- | -------------------------------------------------- | ------------------------- |
+| Pre-commit | `lint-staged` (eslint + prettier on changed files) | Every commit              |
+| Pre-push   | `npm run lint` + `npm test`                        | Every push                |
+| CI         | lint, Chrome release build, test, package ZIP      | Push/PR to main or master |
 
-CI uploads the versioned zip as an artifact, so every passing build on master produces a release candidate.
+CI uploads the versioned Chrome ZIP as an artifact, so every passing build on
+the maintained branches produces a release candidate.

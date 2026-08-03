@@ -251,7 +251,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
  * Initialize on install/update
  */
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('Video Speed Controller installed/updated');
+  console.log('StayFast Video installed/updated');
   await migrateConfig();
   await migrateKeyBindingsV2();
   await migrateKeyBindingsV3();
@@ -262,11 +262,11 @@ chrome.runtime.onInstalled.addListener(async () => {
  * Initialize on startup
  */
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('Video Speed Controller started');
+  console.log('StayFast Video started');
   await initializeIcon();
 });
 
 // Initialize immediately when service worker loads
 initializeIcon();
 
-console.log('Video Speed Controller background script loaded');
+console.log('StayFast Video background script loaded');
