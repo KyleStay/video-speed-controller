@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">StayFast Video precision playhead mark</title>
+  <defs>
+    <linearGradient id="surface" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#103C59"/>
+      <stop offset="1" stop-color="#061B2D"/>
+    </linearGradient>
+    <linearGradient id="motion" x1="29" y1="31" x2="101" y2="102" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#surface)"/>
+  <path d="M33 82A40 40 0 1 1 98 89" fill="none" stroke="url(#motion)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M57 43L88 64L57 85Z" fill="#F1FBFF"/>
+  <circle cx="64" cy="64" r="5" fill="#06B6D4"/>
+  <path d="M64 64L89 42" stroke="#67E8F9" stroke-width="5" stroke-linecap="round"/>
+</svg>

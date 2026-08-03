@@ -1,7 +1,7 @@
 # Contributing
 
-Video Speed Controller is an open source project licensed under the MIT license
-with many contributors. Contributions are welcome, and greatly appreciated.
+StayFast Video is an open-source StayTech edition of Video Speed Controller,
+licensed under the MIT License. Contributions are welcome and appreciated.
 
 If you would like to help, getting started is easy.
 
@@ -92,7 +92,7 @@ a POSIX shell. Windows users need:
     npm run watch
     ```
 
-    After a rebuild, click the reload button for Video Speed Controller on
+    After a rebuild, click the reload button for StayFast Video on
     `chrome://extensions`, then refresh the tab you are testing. Use
     `npm run clean` when you want to remove generated `dist/` and `release/`
     output before a fresh build.

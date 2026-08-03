@@ -1,5 +1,5 @@
 /**
- * Basic E2E tests for Video Speed Controller extension
+ * Basic E2E tests for the StayFast Video extension
  */
 
 import {

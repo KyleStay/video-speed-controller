@@ -181,4 +181,15 @@ describe('DragAndReset', () => {
     expect(shadowController.style.getPropertyValue('--vsc-controller-opacity')).toBe('0');
     expect(shadowController.style.getPropertyValue('--vsc-controller-active-opacity')).toBe('0');
   });
+
+  it('Controller uses the StayFast precision visual treatment', () => {
+    const wrapper = document.createElement('vsc-controller');
+    const shadow = window.VSC.ShadowDOMManager.createShadowDOM(wrapper);
+    const style = shadow.querySelector('style').textContent;
+
+    expect(style).toContain('font-variant-numeric: tabular-nums');
+    expect(style).toContain('background: #22d3ee');
+    expect(style).toContain('border-color: #22d3ee');
+    expect(style).toContain('@media (prefers-reduced-motion: reduce)');
+  });
 });

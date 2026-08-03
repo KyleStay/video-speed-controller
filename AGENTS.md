@@ -1,4 +1,4 @@
-# Agent guide — Video Speed Controller
+# Agent guide — StayFast Video
 
 Guidance for AI agents and contributors working in this repo. `CLAUDE.md`
 imports this file (`@AGENTS.md`). Keep it accurate; update it in the same PR as
@@ -6,9 +6,11 @@ any change that invalidates it.
 
 ## What this is
 
-A Manifest V3 Chrome extension that adds speed/seek controls to any HTML5
+A Manifest V3 browser extension that adds speed/seek controls to any HTML5
 `<video>`/`<audio>` element on any site. Pure browser extension — no backend.
-Source in `src/`, bundled by esbuild into `dist/`.
+Source in `src/`, bundled by esbuild into a default Chrome `dist/` or explicit
+browser resource builds under `dist/<browser>/`. Chrome and Firefox are
+release-ready; Safari is experimental conversion input only.
 
 ## Project priorities (in order)
 
@@ -38,8 +40,9 @@ Three JS contexts, isolated by design:
   Runs in page context: can read the page's own globals (e.g. `window.netflix`)
   and media elements, but has **no** `chrome.*` APIs. All the real controller
   logic lives here.
-- **Service worker** — `src/background.js`. Migrations, toolbar icon state,
-  enable/disable lifecycle. MV3 workers are killed and restarted — never assume
+- **Background context** — `src/background.js`. Migrations, toolbar icon state,
+  enable/disable lifecycle. Chrome uses an MV3 service worker; Firefox uses an
+  MV3 event page. Neither context is durable — never assume
   in-memory state survives.
 
 UI pages (`src/ui/popup`, `src/ui/options`) run in normal extension contexts
@@ -152,8 +155,11 @@ with direct `chrome.*` access.
 
 ```sh
 npm run build          # dev build → dist/
+npm run build:browsers # Chrome + Firefox builds → dist/<browser>/
+npm run build:safari   # experimental conversion input → dist/safari/
 npm run watch          # rebuild on change (dev)
 npm run build:release  # minified release build
+npm run release:browsers # minified Chrome + Firefox builds and ZIPs
 npm test               # full vitest suite (unit + integration)
 npm run test:unit      # unit only
 npm run test:integration

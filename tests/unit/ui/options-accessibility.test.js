@@ -9,6 +9,7 @@ import {
 } from '../../helpers/chrome-mock.js';
 
 const optionsCss = readFileSync(resolve(process.cwd(), 'src/ui/options/options.css'), 'utf8');
+const optionsHtml = readFileSync(resolve(process.cwd(), 'src/ui/options/options.html'), 'utf8');
 
 describe('Options accessibility and CSS safety', () => {
   beforeEach(() => {
@@ -76,9 +77,11 @@ describe('Options accessibility and CSS safety', () => {
       <button id="tab-settings" class="header-tab active" role="tab" aria-selected="true" aria-controls="panel-settings" tabindex="0">Settings</button>
       <button id="tab-advanced" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-advanced" tabindex="-1">Advanced</button>
       <button id="tab-faq" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-faq" tabindex="-1">FAQ</button>
+      <button id="tab-about" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-about" tabindex="-1">About</button>
       <div id="panel-settings" role="tabpanel"></div>
       <div id="panel-advanced" role="tabpanel" hidden></div>
       <div id="panel-faq" role="tabpanel" hidden></div>
+      <div id="panel-about" role="tabpanel" hidden></div>
     `;
 
     const { setupTabNavigation } = await import('../../../src/ui/options/options.js');
@@ -102,12 +105,14 @@ describe('Options accessibility and CSS safety', () => {
       <button id="tab-settings" class="header-tab active" role="tab" aria-selected="true" aria-controls="panel-settings" tabindex="0">Settings</button>
       <button id="tab-advanced" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-advanced" tabindex="-1">Advanced</button>
       <button id="tab-faq" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-faq" tabindex="-1">FAQ</button>
+      <button id="tab-about" class="header-tab" role="tab" aria-selected="false" aria-controls="panel-about" tabindex="-1">About</button>
       <div id="panel-settings" role="tabpanel" aria-labelledby="tab-settings"></div>
       <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" hidden>
         <input id="controllerOpacity" value="0.3" />
         <input id="controllerButtonSize" value="64" />
       </div>
       <div id="panel-faq" role="tabpanel" aria-labelledby="tab-faq" hidden></div>
+      <div id="panel-about" role="tabpanel" aria-labelledby="tab-about" hidden></div>
       <div id="site-rules-container"></div>
     `;
 
@@ -228,5 +233,31 @@ describe('Options accessibility and CSS safety', () => {
 
     expect(document.getElementById('controllerOpacity').validity.valid).toBe(true);
     expect(document.getElementById('controllerButtonSize').validity.valid).toBe(true);
+  });
+
+  it('presents branded attribution and local license access in settings', () => {
+    expect(optionsHtml).toContain('<title>StayFast Video: Settings</title>');
+    expect(optionsHtml).toContain('id="panel-about"');
+    expect(optionsHtml).toContain('originally created by Ilya Grigorik');
+    expect(optionsHtml).toMatch(/StayTech is not\s+affiliated with or endorsed/);
+    expect(optionsHtml).toContain('href="../../LICENSE"');
+    expect(optionsHtml).toContain('href="https://github.com/KyleStay/video-speed-controller"');
+  });
+
+  it('uses document language and keeps non-tab branding outside the tablist', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    const tablist = parsed.querySelector('[role="tablist"]');
+
+    expect(parsed.documentElement.lang).toBe('en');
+    expect(tablist).not.toBeNull();
+    expect([...tablist.children].every((child) => child.getAttribute('role') === 'tab')).toBe(true);
+    expect(tablist.querySelector('.header-brand')).toBeNull();
+    expect(parsed.querySelector('header > .header-brand')).not.toBeNull();
+  });
+
+  it('keeps dark-mode visited links readable with the high-contrast text token', () => {
+    expect(optionsCss).toMatch(
+      /@media \(prefers-color-scheme: dark\)[\s\S]*a:visited\s*\{\s*color: var\(--md-on-primary-container\);/
+    );
   });
 });

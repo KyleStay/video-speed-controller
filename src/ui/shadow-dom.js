@@ -22,8 +22,9 @@ class ShadowDOMManager {
     const style = document.createElement('style');
     style.textContent = `
       * {
-        line-height: 1.8em;
-        font-family: sans-serif;
+        box-sizing: border-box;
+        line-height: 1.6em;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         font-size: 13px;
       }
       
@@ -65,20 +66,24 @@ class ShadowDOMManager {
         position: absolute;
         top: 0;
         left: 0;
-        background: black;
-        color: white;
-        border-radius: 6px;
-        padding: 4px;
+        border: 1px solid rgba(103, 232, 249, 0.34);
+        background: rgba(5, 24, 39, 0.96);
+        color: #f0fbff;
+        border-radius: 9px;
+        padding: 4px 5px;
         margin: 10px 10px 10px 15px;
         cursor: default;
         z-index: 9999999;
         white-space: nowrap;
         opacity: var(--vsc-controller-opacity);
+        box-shadow: 0 4px 16px rgba(0, 12, 22, 0.28);
+        transition: opacity 0.16s ease, border-color 0.16s ease;
       }
       
       #controller:hover,
       #controller:focus-within {
         opacity: var(--vsc-controller-active-opacity);
+        border-color: rgba(103, 232, 249, 0.7);
       }
       
       #controller:hover>.draggable,
@@ -105,7 +110,8 @@ class ShadowDOMManager {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 2.8em;
+        position: relative;
+        width: 3.1em;
         height: 1.4em;
         min-width: 24px;
         min-height: 24px;
@@ -113,6 +119,20 @@ class ShadowDOMManager {
         vertical-align: middle;
         box-sizing: border-box;
         touch-action: none;
+        color: #f0fbff;
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      .draggable::before {
+        width: 5px;
+        height: 5px;
+        margin-right: 5px;
+        border-radius: 50%;
+        background: #22d3ee;
+        box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
+        content: "";
       }
       
       .draggable:active {
@@ -122,19 +142,19 @@ class ShadowDOMManager {
       button {
         opacity: 1;
         cursor: pointer;
-        color: black;
-        background: white;
-        font-weight: normal;
-        border-radius: 5px;
-        padding: 1px 5px 3px 5px;
+        color: #dff8ff;
+        background: rgba(148, 203, 221, 0.12);
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 1px 6px;
         font-size: inherit;
         line-height: inherit;
-        border: 0px solid white;
-        font-family: "Lucida Console", Monaco, monospace;
+        border: 1px solid rgba(148, 203, 221, 0.2);
+        font-family: inherit;
         margin: 0px 2px 2px 2px;
         min-width: 24px;
         min-height: 24px;
-        transition: background 0.2s, color 0.2s;
+        transition: background 0.16s, color 0.16s, border-color 0.16s;
       }
       
       button:focus {
@@ -143,25 +163,26 @@ class ShadowDOMManager {
 
       button:focus-visible,
       .draggable:focus-visible {
-        outline: 2px solid #ffffff;
+        outline: 2px solid #67e8f9;
         outline-offset: 2px;
-        box-shadow: 0 0 0 4px #2196f3;
+        box-shadow: 0 0 0 4px rgba(8, 47, 73, 0.92);
       }
       
       button:hover {
         opacity: 1;
-        background: #2196f3;
+        border-color: #22d3ee;
+        background: #0e7490;
         color: #ffffff;
       }
       
       button:active {
-        background: #2196f3;
+        background: #155e75;
         color: #ffffff;
         font-weight: bold;
       }
       
       button.rw {
-        opacity: 0.65;
+        color: #a8ddea;
       }
 
       @media (prefers-reduced-motion: reduce) {

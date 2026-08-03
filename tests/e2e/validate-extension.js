@@ -15,7 +15,7 @@ const extensionRoot = join(__dirname, '../../');
 const distRoot = join(extensionRoot, 'dist');
 
 function validateExtension() {
-  console.log('🔍 Validating Video Speed Controller Extension Structure\n');
+  console.log('🔍 Validating StayFast Video Extension Structure\n');
 
   let passed = 0;
   let failed = 0;
