@@ -15,7 +15,7 @@ const browserArgument = process.argv.find((argument) => argument.startsWith('--b
 const browser = browserArgument?.split('=', 2)[1];
 const packageAll = process.argv.includes('--all');
 
-const CWS_SIZE_LIMIT = 128 * 1024 * 1024; // 128 MB
+const CWS_SIZE_LIMIT = 2 * 1024 * 1024 * 1024; // 2 GB
 
 async function packageBrowser(targetBrowser, useLegacyDist = false) {
   const distDir = useLegacyDist
@@ -68,7 +68,7 @@ async function packageBrowser(targetBrowser, useLegacyDist = false) {
   const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
 
   if (targetBrowser === 'chrome' && stats.size > CWS_SIZE_LIMIT) {
-    console.warn(`⚠️  Warning: ${zipName} is ${sizeMB} MB (Chrome Web Store limit is 128 MB)`);
+    console.warn(`⚠️  Warning: ${zipName} is ${sizeMB} MB (Chrome Web Store limit is 2 GB)`);
   }
 
   console.log(`✅ Packaged ${zipName} (${sizeMB} MB) → release/`);
