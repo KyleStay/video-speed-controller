@@ -64,10 +64,14 @@ StayFast Video is developed and maintained by StayTech.
 
 ## Required listing links
 
-- Product and support: <https://staytech.co/stayfast>
-- Privacy policy: publish the repository's [`PRIVACY.md`](../PRIVACY.md) at a
-  stable public URL before submission
-- Source: use the final public StayTech repository URL
+- Homepage and source: <https://github.com/KyleStay/video-speed-controller>
+- Support: <https://github.com/KyleStay/video-speed-controller/issues>
+- Privacy policy:
+  <https://github.com/KyleStay/video-speed-controller/blob/main/PRIVACY.md>
+
+The repository must be public before these links are used for submission. If it
+will remain private, publish `PRIVACY.md` and a product/support page on
+`staytech.co` and replace all three URLs with live public pages.
 
 Do not submit a listing with placeholder or original-project install links.
 

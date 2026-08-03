@@ -1,6 +1,6 @@
 # StayFast Video Privacy Policy
 
-Last updated: July 30, 2026
+Last updated: August 2, 2026
 
 StayFast Video is built to control media playback without collecting information
 about you or your browsing.
@@ -43,6 +43,15 @@ Because StayTech does not collect extension data, StayTech has no user data to
 retain or delete. You can remove locally stored preferences by resetting the
 extension, clearing its data in your browser, or uninstalling it. Synced copies
 may remain subject to your browser vendor's controls and retention practices.
+
+## Limited use
+
+StayFast Video uses information available through browser extension APIs and
+website access only to provide or improve the media-control features described
+in the extension and its store listing. It does not transfer this information
+to third parties, use it for advertising or creditworthiness, or permit people
+to read it. Its use of information complies with the Chrome Web Store User Data
+Policy, including the Limited Use requirements.
 
 ## Changes
 

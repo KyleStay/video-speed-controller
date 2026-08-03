@@ -5,7 +5,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "description": "Powerful, private video and audio controls with custom shortcuts, precise seeking, site rules, and frame stepping.",
-  "homepage_url": "https://staytech.co/stayfast",
+  "homepage_url": "https://github.com/KyleStay/video-speed-controller",
   "icons": {
     "16": "assets/icons/icon16.png",
     "48": "assets/icons/icon48.png",
