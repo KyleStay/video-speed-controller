@@ -105,6 +105,23 @@ describe('EventManager', () => {
     expect(eventStopped).toBe(true);
   });
 
+  it('does not block ratechange from uncontrolled media during cooldown', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const eventManager = new window.VSC.EventManager(config, null);
+    const uncontrolledVideo = createMockVideo({ playbackRate: 1.5 });
+    const stopImmediatePropagation = vi.fn();
+
+    eventManager.refreshCoolDown();
+    eventManager.handleRateChange({
+      composedPath: () => [uncontrolledVideo],
+      target: uncontrolledVideo,
+      stopImmediatePropagation,
+    });
+
+    expect(stopImmediatePropagation).not.toHaveBeenCalled();
+  });
+
   it('cooldown should expire after timeout', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();

@@ -180,6 +180,25 @@ describe('EventManager X/Twitter shortcut follow-up suppression', () => {
     expect(eventManager.claimedShortcutFollowups.size).toBe(0);
   });
 
+  it('keeps shifted period unclaimed after bindings pass through config.load()', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const { actions, eventManager } = setupEnv(config.settings.keyBindings);
+    eventManager.setupKeyboardShortcuts(document);
+    const observed = listenForPageKeyboardEvents();
+    const events = [
+      makeKeyboardEvent('keydown', { key: '>', shiftKey: true }),
+      makeKeyboardEvent('keypress', { key: '>', shiftKey: true }),
+      makeKeyboardEvent('keyup', { key: '>', shiftKey: true }),
+    ];
+
+    events.forEach((event) => document.body.dispatchEvent(event));
+
+    expect(actions).toEqual([]);
+    expect(observed).toEqual(['keydown', 'keypress', 'keyup']);
+    events.forEach((event) => expect(event.defaultPrevented).toBe(false));
+  });
+
   it('does not claim shortcut events while the user is typing', () => {
     const { actions, eventManager } = setupEnv();
     eventManager.setupKeyboardShortcuts(document);

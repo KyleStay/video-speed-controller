@@ -54,11 +54,11 @@ describe('MediaElementObserver', () => {
       expect(observer.hasMediaIndicators(doc)).toBe(true);
     });
 
-    it('returns true when an <iframe> is present (may host media)', () => {
+    it('returns false for an iframe-only parent because each frame owns its media', () => {
       const observer = makeObserver();
       const doc = freshDoc();
       doc.body.innerHTML = '<iframe></iframe>';
-      expect(observer.hasMediaIndicators(doc)).toBe(true);
+      expect(observer.hasMediaIndicators(doc)).toBe(false);
     });
 
     it('ignores <audio> when audioBoolean is disabled', () => {

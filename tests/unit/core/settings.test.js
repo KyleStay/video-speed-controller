@@ -68,6 +68,17 @@ describe('Settings', () => {
     expect(updatedValue).toBe(0.2);
   });
 
+  it('preserves explicit no-modifier chords while loading frame-step bindings', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+
+    for (const action of ['rewindFrame', 'advanceFrame']) {
+      expect(
+        config.settings.keyBindings.find((binding) => binding.action === action)?.modifiers
+      ).toEqual({ shift: false, ctrl: false, alt: false, meta: false });
+    }
+  });
+
   it('VideoSpeedConfig should have state manager available', () => {
     // Verify state manager is available (media tracking moved there)
     expect(window.VSC.stateManager).toBeDefined();
@@ -235,6 +246,22 @@ describe('Settings', () => {
     const original = window.VSC.matchSiteRule;
     window.VSC.matchSiteRule = () => null;
 
+    await config.load();
+    expect(config.settings.siteDefaultSpeed).toBeUndefined();
+
+    window.VSC.matchSiteRule = original;
+  });
+
+  it('clears a previously derived siteDefaultSpeed when a later load has no match', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    const original = window.VSC.matchSiteRule;
+    let match = { pattern: 'test.com', enabled: true, speed: 2.3 };
+    window.VSC.matchSiteRule = () => match;
+
+    await config.load();
+    expect(config.settings.siteDefaultSpeed).toBe(2.3);
+
+    match = null;
     await config.load();
     expect(config.settings.siteDefaultSpeed).toBeUndefined();
 

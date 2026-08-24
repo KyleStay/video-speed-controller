@@ -606,4 +606,61 @@ describe('VideoController', () => {
 
     spy.mockRestore();
   });
+
+  it('rolls back registration and the media expando when construction fails', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const actionHandler = new window.VSC.ActionHandler(config, null);
+    const mockVideo = createMockVideo();
+    mockDOM.container.appendChild(mockVideo);
+    const initializeControls = vi
+      .spyOn(window.VSC.VideoController.prototype, 'initializeControls')
+      .mockImplementation(() => {
+        throw new Error('page DOM failure');
+      });
+
+    expect(() => new window.VSC.VideoController(mockVideo, null, config, actionHandler)).toThrow(
+      /page DOM failure/
+    );
+    expect(mockVideo.vsc).toBeUndefined();
+    expect(window.VSC.stateManager.controllers.size).toBe(0);
+
+    initializeControls.mockRestore();
+  });
+
+  it('guards an FPS re-arm when the page replaces requestVideoFrameCallback', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const actionHandler = new window.VSC.ActionHandler(config, null);
+    const mockVideo = createMockVideo();
+    mockDOM.container.appendChild(mockVideo);
+    mockVideo.requestVideoFrameCallback = vi.fn(() => 1);
+    const controller = new window.VSC.VideoController(mockVideo, null, config, actionHandler);
+    mockVideo.requestVideoFrameCallback = () => {
+      throw new Error('page replaced rVFC');
+    };
+
+    expect(() => mockVideo.dispatchEvent({ type: 'loadstart' })).not.toThrow();
+    expect(controller.vfcHandle).toBeNull();
+    controller.remove();
+  });
+
+  it('uses collision-free controller IDs for same-source media', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const actionHandler = new window.VSC.ActionHandler(config, null);
+    const firstVideo = createMockVideo();
+    const secondVideo = createMockVideo();
+    mockDOM.container.append(firstVideo, secondVideo);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1234);
+
+    const first = new window.VSC.VideoController(firstVideo, null, config, actionHandler);
+    const second = new window.VSC.VideoController(secondVideo, null, config, actionHandler);
+
+    expect(first.controllerId).not.toBe(second.controllerId);
+    expect(window.VSC.stateManager.controllers.size).toBe(2);
+    first.remove();
+    second.remove();
+    now.mockRestore();
+  });
 });

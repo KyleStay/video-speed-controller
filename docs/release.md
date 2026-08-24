@@ -6,10 +6,11 @@
 
 ## Build modes
 
-| Command                 | Minified | Use case                     |
-| ----------------------- | -------- | ---------------------------- |
-| `npm run build`         | No       | Local development, debugging |
-| `npm run build:release` | Yes      | CI, release packaging        |
+| Command                          | Minified | Use case                        |
+| -------------------------------- | -------- | ------------------------------- |
+| `npm run build`                  | No       | Local development, debugging    |
+| `npm run build:release`          | Yes      | Local Chrome release build      |
+| `npm run build:release:browsers` | Yes      | Chrome + Firefox release builds |
 
 Both modes inject the version from `package.json` into the manifest identically.
 
@@ -19,8 +20,11 @@ Both modes inject the version from `package.json` into the manifest identically.
 # 1. Bump version (creates a commit automatically)
 npm version patch   # or minor, major
 
-# 2. Run the Chrome release pipeline: clean -> lint -> test -> build -> zip
-npm run release:chrome
+# 2. Run the release-ready browser pipeline
+npm run clean
+npm run lint
+npm test
+npm run release:browsers
 
 # 3. Tag and push
 git tag v$(node -p "require('./package.json').version")
@@ -30,7 +34,7 @@ git push origin main --tags
 npm run release:github
 
 # 5. Review the draft on GitHub, then publish
-# 6. Upload release/stayfast-video-chrome-*.zip to the Chrome Web Store
+# 6. Upload the matching browser ZIP to each store
 ```
 
 ## What `npm run release:chrome` does
@@ -51,16 +55,16 @@ npm run release:github
 - Verifies `gh` CLI is installed and authenticated
 - Verifies the git tag exists
 - Auto-generates release notes from commits since the previous tag
-- Creates a **draft** release on GitHub with the zip attached
+- Creates a **draft** release on GitHub with the Chrome and Firefox ZIPs attached
 - Draft requires manual review before publishing
 
 ## Quality gates
 
-| Hook       | Runs                                               | When                      |
-| ---------- | -------------------------------------------------- | ------------------------- |
-| Pre-commit | `lint-staged` (eslint + prettier on changed files) | Every commit              |
-| Pre-push   | `npm run lint` + `npm test`                        | Every push                |
-| CI         | lint, Chrome release build, test, package ZIP      | Push/PR to main or master |
+| Hook       | Runs                                                      | When                      |
+| ---------- | --------------------------------------------------------- | ------------------------- |
+| Pre-commit | `lint-staged` (eslint + prettier on changed files)        | Every commit              |
+| Pre-push   | `npm run lint` + `npm test`                               | Every push                |
+| CI         | lint, Chrome + Firefox release builds, test, package ZIPs | Push/PR to main or master |
 
-CI uploads the versioned Chrome ZIP as an artifact, so every passing build on
-the maintained branches produces a release candidate.
+CI uploads both versioned browser ZIPs as artifacts, so every passing build on
+the maintained branches produces release candidates.

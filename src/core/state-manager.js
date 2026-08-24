@@ -60,8 +60,14 @@ class VSCStateManager {
       if (video && video.isConnected) {
         elements.push(video);
       } else {
-        // Remove disconnected controller
-        this.controllers.delete(id);
+        // A disconnected media element still owns listeners, observers and a
+        // possible rVFC burst. Dispose it instead of silently dropping the map
+        // entry; remove() unregisters itself and clears the video expando.
+        if (typeof info.controller?.remove === 'function') {
+          info.controller.remove();
+        } else {
+          this.controllers.delete(id);
+        }
       }
     }
 

@@ -613,11 +613,16 @@ class EventManager {
    * @private
    */
   handleRateChange(event) {
+    // Resolve ownership before cooldown handling. A VSC write to media A must
+    // never swallow an unrelated page-owned ratechange from media B.
+    const video = event.composedPath ? event.composedPath()[0] : event.target;
+    if (!video?.vsc) {
+      window.VSC.logger.debug('Skipping ratechange - no VSC controller attached');
+      return;
+    }
+
     if (this.coolDown) {
       window.VSC.logger.debug('Rate change event blocked by cooldown');
-
-      // Get the video element to restore authoritative speed
-      const video = event.composedPath ? event.composedPath()[0] : event.target;
 
       // Don't fight back during video initialization — the player's own setup
       // fires ratechange at readyState=0; overwriting it can break the player.
@@ -640,15 +645,6 @@ class EventManager {
       }
 
       event.stopImmediatePropagation();
-      return;
-    }
-
-    // Get the actual video element (handle shadow DOM)
-    const video = event.composedPath ? event.composedPath()[0] : event.target;
-
-    // Skip if no VSC controller attached
-    if (!video.vsc) {
-      window.VSC.logger.debug('Skipping ratechange - no VSC controller attached');
       return;
     }
 

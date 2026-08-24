@@ -5,7 +5,7 @@
  * CustomEvents on document.documentElement.
  *
  * Settings handshake:
- *   1. Bridge stashes settings in closure, registers VSC_REQUEST_SETTINGS listener
+ *   1. Bridge registers a persistent VSC_REQUEST_SETTINGS listener
  *   2. MAIN world fires VSC_REQUEST_SETTINGS at document_start
  *   3. Bridge responds with VSC_SETTINGS_READY once chrome.storage resolves
  */
@@ -21,6 +21,8 @@ const SPEED_MAX = 16;
 
 const docEl = document.documentElement;
 let bridgeInitialized = false;
+let pendingLastSpeed = null;
+let lastSpeedWriteTimer = null;
 
 async function loadSettingsPayload() {
   // Bounded fetch (not get(null)): this content script runs in every frame, so
@@ -53,44 +55,27 @@ async function loadSettingsPayload() {
 
 async function init() {
   try {
-    // Skip about:blank frames — they share the parent window
-    if (location.href === 'about:blank') {
-      return;
-    }
-
     // Double-injection guard (module-level flag resets on page navigation)
     if (bridgeInitialized) {
       return;
     }
     bridgeInitialized = true;
 
-    let settingsPayload = null;
-    const settingsPayloadPromise = loadSettingsPayload().then((payload) => {
-      settingsPayload = payload;
-      return payload;
+    // Re-initialization after an enable toggle or document replacement performs
+    // a new settings load. Keep this listener alive and fetch the bounded key
+    // set for every request so the MAIN world never falls back to stale defaults.
+    // Storage failures fail closed: an invalidated extension context must not
+    // accidentally initialize an extension that may be disabled for this site.
+    docEl.addEventListener('VSC_REQUEST_SETTINGS', async () => {
+      let payload;
+      try {
+        payload = await loadSettingsPayload();
+      } catch (error) {
+        console.error('[VSC] Settings bridge read failed:', error);
+        payload = { abort: true };
+      }
+      docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
     });
-
-    // Always respond — inject.js runs unconditionally and needs the abort
-    // signal to skip init. { once: true } limits event forgery exposure.
-    docEl.addEventListener(
-      'VSC_REQUEST_SETTINGS',
-      () => {
-        if (settingsPayload) {
-          docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: settingsPayload }));
-          return;
-        }
-
-        settingsPayloadPromise.then((payload) => {
-          docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
-        });
-      },
-      { once: true }
-    );
-
-    settingsPayload = await settingsPayloadPromise;
-    if (settingsPayload.abort) {
-      return;
-    }
 
     // --- Ongoing: storage change relay + lifecycle ---
     chrome.storage.onChanged.addListener((changes, namespace) => {
@@ -158,8 +143,22 @@ async function init() {
         if ('lastSpeed' in data) {
           const speed = data.lastSpeed;
           if (typeof speed === 'number' && Number.isFinite(speed)) {
-            const clamped = Math.min(Math.max(speed, SPEED_MIN), SPEED_MAX);
-            chrome.storage.sync.set({ lastSpeed: clamped });
+            pendingLastSpeed = Math.min(Math.max(speed, SPEED_MIN), SPEED_MAX);
+            if (lastSpeedWriteTimer === null) {
+              // MAIN already debounces normal writes. This additional bridge
+              // coalescing protects sync quota from forged/page-generated event
+              // loops while preserving the latest legitimate value.
+              lastSpeedWriteTimer = setTimeout(async () => {
+                const lastSpeed = pendingLastSpeed;
+                pendingLastSpeed = null;
+                lastSpeedWriteTimer = null;
+                try {
+                  await chrome.storage.sync.set({ lastSpeed });
+                } catch (error) {
+                  console.error('[VSC] Speed persistence failed:', error);
+                }
+              }, 1000);
+            }
           }
         }
       } catch (err) {
