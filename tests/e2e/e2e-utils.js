@@ -17,12 +17,31 @@ const __dirname = dirname(__filename);
  */
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export function getChromeLaunchArgs({ ci = process.env.CI, platform = process.platform } = {}) {
+  const args = [
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-features=TranslateUI',
+    '--disable-ipc-flooding-protection',
+    '--window-size=1280,720',
+    '--allow-file-access-from-files',
+  ];
+
+  // GitHub-hosted Ubuntu runners disable the user-namespace sandbox. Scope the
+  // fallback to Linux CI only; local browsers retain their normal sandbox.
+  if (ci === 'true' && platform === 'linux') {
+    args.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
+  return args;
+}
+
 /**
  * Launch Chrome with extension loaded
  * @returns {Promise<{browser: Browser, page: Page}>}
  */
 export async function launchChromeWithExtension() {
   const extensionPath = join(__dirname, '../../dist');
+  const chromeArgs = getChromeLaunchArgs();
 
   console.log(`   📁 Loading extension from: ${extensionPath}`);
 
@@ -32,14 +51,7 @@ export async function launchChromeWithExtension() {
       devtools: false,
       enableExtensions: true,
       protocolTimeout: 30000,
-      args: [
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--window-size=1280,720',
-        '--allow-file-access-from-files',
-      ],
+      args: chromeArgs,
       ignoreDefaultArgs: ['--enable-automation'],
     });
 
