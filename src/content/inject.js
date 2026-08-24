@@ -263,7 +263,7 @@ class VideoSpeedExtension {
    * @param {Function} callback - Work to run
    * @param {Object} options - Scheduling options
    * @param {boolean} options.idle - Prefer requestIdleCallback when available
-   * @param {number} options.delay - Fallback timer delay
+   * @param {number} options.delay - Timer delay and minimum idle deadline
    * @returns {Object} Scheduled work handle
    */
   scheduleDeferredWork(callback, { idle = false, delay = 0 } = {}) {
@@ -279,7 +279,11 @@ class VideoSpeedExtension {
     };
 
     this.scheduledWork.add(work);
-    work.id = useIdle ? window.requestIdleCallback(run) : setTimeout(run, delay);
+    work.id = useIdle
+      ? window.requestIdleCallback(run, {
+          timeout: Math.max(delay, VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS),
+        })
+      : setTimeout(run, delay);
     return work;
   }
 
@@ -727,6 +731,8 @@ class VideoSpeedExtension {
     };
   }
 }
+
+VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
 
 (function () {
   const extension = new VideoSpeedExtension();

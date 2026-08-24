@@ -29,9 +29,9 @@ export async function launchChromeWithExtension() {
     const browser = await puppeteer.launch({
       headless: false, // Extensions require non-headless mode
       devtools: false,
+      enableExtensions: [extensionPath],
+      protocolTimeout: 30000,
       args: [
-        `--load-extension=${extensionPath}`,
-        `--disable-extensions-except=${extensionPath}`,
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--disable-features=TranslateUI',
@@ -39,7 +39,7 @@ export async function launchChromeWithExtension() {
         '--window-size=1280,720',
         '--allow-file-access-from-files',
       ],
-      ignoreDefaultArgs: ['--disable-extensions', '--enable-automation'],
+      ignoreDefaultArgs: ['--enable-automation'],
     });
 
     console.log('   🌐 Chrome browser launched successfully');
@@ -68,30 +68,18 @@ export async function launchChromeWithExtension() {
     const userAgent = await page.evaluate(() => navigator.userAgent);
     console.log(`   🔍 User Agent: ${userAgent}`);
 
-    // Check if extension is loaded by navigating to chrome://extensions/
-    try {
-      await page.goto('chrome://extensions/', { waitUntil: 'domcontentloaded', timeout: 10000 });
-      await sleep(2000);
-
-      const extensionInfo = await page.evaluate(() => {
-        const extensions = document.querySelectorAll('extensions-item');
-        const extensionNames = Array.from(extensions).map((ext) => {
-          const nameEl = ext.shadowRoot?.querySelector('#name');
-          return nameEl ? nameEl.textContent : 'Unknown';
-        });
-        return {
-          count: extensions.length,
-          names: extensionNames,
-        };
-      });
-
-      console.log(`   📦 Extensions loaded: ${extensionInfo.count}`);
-      if (extensionInfo.names.length > 0) {
-        console.log(`   📦 Extension names: ${extensionInfo.names.join(', ')}`);
-      }
-    } catch (error) {
-      console.log(`   ⚠️  Could not check extensions page: ${error.message}`);
-    }
+    // Extension targets are a reliable signal. The chrome://extensions page
+    // keeps its item list behind nested shadow roots and can report zero even
+    // when the unpacked extension and service worker are running.
+    await sleep(1000);
+    const extensionIds = new Set(
+      browser
+        .targets()
+        .map((target) => target.url())
+        .filter((url) => url.startsWith('chrome-extension://'))
+        .map((url) => new URL(url).hostname)
+    );
+    console.log(`   📦 Extensions loaded: ${extensionIds.size}`);
 
     // Store console errors on the page object for access
     page.getConsoleErrors = () => consoleErrors;
