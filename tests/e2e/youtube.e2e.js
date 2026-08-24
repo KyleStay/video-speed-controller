@@ -116,14 +116,23 @@ export default async function runYouTubeE2ETests() {
     });
 
     await runTest('Extension should handle YouTube player interactions', async () => {
-      // Try pausing and playing video
-      await page.click('video.html5-main-video');
+      // Drive the media element directly. Clicking YouTube's video surface can
+      // enter site-owned handlers or overlays and stall Puppeteer's click call.
+      await page.evaluate(() => {
+        document.querySelector('video.html5-main-video')?.pause();
+      });
       await sleep(1000);
 
       // Speed should be maintained across play/pause
       const speedBeforePause = await getVideoSpeed(page, 'video.html5-main-video');
 
-      await page.click('video.html5-main-video'); // Play again
+      await page.evaluate(() => {
+        const video = document.querySelector('video.html5-main-video');
+        if (video) {
+          video.muted = true;
+          video.play().catch(() => {});
+        }
+      });
       await sleep(1000);
 
       const speedAfterPlay = await getVideoSpeed(page, 'video.html5-main-video');
