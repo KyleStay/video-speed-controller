@@ -6,7 +6,7 @@ describe('E2E Chrome launch arguments', () => {
     expect(getChromeLaunchArgs({ ci: 'true', platform: 'linux' })).toEqual(
       expect.arrayContaining(['--no-sandbox', '--disable-setuid-sandbox'])
     );
-    expect(getChromeLaunchArgs({ ci: undefined, platform: 'linux' })).not.toContain('--no-sandbox');
+    expect(getChromeLaunchArgs({ ci: 'false', platform: 'linux' })).not.toContain('--no-sandbox');
     expect(getChromeLaunchArgs({ ci: 'true', platform: 'darwin' })).not.toContain('--no-sandbox');
   });
 });
