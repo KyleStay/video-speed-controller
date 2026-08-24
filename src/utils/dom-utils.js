@@ -83,20 +83,38 @@ window.VSC.DomUtils.findVideoParent = function (element) {
 window.VSC.DomUtils.initializeWhenReady = function (document, callback) {
   window.VSC.logger.debug('Begin initializeWhenReady');
 
+  let completed = false;
+  let handleReadyStateChange = null;
+
+  const cleanup = () => {
+    window.removeEventListener('load', handleWindowLoad);
+    if (handleReadyStateChange) {
+      document?.removeEventListener('readystatechange', handleReadyStateChange);
+    }
+  };
+
+  const runOnce = (readyDocument) => {
+    if (completed) {
+      return;
+    }
+    completed = true;
+    cleanup();
+    callback(readyDocument);
+  };
+
   const handleWindowLoad = () => {
-    callback(window.document);
+    runOnce(document || window.document);
   };
 
   window.addEventListener('load', handleWindowLoad, { once: true });
 
   if (document) {
     if (document.readyState === 'complete') {
-      callback(document);
+      runOnce(document);
     } else {
-      const handleReadyStateChange = () => {
+      handleReadyStateChange = () => {
         if (document.readyState === 'complete') {
-          document.removeEventListener('readystatechange', handleReadyStateChange);
-          callback(document);
+          runOnce(document);
         }
       };
       document.addEventListener('readystatechange', handleReadyStateChange);
@@ -104,6 +122,7 @@ window.VSC.DomUtils.initializeWhenReady = function (document, callback) {
   }
 
   window.VSC.logger.debug('End initializeWhenReady');
+  return cleanup;
 };
 
 /**
