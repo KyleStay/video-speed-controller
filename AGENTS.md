@@ -129,7 +129,11 @@ with direct `chrome.*` access.
   video (`readyState >= 2`) attaches synchronously and the same keypress acts on
   it; a still-loading one is primed (not force-attached) and handled a beat later.
   A cross-origin embed in an iframe is a separate context the parent frame can
-  never reach — VSC's own instance inside that frame handles it.
+  never reach — VSC's own instance inside that frame handles it. X/Twitter may
+  act on `keypress` or `keyup` after VSC claims `keydown`, so its window-capture
+  listeners suppress only follow-up events associated with a keydown VSC
+  actually claimed. They never run the VSC action again, and `cleanup()` removes
+  the listeners and clears the remembered keys.
 - **Shift-exclusive frame-step keys**: `rewindFrame` (`,`) and `advanceFrame`
   (`.`) carry an explicit **all-false `modifiers` object** in `DEFAULT_BINDINGS`.
   That routes them through `findMatchingBinding`'s chord tier (exact modifier
@@ -139,7 +143,8 @@ with direct `chrome.*` access.
   actions (`SHIFT_EXCLUSIVE_ACTIONS` in `options.js`), so re-recording can't
   silently downgrade them to a shift-catching simple binding.
 - **Performance guards**: prefer `scheduleDeferredWork`/`requestIdleCallback`;
-  don't watch `style`/`class` mutations until the first media element exists
+  idle callbacks use a bounded timeout so busy pages cannot stall startup; don't
+  watch `style`/`class` mutations until the first media element exists
   (`MutationObserver.enableAttributeObservation`); skip the comprehensive scan on
   frames with no media signal (`hasMediaIndicators`); guard expensive log-string
   construction on hot paths with `logger.canLog(level)`.

@@ -225,6 +225,23 @@ describe('Inject', () => {
     window.cancelIdleCallback = originalCancelIdleCallback;
   });
 
+  it('gives idle work a bounded deadline so startup cannot stall indefinitely', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    window.requestIdleCallback = vi.fn(() => 123);
+
+    extension.scheduleDeferredWork(() => {}, { idle: true, delay: 200 });
+
+    expect(window.requestIdleCallback).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 1000,
+    });
+
+    extension.clearScheduledWork();
+    window.requestIdleCallback = originalRequestIdleCallback;
+  });
+
   it('deferred media scan schedules comprehensive scan even after light scan finds media', () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();
