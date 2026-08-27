@@ -84,6 +84,8 @@ if (!window.VSC.VideoSpeedConfig) {
           return;
         }
 
+        delete this.settings._abort;
+
         this._loaded = true;
 
         // Handle key bindings migration/initialization
@@ -125,6 +127,11 @@ if (!window.VSC.VideoSpeedConfig) {
         // Apply siteRules
         this.settings.siteRules =
           storage.siteRules || window.VSC.Constants.DEFAULT_SETTINGS.siteRules;
+
+        // A config instance is reused across teardown/re-init. Clear the
+        // derived value before matching so removing a rule cannot leave its
+        // speed active for the rest of the page lifetime.
+        delete this.settings.siteDefaultSpeed;
 
         // Match current URL against site rules to derive per-site default speed.
         // matchSiteRule is exposed on window.VSC by inject-entry.js; guard for
@@ -315,7 +322,9 @@ if (!window.VSC.VideoSpeedConfig) {
 
     /**
      * Normalize a key binding's modifiers to strict booleans.
-     * Strips the modifiers object entirely when all values are falsy.
+     * Preserves an explicitly supplied all-false object. Its presence marks an
+     * exact no-modifier chord (not a shift-tolerant simple binding), which is
+     * required by the bare comma/period frame-step shortcuts.
      * Defensive against corrupt storage data (e.g., modifiers: { shift: 1 }).
      * @param {Object} binding
      * @returns {Object} Sanitized binding (shallow copy)
@@ -333,11 +342,7 @@ if (!window.VSC.VideoSpeedConfig) {
         meta: Boolean(m.meta),
       };
       const result = { ...binding };
-      if (normalized.shift || normalized.ctrl || normalized.alt || normalized.meta) {
-        result.modifiers = normalized;
-      } else {
-        delete result.modifiers;
-      }
+      result.modifiers = normalized;
       return result;
     }
   }

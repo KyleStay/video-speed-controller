@@ -5,6 +5,7 @@
 import puppeteer from 'puppeteer';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { mkdir } from 'fs/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16,12 +17,31 @@ const __dirname = dirname(__filename);
  */
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export function getChromeLaunchArgs({ ci = process.env.CI, platform = process.platform } = {}) {
+  const args = [
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-features=TranslateUI',
+    '--disable-ipc-flooding-protection',
+    '--window-size=1280,720',
+    '--allow-file-access-from-files',
+  ];
+
+  // GitHub-hosted Ubuntu runners disable the user-namespace sandbox. Scope the
+  // fallback to Linux CI only; local browsers retain their normal sandbox.
+  if (ci === 'true' && platform === 'linux') {
+    args.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
+  return args;
+}
+
 /**
  * Launch Chrome with extension loaded
  * @returns {Promise<{browser: Browser, page: Page}>}
  */
 export async function launchChromeWithExtension() {
   const extensionPath = join(__dirname, '../../dist');
+  const chromeArgs = getChromeLaunchArgs();
 
   console.log(`   📁 Loading extension from: ${extensionPath}`);
 
@@ -29,20 +49,21 @@ export async function launchChromeWithExtension() {
     const browser = await puppeteer.launch({
       headless: false, // Extensions require non-headless mode
       devtools: false,
-      enableExtensions: [extensionPath],
+      enableExtensions: true,
       protocolTimeout: 30000,
-      args: [
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--window-size=1280,720',
-        '--allow-file-access-from-files',
-      ],
+      args: chromeArgs,
       ignoreDefaultArgs: ['--enable-automation'],
     });
 
-    console.log('   🌐 Chrome browser launched successfully');
+    // Puppeteer 25.3.0 does not correctly await array-valued
+    // enableExtensions installs. Install explicitly so no test can navigate
+    // before the unpacked extension is ready.
+    const extensionId = await browser.installExtension(extensionPath);
+    if (!extensionId) {
+      throw new Error('Puppeteer did not return an installed extension ID');
+    }
+
+    console.log(`   🌐 Chrome browser launched successfully (${extensionId})`);
 
     const pages = await browser.pages();
     const page = pages[0] || (await browser.newPage());
@@ -344,7 +365,9 @@ export async function getControllerSpeedDisplay(page) {
  */
 export async function takeScreenshot(page, filename) {
   try {
-    const screenshotPath = join(__dirname, `screenshots/${filename}`);
+    const screenshotsDirectory = join(__dirname, 'screenshots');
+    await mkdir(screenshotsDirectory, { recursive: true });
+    const screenshotPath = join(screenshotsDirectory, filename);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`   📸 Screenshot saved: ${screenshotPath}`);
   } catch (error) {

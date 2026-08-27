@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { ZipArchive } from 'archiver';
 import { BROWSERS, RELEASE_READY_BROWSERS } from './browser-config.mjs';
+import { releaseZipName } from './release-artifacts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -23,7 +24,7 @@ async function packageBrowser(targetBrowser, useLegacyDist = false) {
     : path.join(rootDir, 'dist', targetBrowser);
   const zipName = useLegacyDist
     ? `videospeed-${pkg.version}.zip`
-    : `stayfast-video-${targetBrowser}-${pkg.version}.zip`;
+    : releaseZipName(targetBrowser, pkg.version);
   const zipPath = path.join(releaseDir, zipName);
 
   // Verify dist exists

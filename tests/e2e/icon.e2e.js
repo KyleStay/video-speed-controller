@@ -20,8 +20,9 @@ async function testUltraSimplified() {
 
   const browser = await puppeteer.launch({
     headless: false,
-    enableExtensions: [extensionPath],
+    enableExtensions: true,
   });
+  await browser.installExtension(extensionPath);
 
   try {
     // Test 1: Icon should be active regardless of page content
@@ -80,4 +81,7 @@ async function testUltraSimplified() {
 }
 
 // Run the test
-testUltraSimplified().catch(console.error);
+testUltraSimplified().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

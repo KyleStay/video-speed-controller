@@ -141,6 +141,7 @@ describe('content-bridge', () => {
 
       // Bridge responds with abort signal so inject.js knows not to init
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
       expect(events).toHaveLength(1);
       expect(events[0].detail.abort).toBe(true);
     });
@@ -154,6 +155,7 @@ describe('content-bridge', () => {
 
       await loadBridge();
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
       expect(events).toHaveLength(1);
       expect(events[0].detail.abort).toBe(true);
     });
@@ -170,6 +172,7 @@ describe('content-bridge', () => {
 
       await loadBridge();
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
       expect(events).toHaveLength(1);
       expect(events[0].detail.abort).toBeUndefined(); // NOT aborted
     });
@@ -193,6 +196,7 @@ describe('content-bridge', () => {
 
       await loadBridge();
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
       expect(events).toHaveLength(1);
       expect(events[0].detail.abort).toBe(true);
     });
@@ -212,6 +216,7 @@ describe('content-bridge', () => {
       eventCleanup = cleanup;
 
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
       expect(events).toHaveLength(1);
       expect(events[0].detail.settings.lastSpeed).toBe(2.5);
       expect(events[0].detail.settings.rememberSpeed).toBe(true);
@@ -227,6 +232,7 @@ describe('content-bridge', () => {
       eventCleanup = cleanup;
 
       docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
 
       const { settings, hostname } = events[0].detail;
       // Stripped from settings
@@ -235,6 +241,38 @@ describe('content-bridge', () => {
       // customCSS passes through (inject.js reads it from config.settings)
       expect(settings.customCSS).toBe('vsc-controller { top: 42px; }');
       expect(typeof hostname).toBe('string');
+    });
+
+    it('responds to repeated requests with fresh bounded settings', async () => {
+      getMockStorage().lastSpeed = 1.25;
+      await loadBridge();
+      const getSettings = vi.spyOn(globalThis.chrome.storage.sync, 'get');
+      const { events, cleanup } = collectEvents('VSC_SETTINGS_READY');
+      eventCleanup = cleanup;
+
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
+      getMockStorage().lastSpeed = 2.5;
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(events.map((event) => event.detail.settings.lastSpeed)).toEqual([1.25, 2.5]);
+      expect(getSettings).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails closed when a settings read rejects', async () => {
+      await loadBridge();
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      globalThis.chrome.storage.sync.get = vi.fn(() => Promise.reject(new Error('invalidated')));
+      const { events, cleanup } = collectEvents('VSC_SETTINGS_READY');
+      eventCleanup = cleanup;
+
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].detail).toEqual({ abort: true });
+      logError.mockRestore();
     });
   });
 
@@ -249,18 +287,31 @@ describe('content-bridge', () => {
 
       // Valid speed
       docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 2.5 } }));
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(1100);
       expect(storage.lastSpeed).toBe(2.5);
 
       // Clamped to min (0.07)
       docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 0.01 } }));
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(1100);
       expect(storage.lastSpeed).toBe(0.07);
 
       // Clamped to max (16)
       docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 99 } }));
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(1100);
       expect(storage.lastSpeed).toBe(16);
+    });
+
+    it('coalesces rapid writes and persists only the latest speed', async () => {
+      await loadBridge();
+      const set = vi.spyOn(globalThis.chrome.storage.sync, 'set');
+
+      for (const lastSpeed of [1.25, 1.5, 2, 2.5]) {
+        docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed } }));
+      }
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(set).toHaveBeenCalledOnce();
+      expect(getMockStorage().lastSpeed).toBe(2.5);
     });
 
     it('rejects invalid speed values and non-speed keys', async () => {

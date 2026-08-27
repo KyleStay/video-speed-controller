@@ -19,12 +19,22 @@ class VideoSpeedExtension {
     this.spaNavigationDocument = null;
     this.scheduledWork = new Set();
     this.documentReplacementInProgress = false;
+    this.lifecycleGeneration = 0;
+    this.initializationInProgress = false;
+    this.readyCleanup = null;
+    this.spaRecoveryScheduled = false;
   }
 
   /**
    * Initialize the extension
    */
   async initialize() {
+    if (this.initializationInProgress || (this.initialized && !this.teardownRequested)) {
+      return;
+    }
+
+    const generation = ++this.lifecycleGeneration;
+    this.initializationInProgress = true;
     try {
       this.teardownRequested = false;
 
@@ -44,6 +54,10 @@ class VideoSpeedExtension {
       this.config = window.VSC.videoSpeedConfig;
       await this.config.load();
 
+      if (generation !== this.lifecycleGeneration || this.teardownRequested) {
+        return;
+      }
+
       if (this.config.settings._abort) {
         this.logger.debug('Extension disabled on this site — aborting init');
         return;
@@ -52,10 +66,15 @@ class VideoSpeedExtension {
       this.setupEventPipeline(document);
 
       // Defer DOM work so page frameworks finish init before we mutate.
-      this.deferDOMWork(document);
+      this.initialized = true;
+      this.deferDOMWork(document, generation);
     } catch (error) {
       this.logger.error(`Failed to initialize StayFast Video: ${error.message}`);
       this.logger.error(`Error stack: ${error.stack}`);
+    } finally {
+      if (generation === this.lifecycleGeneration) {
+        this.initializationInProgress = false;
+      }
     }
   }
 
@@ -73,14 +92,13 @@ class VideoSpeedExtension {
         return;
       }
 
-      window.VSC.initialized = true;
-
       if (!this.eventListenersInitialized) {
         this.eventManager.setupEventListeners(document);
         this.eventListenersInitialized = true;
       }
 
       this.deferExpensiveOperations(document);
+      window.VSC.initialized = true;
       this.logger.debug('Document initialization completed');
     } catch (error) {
       this.logger.error(`Failed to initialize document: ${error.message}`);
@@ -172,6 +190,7 @@ class VideoSpeedExtension {
         (!stateManager || stateManager.getControlledElements().length === 0) &&
         this.mediaObserver.hasMediaIndicators(document)
       ) {
+        this.mutationObserver?.observeOpenShadowRoots(document);
         const comprehensiveMedia = this.mediaObserver.scanAll(document);
         comprehensiveMedia.forEach((media) => {
           if (!media.vsc) {
@@ -207,6 +226,7 @@ class VideoSpeedExtension {
             return;
           }
 
+          this.mutationObserver?.observeOpenShadowRoots(document);
           const comprehensiveMedia = this.mediaObserver.scanAll(document);
 
           comprehensiveMedia.forEach((media) => {
@@ -231,9 +251,9 @@ class VideoSpeedExtension {
    * Defer DOM work via requestIdleCallback to yield to site frameworks
    * before injecting CSS, controllers, and observers.
    */
-  deferDOMWork(document) {
+  deferDOMWork(document, generation = this.lifecycleGeneration) {
     const doWork = () => {
-      if (this.teardownRequested) {
+      if (this.teardownRequested || generation !== this.lifecycleGeneration) {
         return;
       }
 
@@ -247,12 +267,16 @@ class VideoSpeedExtension {
 
       this.setupSpaNavigationRecovery();
 
-      this.initializeWhenReady(document, (doc) => {
+      this.readyCleanup?.();
+      this.readyCleanup = this.initializeWhenReady(document, (doc) => {
+        this.readyCleanup = null;
+        if (generation !== this.lifecycleGeneration) {
+          return;
+        }
         this.initializeDocument(doc);
       });
 
       this.logger.info('StayFast Video initialized successfully');
-      this.initialized = true;
     };
 
     this.scheduleDeferredWork(doWork, { idle: true, delay: 0 });
@@ -365,7 +389,7 @@ class VideoSpeedExtension {
       const customCSS = this.config.settings.customCSS || '';
       if (customCSS) {
         this._customSheet = new CSSStyleSheet();
-        this._customSheet.replaceSync(customCSS);
+        this._customSheet.replaceSync(this.preprocessDomainCSS(customCSS));
         toAdopt.push(this._customSheet);
       }
 
@@ -391,7 +415,7 @@ class VideoSpeedExtension {
           this._customSheet = new CSSStyleSheet();
           document.adoptedStyleSheets = [...document.adoptedStyleSheets, this._customSheet];
         }
-        this._customSheet.replaceSync(customCSS);
+        this._customSheet.replaceSync(this.preprocessDomainCSS(customCSS));
       } else if (this._customSheet) {
         document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
           (s) => s !== this._customSheet
@@ -438,7 +462,7 @@ class VideoSpeedExtension {
     }
 
     this.spaNavigationHandler = () => {
-      if (this.teardownRequested || !this.mediaObserver) {
+      if (this.teardownRequested || !this.mediaObserver || this.spaRecoveryScheduled) {
         return;
       }
       // Respect the media-less-frame perf priority (P2): only rescan when the
@@ -450,10 +474,17 @@ class VideoSpeedExtension {
       }
       this.logger.debug('SPA navigation detected — rescanning for media');
       // Defer: let the framework swap in the new player before we scan.
-      this.scheduleDeferredWork(() => this.deferredMediaScan(document), {
-        idle: true,
-        delay: 200,
-      });
+      this.spaRecoveryScheduled = true;
+      this.scheduleDeferredWork(
+        () => {
+          this.spaRecoveryScheduled = false;
+          this.deferredMediaScan(document);
+        },
+        {
+          idle: true,
+          delay: 200,
+        }
+      );
     };
 
     // Capture the document we register on so teardown removes the listener from
@@ -625,14 +656,24 @@ class VideoSpeedExtension {
    * Counterpart to initialize() — leaves the page as if VSC was never active.
    */
   teardown() {
-    if (!this.initialized && !this.eventListenersInitialized && !this.eventManager) {
+    if (
+      !this.initialized &&
+      !this.eventListenersInitialized &&
+      !this.eventManager &&
+      !this.initializationInProgress
+    ) {
       return;
     }
 
     this.teardownRequested = true;
+    this.lifecycleGeneration += 1;
+    this.initializationInProgress = false;
     this.logger.info('Tearing down StayFast Video');
 
     this.clearScheduledWork();
+    this.spaRecoveryScheduled = false;
+    this.readyCleanup?.();
+    this.readyCleanup = null;
 
     for (const video of this.pendingVideoElements) {
       this.clearPendingVideoAttachment(video);
