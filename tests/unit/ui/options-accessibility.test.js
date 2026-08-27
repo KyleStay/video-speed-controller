@@ -72,6 +72,25 @@ describe('Options accessibility and CSS safety', () => {
     expect(validateCustomCSSSafety('vsc-controller { top: 4px; }')).toBe('');
   });
 
+  it('rejects custom CSS that cannot fit in one sync-storage item', async () => {
+    const { validateCustomCSSStorageLimit } = await import('../../../src/ui/options/options.js');
+
+    expect(validateCustomCSSStorageLimit('vsc-controller { top: 4px; }')).toBe('');
+    expect(validateCustomCSSStorageLimit('x'.repeat(8193))).toMatch(/exceeds 8KB/);
+  });
+
+  it('rejects any oversized imported sync-storage item before import', async () => {
+    const { validateImportedSettingsStorageLimits } =
+      await import('../../../src/ui/options/options.js');
+
+    expect(validateImportedSettingsStorageLimits({ keyBindings: [] })).toBe('');
+    expect(
+      validateImportedSettingsStorageLimits({
+        keyBindings: [{ action: 'custom', value: 'x'.repeat(8192) }],
+      })
+    ).toMatch(/keyBindings.*8KB/);
+  });
+
   it('supports arrow-key navigation for options tabs', async () => {
     document.body.innerHTML = `
       <button id="tab-settings" class="header-tab active" role="tab" aria-selected="true" aria-controls="panel-settings" tabindex="0">Settings</button>

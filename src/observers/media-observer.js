@@ -160,7 +160,7 @@ class MediaElementObserver {
   hasMediaIndicators(document) {
     try {
       const audioEnabled = this.config.settings.audioBoolean;
-      const lightSelector = audioEnabled ? 'video,audio,iframe' : 'video,iframe';
+      const lightSelector = audioEnabled ? 'video,audio' : 'video';
       if (document.querySelector(lightSelector)) {
         return true;
       }
@@ -202,9 +202,9 @@ class MediaElementObserver {
     const containerMedia = this.scanSiteSpecificContainers(document);
     allMedia.push(...containerMedia);
 
-    // Iframe scan
-    const iframeMedia = this.scanIframes(document);
-    allMedia.push(...iframeMedia);
+    // Each frame receives its own MAIN/ISOLATED content-script pair via
+    // all_frames. Do not let a parent claim same-origin child media: ownership
+    // must stay with the child frame so its own shortcut state remains valid.
 
     // Remove duplicates
     const uniqueMedia = [...new Set(allMedia)];

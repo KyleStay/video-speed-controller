@@ -97,9 +97,11 @@ describe('browser manifest generation', () => {
       'utf8'
     );
 
-    expect(packageSource).toContain('`stayfast-video-${targetBrowser}-${pkg.version}.zip`');
+    expect(packageSource).toContain('releaseZipName(targetBrowser, pkg.version)');
     expect(packageSource).toContain('`videospeed-${pkg.version}.zip`');
-    expect(githubReleaseSource).toContain('--title "StayFast Video ${tag}"');
+    expect(githubReleaseSource).toContain('releaseZipNames(RELEASE_READY_BROWSERS, version)');
+    expect(githubReleaseSource).toContain('execFileSync(command, args');
+    expect(githubReleaseSource).toContain('`StayFast Video ${tag}`');
   });
 
   it.each(BROWSERS)('preserves the bridge and MAIN-world content scripts for %s', (browser) => {
