@@ -113,6 +113,41 @@ describe('ControllerCSS', () => {
 
   // --- Migration: old controllerCSS blob → customCSS ---
 
+  it('waits for legacy CSS cleanup before completing settings load', async () => {
+    getMockStorage().controllerCSS = 'legacy CSS';
+    let completeRemoval;
+    const pendingRemoval = new Promise((resolve) => {
+      completeRemoval = resolve;
+    });
+    const remove = vi.spyOn(window.VSC.StorageManager, 'remove').mockReturnValue(pendingRemoval);
+    let loaded = false;
+    const loading = new window.VSC.VideoSpeedConfig().load().then(() => {
+      loaded = true;
+    });
+    try {
+      await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(['controllerCSS']));
+      expect(loaded).toBe(false);
+    } finally {
+      completeRemoval();
+      await loading;
+      remove.mockRestore();
+    }
+  });
+
+  it('preserves user settings when legacy CSS cleanup fails', async () => {
+    getMockStorage().controllerCSS = 'legacy CSS';
+    getMockStorage().customCSS = 'vsc-controller { top: 42px; }';
+    const remove = vi
+      .spyOn(window.VSC.StorageManager, 'remove')
+      .mockRejectedValue(new Error('Storage unavailable'));
+    try {
+      const settings = await new window.VSC.VideoSpeedConfig().load();
+      expect(settings.customCSS).toBe('vsc-controller { top: 42px; }');
+    } finally {
+      remove.mockRestore();
+    }
+  });
+
   it('migration: old controllerCSS matching current default clears to empty customCSS', async () => {
     setupMock();
     getMockStorage().controllerCSS = window.VSC.Constants.DEFAULT_CONTROLLER_CSS;
