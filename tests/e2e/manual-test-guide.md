@@ -162,7 +162,7 @@ All test cases should pass, confirming:
 
 ## Local media fixture
 
-The basic browser gate loads `sample.mp4` beside `test-video.html`, so media readiness does not depend on a public video host. It is a synthetic 60-second H.264 clip. Regenerate it with:
+Generate the local 60-second test clip:
 
 ```sh
 ffmpeg -f lavfi -i color=c=blue:s=160x90:r=1:d=60 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/e2e/sample.mp4

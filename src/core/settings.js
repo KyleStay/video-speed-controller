@@ -179,11 +179,7 @@ if (!window.VSC.VideoSpeedConfig) {
             : window.VSC.Constants.DEFAULT_SETTINGS.controllerButtonSize;
         // One-time migration: drop legacy controllerCSS key, reset to new model.
         if (storage.controllerCSS !== null) {
-          try {
-            await window.VSC.StorageManager.remove(['controllerCSS']);
-          } catch (error) {
-            window.VSC.logger.warn(`Failed to remove legacy controller CSS: ${error.message}`);
-          }
+          window.VSC.StorageManager.remove(['controllerCSS']);
         }
         this.settings.customCSS = storage.customCSS ?? '';
         this.settings.logLevel = Number(
