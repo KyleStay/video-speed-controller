@@ -82,7 +82,7 @@ describe('StorageManager — MAIN world (CustomEvent paths)', () => {
       docEl.removeEventListener('VSC_REQUEST_SETTINGS', responder);
     });
 
-    it('falls back to defaults on 2s timeout', async () => {
+    it('fails closed on a 2s bridge timeout', async () => {
       vi.useFakeTimers();
 
       const defaults = { lastSpeed: 1.0, enabled: true };
@@ -94,7 +94,7 @@ describe('StorageManager — MAIN world (CustomEvent paths)', () => {
       await vi.advanceTimersByTimeAsync(2100);
 
       const result = await promise;
-      expect(result).toEqual(defaults);
+      expect(result).toBeNull();
     });
 
     it('merges defaults with received settings', async () => {

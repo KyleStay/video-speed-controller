@@ -167,6 +167,65 @@ describe('MutationObserver', () => {
     expect(mockOnVideoFound[0].parent).toBe(videoElement.parentNode);
   });
 
+  it('detects a shadow-hosted video nested inside an added wrapper', () => {
+    const found = [];
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: { audioBoolean: true } },
+      (video) => found.push(video),
+      () => {}
+    );
+    const wrapper = document.createElement('div');
+    const section = document.createElement('section');
+    const host = document.createElement('custom-player');
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    const video = document.createElement('video');
+    shadowRoot.appendChild(video);
+    section.appendChild(host);
+    wrapper.appendChild(section);
+
+    observer.checkForVideoAndShadowRoot(wrapper, document.body, true);
+
+    expect(found).toEqual([video]);
+    expect(observer.shadowObservers.has(shadowRoot)).toBe(true);
+    observer.stop();
+  });
+
+  it('observes open shadow roots that already exist before the comprehensive scan', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    const host = document.createElement('custom-player');
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    document.body.appendChild(host);
+
+    observer.observeOpenShadowRoots(document);
+
+    expect(observer.shadowObservers.has(shadowRoot)).toBe(true);
+    observer.stop();
+    host.remove();
+  });
+
+  it('observes open roots created by attachShadow after observer startup', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    const originalAttachShadow = Element.prototype.attachShadow;
+    observer.start(document);
+    const host = document.createElement('custom-player');
+    document.body.appendChild(host);
+
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+
+    expect(observer.shadowObservers.has(shadowRoot)).toBe(true);
+    observer.stop();
+    expect(Element.prototype.attachShadow).toBe(originalAttachShadow);
+    host.remove();
+  });
+
   it('VideoMutationObserver should handle HTMLCollection children properly', () => {
     const mockConfig = { settings: {} };
     const mockOnVideoFound = [];
@@ -358,6 +417,27 @@ describe('MutationObserver', () => {
       // Re-observed with the upgraded filter.
       expect(observeSpy).toHaveBeenCalledWith(document, expect.objectContaining({ subtree: true }));
 
+      observer.stop();
+    });
+
+    it('upgrades existing shadow observers to style/class observation', () => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      observer.start(document);
+      const host = document.createElement('div');
+      const shadowRoot = host.attachShadow({ mode: 'open' });
+      const shadowObserver = observer.shadowObservers.get(shadowRoot);
+      const observe = vi.spyOn(shadowObserver, 'observe');
+
+      observer.enableAttributeObservation();
+
+      expect(observe).toHaveBeenCalledWith(
+        shadowRoot,
+        expect.objectContaining({ attributeFilter: expect.arrayContaining(['style', 'class']) })
+      );
       observer.stop();
     });
 
