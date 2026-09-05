@@ -59,7 +59,7 @@
     "vitest": "^4.1.9"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.2"
   },
   "prettier": {
     "singleQuote": true,
