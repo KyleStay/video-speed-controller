@@ -48,7 +48,7 @@ if (!window.VSC.StorageManager) {
           // Structured clone failure: detail is null when crossing worlds
           if (!detail) {
             window.VSC.logger?.error?.('StorageManager: bridge response is null (clone failed?)');
-            resolve(defaults);
+            resolve(null);
             return;
           }
 
@@ -65,8 +65,8 @@ if (!window.VSC.StorageManager) {
 
         const timeout = setTimeout(() => {
           docEl.removeEventListener('VSC_SETTINGS_READY', onReady);
-          window.VSC.logger?.warn?.('StorageManager: settings timeout, using defaults');
-          resolve(defaults);
+          window.VSC.logger?.warn?.('StorageManager: settings timeout, aborting initialization');
+          resolve(null);
         }, 2000);
 
         docEl.addEventListener('VSC_SETTINGS_READY', onReady);

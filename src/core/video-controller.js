@@ -39,30 +39,38 @@ class VideoController {
     // detached video or re-arm itself after teardown.
     this.disposed = false;
 
-    // Attach controller to video element first (needed for adjustSpeed)
-    target.vsc = this;
+    try {
+      // Attach controller to video element first (needed for adjustSpeed)
+      target.vsc = this;
 
-    // Register with state manager immediately after controller is attached
-    if (window.VSC.stateManager) {
-      window.VSC.stateManager.registerController(this);
-    } else {
-      window.VSC.logger.error('StateManager not available during VideoController initialization');
+      // Register with state manager immediately after controller is attached
+      if (window.VSC.stateManager) {
+        window.VSC.stateManager.registerController(this);
+      } else {
+        window.VSC.logger.error('StateManager not available during VideoController initialization');
+      }
+
+      // Initialize speed
+      this.initializeSpeed();
+
+      // Create UI
+      this.div = this.initializeControls();
+
+      // Set up event handlers
+      this.setupEventHandlers();
+
+      // Set up mutation observer for src changes
+      this.setupMutationObserver();
+
+      // Start measuring the real frame rate (video-only, zero steady-state cost).
+      this.setupFpsDetection();
+    } catch (error) {
+      // Construction must be transactional. A page-owned DOM/media API can
+      // throw in the MAIN world; never leave a stale expando or registered,
+      // half-initialized controller that blocks all future scans.
+      this.remove();
+      throw error;
     }
-
-    // Initialize speed
-    this.initializeSpeed();
-
-    // Create UI
-    this.div = this.initializeControls();
-
-    // Set up event handlers
-    this.setupEventHandlers();
-
-    // Set up mutation observer for src changes
-    this.setupMutationObserver();
-
-    // Start measuring the real frame rate (video-only, zero steady-state cost).
-    this.setupFpsDetection();
 
     window.VSC.logger.info('VideoController initialized for video element');
   }
@@ -106,42 +114,52 @@ class VideoController {
    * @private
    */
   startFpsBurst() {
-    this.stopFpsBurst();
-    this.fpsSamples = [];
-    this.lastVfcMeta = null;
-    this.vfcCallbackCount = 0;
+    try {
+      this.stopFpsBurst();
+      this.fpsSamples = [];
+      this.lastVfcMeta = null;
+      this.vfcCallbackCount = 0;
 
-    if (this.disposed || typeof this.video.requestVideoFrameCallback !== 'function') {
-      return;
-    }
-
-    const sampler = (_now, metadata) => {
-      this.vfcHandle = null;
-
-      // Torn down while this callback was in flight (cancel unavailable/failed):
-      // do not touch the detached video or re-arm. Hard stop against post-remove
-      // leaks — the re-arm listeners are already gone and we must not resurrect.
-      if (this.disposed) {
+      if (this.disposed || typeof this.video.requestVideoFrameCallback !== 'function') {
         return;
       }
 
-      this.vfcCallbackCount += 1;
-      this.collectFpsSample(metadata);
+      const sampler = (_now, metadata) => {
+        this.vfcHandle = null;
 
-      // Bound the burst by callback count — NOT by useful-sample count — so
-      // variable-frame-rate or looping media, whose frames may never yield a
-      // valid sample, can't re-register forever. Once fps is known, or the cap
-      // is hit, the burst stops and steady-state per-frame cost returns to zero.
-      if (
-        this.detectedFps === null &&
-        this.vfcCallbackCount < VideoController.FPS_MAX_CALLBACKS &&
-        typeof this.video.requestVideoFrameCallback === 'function'
-      ) {
-        this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
-      }
-    };
+        // Torn down while this callback was in flight (cancel unavailable/failed):
+        // do not touch the detached video or re-arm. Hard stop against post-remove
+        // leaks — the re-arm listeners are already gone and we must not resurrect.
+        if (this.disposed) {
+          return;
+        }
 
-    this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
+        this.vfcCallbackCount += 1;
+        this.collectFpsSample(metadata);
+
+        // Bound the burst by callback count — NOT by useful-sample count — so
+        // variable-frame-rate or looping media, whose frames may never yield a
+        // valid sample, can't re-register forever. Once fps is known, or the cap
+        // is hit, the burst stops and steady-state per-frame cost returns to zero.
+        if (
+          this.detectedFps === null &&
+          this.vfcCallbackCount < VideoController.FPS_MAX_CALLBACKS &&
+          typeof this.video.requestVideoFrameCallback === 'function'
+        ) {
+          try {
+            this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
+          } catch (error) {
+            this.vfcHandle = null;
+            window.VSC.logger.warn(`fps detection re-arm failed: ${error?.message}`);
+          }
+        }
+      };
+
+      this.vfcHandle = this.video.requestVideoFrameCallback(sampler);
+    } catch (error) {
+      this.vfcHandle = null;
+      window.VSC.logger.warn(`fps detection burst failed: ${error?.message}`);
+    }
   }
 
   /**
@@ -559,8 +577,8 @@ class VideoController {
       return hash & hash; // Convert to 32-bit integer
     }, 0);
 
-    const random = Math.floor(Math.random() * 1000);
-    return `${tagName}-${Math.abs(srcHash)}-${timestamp}-${random}`;
+    const sequence = VideoController.nextControllerId++;
+    return `${tagName}-${Math.abs(srcHash)}-${timestamp}-${sequence}`;
   }
 
   /**
@@ -640,6 +658,7 @@ VideoController.COMMON_FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
 
 // Consecutive agreeing samples required before committing a detected fps.
 VideoController.FPS_MIN_SAMPLES = 3;
+VideoController.nextControllerId = 1;
 
 // Hard cap on rVFC callbacks per burst before giving up. Bounds the burst by
 // callbacks (not useful samples) so variable-frame-rate or looping media, whose

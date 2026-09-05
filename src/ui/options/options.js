@@ -19,7 +19,7 @@ window.VSC = window.VSC || {};
 
 let keyBindings = [];
 
-const TAB_NAMES = ['settings', 'advanced', 'faq'];
+const TAB_NAMES = ['settings', 'advanced', 'faq', 'about'];
 const CONTROLLER_OPACITY_LIMITS = { min: 0, max: 1 };
 const CONTROLLER_BUTTON_SIZE_LIMITS = { min: 10, max: 32 };
 
@@ -172,6 +172,25 @@ export function validateCustomCSSSafety(css) {
     return 'Remote-loading CSS such as @import or url() is not allowed.';
   }
   return '';
+}
+
+export function validateCustomCSSStorageLimit(css) {
+  const cssByteSize = new Blob([css]).size;
+  return cssByteSize > 8192
+    ? `Controller CSS exceeds 8KB storage limit (${Math.round(cssByteSize / 1024)}KB). Reduce CSS size.`
+    : '';
+}
+
+export function validateImportedSettingsStorageLimits(settings) {
+  let totalBytes = 0;
+  for (const [key, value] of Object.entries(settings)) {
+    const itemBytes = new Blob([key, JSON.stringify(value)]).size;
+    if (itemBytes > 8192) {
+      return `Imported setting "${key}" exceeds Chrome's 8KB per-item sync limit.`;
+    }
+    totalBytes += itemBytes;
+  }
+  return totalBytes > 102400 ? 'Imported settings exceed Chrome sync storage capacity.' : '';
 }
 
 /**
@@ -894,9 +913,9 @@ async function save_options() {
     }
 
     // Byte-length guard for chrome.storage.sync (8KB per-item limit)
-    const cssByteSize = new Blob([customCSS]).size;
-    if (cssByteSize > 8192) {
-      status.textContent = `Error: Controller CSS exceeds 8KB storage limit (${Math.round(cssByteSize / 1024)}KB). Reduce CSS size.`;
+    const storageLimitError = validateCustomCSSStorageLimit(customCSS);
+    if (storageLimitError) {
+      status.textContent = `Error: ${storageLimitError}`;
       status.classList.add('show', 'error');
       setTimeout(() => {
         status.textContent = '';
@@ -1121,7 +1140,7 @@ async function handleImportFile(event) {
     }
 
     if (!imported || typeof imported !== 'object' || !Array.isArray(imported.keyBindings)) {
-      throw new Error('File does not look like a Video Speed Controller settings file');
+      throw new Error('File does not look like a StayFast Video settings file');
     }
 
     if (typeof imported.customCSS === 'string') {
@@ -1129,6 +1148,18 @@ async function handleImportFile(event) {
       if (safetyError) {
         throw new Error(safetyError);
       }
+      const storageLimitError = validateCustomCSSStorageLimit(imported.customCSS);
+      if (storageLimitError) {
+        throw new Error(storageLimitError);
+      }
+      if (!validateControllerCSS(imported.customCSS)) {
+        throw new Error('Controller CSS has syntax errors');
+      }
+    }
+
+    const importStorageError = validateImportedSettingsStorageLimits(imported);
+    if (importStorageError) {
+      throw new Error(importStorageError);
     }
 
     // Ensure config is initialized
@@ -1136,11 +1167,17 @@ async function handleImportFile(event) {
       window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
     }
 
-    // Clear existing storage and write the imported settings
-    await window.VSC.StorageManager.clear();
+    // Write first so a rejected quota/API operation cannot erase the user's
+    // current settings. Once the atomic set succeeds, remove keys omitted by
+    // the import so they fall back to defaults on the subsequent restore.
+    const existingSettings = await chrome.storage.sync.get(null);
     const ok = await window.VSC.videoSpeedConfig.save(imported);
     if (!ok) {
       throw new Error('Failed to write imported settings to storage');
+    }
+    const staleKeys = Object.keys(existingSettings).filter((key) => !(key in imported));
+    if (staleKeys.length > 0) {
+      await window.VSC.StorageManager.remove(staleKeys);
     }
 
     // Remove custom shortcut rows before reloading UI
@@ -1317,7 +1354,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('restore').addEventListener('click', async (e) => {
     e.preventDefault();
     const confirmed = window.confirm(
-      'Reset all Video Speed Controller settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
+      'Reset all StayFast Video settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
     );
     if (!confirmed) {
       return;
@@ -1357,13 +1394,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateCSSHighlight();
   validateControllerCSS(cssTextarea.value);
 
-  // About and feedback buttons are optional in branded builds.
-  document.getElementById('about')?.addEventListener('click', () => {
-    window.open('https://github.com/igrigorik/videospeed');
-  });
-
   document.getElementById('feedback')?.addEventListener('click', () => {
-    window.open('https://github.com/igrigorik/videospeed/issues');
+    window.open('https://github.com/KyleStay/video-speed-controller/issues');
   });
 
   function eventCaller(event, className, funcName) {
