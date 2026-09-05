@@ -141,9 +141,16 @@ describe('Popup accessibility', () => {
   });
 
   it('uses custom validation and visible disabled states for popup controls', () => {
+    expect(popupHtml).toContain('<html lang="en">');
+    expect(popupHtml).toContain('<title>StayFast Video</title>');
+    expect(popupHtml).toContain('Every video. Your speed.');
+    expect(popupHtml).toContain('by StayTech');
     expect(popupHtml).toContain('id="custom-speed-form"');
     expect(popupHtml).toContain('novalidate');
     expect(popupCss).toContain('.control-btn:disabled');
     expect(popupCss).toContain('.control-btn:disabled:hover');
+    expect(popupCss).toMatch(
+      /\.reset-btn\s*\{[^}]*background:\s*var\(--md-primary\);[^}]*color:\s*var\(--md-on-primary\);/s
+    );
   });
 });
