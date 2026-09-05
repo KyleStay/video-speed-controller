@@ -120,6 +120,44 @@ describe('Inject', () => {
     extension.teardownRequested = false;
   });
 
+  it('teardown invalidates an initialization still waiting for settings', async () => {
+    const freshExtension = new window.VSC_controller.constructor();
+    let resolveLoad;
+    const originalLoad = window.VSC.videoSpeedConfig.load;
+    window.VSC.videoSpeedConfig.load = vi.fn(
+      () => new Promise((resolve) => (resolveLoad = resolve))
+    );
+    const setupEventPipeline = vi.spyOn(freshExtension, 'setupEventPipeline');
+
+    const initialization = freshExtension.initialize();
+    freshExtension.teardown();
+    resolveLoad();
+    await initialization;
+
+    expect(setupEventPipeline).not.toHaveBeenCalled();
+    expect(freshExtension.teardownRequested).toBe(true);
+    window.VSC.videoSpeedConfig.load = originalLoad;
+  });
+
+  it('coalesces concurrent initialization requests', async () => {
+    const freshExtension = new window.VSC_controller.constructor();
+    let resolveLoad;
+    const originalLoad = window.VSC.videoSpeedConfig.load;
+    window.VSC.videoSpeedConfig.load = vi.fn(
+      () => new Promise((resolve) => (resolveLoad = resolve))
+    );
+    vi.spyOn(freshExtension, 'deferDOMWork').mockImplementation(() => {});
+
+    const first = freshExtension.initialize();
+    const second = freshExtension.initialize();
+    resolveLoad();
+    await Promise.all([first, second]);
+
+    expect(window.VSC.videoSpeedConfig.load).toHaveBeenCalledOnce();
+    freshExtension.teardown();
+    window.VSC.videoSpeedConfig.load = originalLoad;
+  });
+
   it('handleDocumentReplaced tears down then reinitializes (R2)', async () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();
@@ -223,6 +261,23 @@ describe('Inject', () => {
     extension.teardownRequested = false;
     window.requestIdleCallback = originalRequestIdleCallback;
     window.cancelIdleCallback = originalCancelIdleCallback;
+  });
+
+  it('gives idle work a bounded deadline so startup cannot stall indefinitely', () => {
+    extension = window.VSC_controller;
+    expect(extension).toBeDefined();
+
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    window.requestIdleCallback = vi.fn(() => 123);
+
+    extension.scheduleDeferredWork(() => {}, { idle: true, delay: 200 });
+
+    expect(window.requestIdleCallback).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 1000,
+    });
+
+    extension.clearScheduledWork();
+    window.requestIdleCallback = originalRequestIdleCallback;
   });
 
   it('deferred media scan schedules comprehensive scan even after light scan finds media', () => {
@@ -555,6 +610,39 @@ describe('Inject', () => {
     extension.teardownRequested = false;
   });
 
+  it('coalesces repeated SPA navigation events before scanning the document', () => {
+    extension = window.VSC_controller;
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    let idleCallback;
+    window.requestIdleCallback = (callback) => {
+      idleCallback = callback;
+      return 1;
+    };
+    extension.teardownRequested = false;
+    extension.spaNavigationHandler = null;
+    extension.spaRecoveryScheduled = false;
+    extension.mediaObserver = {
+      scanForMediaLight: vi.fn(() => []),
+      hasMediaIndicators: vi.fn(() => true),
+    };
+    const deferredMediaScan = vi.spyOn(extension, 'deferredMediaScan').mockImplementation(() => {});
+
+    extension.setupSpaNavigationRecovery();
+    window.dispatchEvent(new Event('popstate'));
+    window.dispatchEvent(new Event('popstate'));
+
+    expect(extension.mediaObserver.hasMediaIndicators).toHaveBeenCalledOnce();
+    expect(deferredMediaScan).not.toHaveBeenCalled();
+    idleCallback();
+    expect(deferredMediaScan).toHaveBeenCalledOnce();
+
+    deferredMediaScan.mockRestore();
+    window.requestIdleCallback = originalRequestIdleCallback;
+    extension.initialized = true;
+    extension.teardown();
+    extension.teardownRequested = false;
+  });
+
   it('SPA navigation handler is a no-op after teardown is requested', () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();
@@ -659,6 +747,18 @@ describe('Inject', () => {
     expect(document.adoptedStyleSheets).toContain(extension._customSheet);
   });
 
+  it('preprocesses domain selectors in initial custom CSS', () => {
+    extension = window.VSC_controller;
+    resetCSSState(extension);
+    extension.config.settings.customCSS = `:root[style*='--vsc-domain: "${location.hostname}"'] vsc-controller { top: 42px; }`;
+    const replaceSync = vi.spyOn(CSSStyleSheet.prototype, 'replaceSync');
+
+    extension.injectControllerCSS();
+
+    expect(replaceSync).toHaveBeenLastCalledWith('vsc-controller { top: 42px; }');
+    replaceSync.mockRestore();
+  });
+
   it('injectControllerCSS skips custom sheet when customCSS is empty', () => {
     extension = window.VSC_controller;
     resetCSSState(extension);
@@ -701,6 +801,28 @@ describe('Inject', () => {
     expect(extension._customSheet).not.toBeNull();
     expect(document.adoptedStyleSheets).toContain(extension._customSheet);
     expect(document.adoptedStyleSheets).toContain(extension._controllerSheet);
+  });
+
+  it('preprocesses domain selectors in live custom CSS updates', () => {
+    extension = window.VSC_controller;
+    resetCSSState(extension);
+    extension.config.settings.customCSS = '';
+    extension.injectControllerCSS();
+    extension.setupCSSLiveUpdates();
+    const replaceSync = vi.spyOn(CSSStyleSheet.prototype, 'replaceSync');
+
+    document.documentElement.dispatchEvent(
+      new CustomEvent('VSC_STORAGE_CHANGED', {
+        detail: {
+          customCSS: {
+            newValue: `:root[style*='--vsc-domain: "${location.hostname}"'] vsc-controller { color: red; }`,
+          },
+        },
+      })
+    );
+
+    expect(replaceSync).toHaveBeenLastCalledWith('vsc-controller { color: red; }');
+    replaceSync.mockRestore();
   });
 
   it('setupCSSLiveUpdates removes custom sheet when customCSS cleared', () => {

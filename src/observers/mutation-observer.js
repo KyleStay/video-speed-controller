@@ -23,6 +23,9 @@ class VideoMutationObserver {
     // exists on the page. Until then we observe a minimal attribute set to
     // avoid processing constant SPA style/class mutations on media-less pages.
     this.attributeObservationEnabled = false;
+    this.attachShadowPrototype = null;
+    this.originalAttachShadow = null;
+    this.attachShadowWrapper = null;
   }
 
   /**
@@ -37,7 +40,40 @@ class VideoMutationObserver {
     });
 
     this.observer.observe(document, this.buildObserverOptions());
+    this.setupAttachShadowHook();
     window.VSC.logger.debug('Video mutation observer started');
+  }
+
+  /**
+   * Observe open roots created after their host is already connected. Creating
+   * a shadow root does not itself emit a MutationObserver record, so without
+   * this guarded hook late custom-element upgrades are invisible.
+   * @private
+   */
+  setupAttachShadowHook() {
+    try {
+      const prototype = window.Element?.prototype;
+      const original = prototype?.attachShadow;
+      if (typeof original !== 'function' || this.attachShadowWrapper) {
+        return;
+      }
+
+      const owner = this;
+      const wrapper = function (init) {
+        const shadowRoot = Reflect.apply(original, this, [init]);
+        if (init?.mode === 'open' && owner.active) {
+          owner.observeShadowRoot(shadowRoot);
+        }
+        return shadowRoot;
+      };
+
+      prototype.attachShadow = wrapper;
+      this.attachShadowPrototype = prototype;
+      this.originalAttachShadow = original;
+      this.attachShadowWrapper = wrapper;
+    } catch (error) {
+      window.VSC.logger.debug(`Could not hook attachShadow: ${error.message}`);
+    }
   }
 
   /**
@@ -70,6 +106,9 @@ class VideoMutationObserver {
     if (this.observer && this.observedDocument) {
       // Re-observing the same node replaces its options with the fuller filter.
       this.observer.observe(this.observedDocument, this.buildObserverOptions());
+      for (const [shadowRoot, shadowObserver] of this.shadowObservers) {
+        shadowObserver.observe(shadowRoot, this.buildObserverOptions());
+      }
       window.VSC.logger.debug('Enabled style/class observation after first media element');
     }
   }
@@ -250,7 +289,7 @@ class VideoMutationObserver {
     const videos = window.VSC.stateManager
       ? window.VSC.stateManager
           .getControlledElements()
-          .filter((video) => video === element || element.contains?.(video))
+          .filter((video) => video === element || this.isShadowIncludingAncestor(element, video))
       : [];
 
     if (videos.length === 0 && !this.nodeMayContainMedia(element)) {
@@ -260,6 +299,24 @@ class VideoMutationObserver {
     videos.forEach((video) => {
       this.recheckVideoElement(video);
     });
+  }
+
+  /**
+   * Check ancestry across open shadow-root host boundaries.
+   * @param {Element} ancestor - Candidate ancestor/host
+   * @param {Element} node - Candidate descendant
+   * @returns {boolean}
+   * @private
+   */
+  isShadowIncludingAncestor(ancestor, node) {
+    let current = node;
+    while (current) {
+      if (current === ancestor) {
+        return true;
+      }
+      current = current.parentNode || current.getRootNode?.().host || null;
+    }
+    return false;
   }
 
   /**
@@ -328,7 +385,7 @@ class VideoMutationObserver {
    * @private
    */
   processNodeChildren(node, parent, added) {
-    if (!this.nodeMayContainMedia(node)) {
+    if (!this.nodeMayContainMedia(node) && !this.nodeContainsShadowHost(node)) {
       return;
     }
 
@@ -375,6 +432,37 @@ class VideoMutationObserver {
   }
 
   /**
+   * Added subtrees may wrap a custom player several light-DOM levels deep.
+   * Keep that bounded walk out of the style/class hot path.
+   * @param {Node} node - Added subtree root
+   * @returns {boolean}
+   * @private
+   */
+  nodeContainsShadowHost(node) {
+    return Boolean(
+      Array.from(node.querySelectorAll?.('*') || []).some((child) => child.shadowRoot)
+    );
+  }
+
+  /**
+   * Observe every existing open shadow root below a document/root. Called only
+   * when the comprehensive scan's media-indicator gate has already passed.
+   * @param {Document|ShadowRoot|Element} root - Root to inspect
+   * @param {number} depth - Current shadow nesting depth
+   */
+  observeOpenShadowRoots(root, depth = 0) {
+    if (!root || depth > 10) {
+      return;
+    }
+    for (const element of root.querySelectorAll?.('*') || []) {
+      if (element.shadowRoot) {
+        this.observeShadowRoot(element.shadowRoot);
+        this.observeOpenShadowRoots(element.shadowRoot, depth + 1);
+      }
+    }
+  }
+
+  /**
    * Set up observer for shadow root
    * @param {ShadowRoot} shadowRoot - Shadow root to observe
    * @private
@@ -388,13 +476,7 @@ class VideoMutationObserver {
       this.scheduleMutationProcessing(mutations);
     });
 
-    const observerOptions = {
-      attributeFilter: ['aria-hidden', 'data-focus-method'],
-      childList: true,
-      subtree: true,
-    };
-
-    shadowObserver.observe(shadowRoot, observerOptions);
+    shadowObserver.observe(shadowRoot, this.buildObserverOptions());
     this.shadowObservers.set(shadowRoot, shadowObserver);
 
     window.VSC.logger.debug('Shadow root observer added');
@@ -434,6 +516,17 @@ class VideoMutationObserver {
    */
   stop() {
     this.active = false;
+
+    if (
+      this.attachShadowPrototype &&
+      this.attachShadowWrapper &&
+      this.attachShadowPrototype.attachShadow === this.attachShadowWrapper
+    ) {
+      this.attachShadowPrototype.attachShadow = this.originalAttachShadow;
+    }
+    this.attachShadowPrototype = null;
+    this.originalAttachShadow = null;
+    this.attachShadowWrapper = null;
 
     if (this.observer) {
       this.observer.disconnect();

@@ -95,7 +95,8 @@ describe('StateManagerIntegration', () => {
     const mockVideo = createMockVideo();
     parent.appendChild(mockVideo);
 
-    new window.VSC.VideoController(mockVideo, parent, config, actionHandler);
+    const controller = new window.VSC.VideoController(mockVideo, parent, config, actionHandler);
+    const remove = vi.spyOn(controller, 'remove');
     expect(window.VSC.stateManager.controllers.size).toBe(1);
 
     // Remove the parent div (which contains the video) from DOM
@@ -106,6 +107,8 @@ describe('StateManagerIntegration', () => {
     const allMedia = window.VSC.stateManager.getAllMediaElements();
     expect(allMedia.length).toBe(0);
     expect(window.VSC.stateManager.controllers.size).toBe(0);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(mockVideo.vsc).toBeUndefined();
   });
 
   it('StateManager tracks multiple rapid controller registrations', async () => {

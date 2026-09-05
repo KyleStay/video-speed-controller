@@ -68,6 +68,29 @@ async function migrateConfig() {
   }
 }
 
+/**
+ * Migrate the legacy newline blacklist before UI/default merging can create a
+ * siteRules value and make key presence indistinguishable. This must run in the
+ * background context, where raw storage is available.
+ */
+async function migrateLegacyBlacklist() {
+  try {
+    const storage = await chrome.storage.sync.get(['blacklist', 'siteRules']);
+    if (
+      Object.prototype.hasOwnProperty.call(storage, 'siteRules') ||
+      typeof storage.blacklist !== 'string'
+    ) {
+      return;
+    }
+
+    const siteRules = legacyBlacklistToSiteRules(storage.blacklist);
+    await chrome.storage.sync.set({ siteRules });
+    console.log(`[VSC] Migrated ${siteRules.length} legacy blacklist rule(s)`);
+  } catch (error) {
+    console.error('[VSC] Legacy blacklist migration failed:', error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Key-binding schema v2 migration: keyCode integers → event.code strings
 // ---------------------------------------------------------------------------
@@ -82,6 +105,7 @@ import {
   PREDEFINED_ACTIONS,
   DEFAULT_BINDINGS,
 } from './utils/key-maps.js';
+import { legacyBlacklistToSiteRules } from './utils/legacy-migration.js';
 
 /**
  * Migrate key bindings from v1 (keyCode integers) to v2 (event.code strings).
@@ -253,6 +277,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('StayFast Video installed/updated');
   await migrateConfig();
+  await migrateLegacyBlacklist();
   await migrateKeyBindingsV2();
   await migrateKeyBindingsV3();
   await initializeIcon();
