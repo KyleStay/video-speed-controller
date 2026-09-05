@@ -14,6 +14,11 @@ class EventManager {
     // Event deduplication to prevent duplicate key processing
     this.lastKeyEventSignature = null;
 
+    // Track keys whose keydown was claimed on sites such as X/Twitter that may
+    // also react to the corresponding keypress/keyup. Follow-up events are
+    // swallowed without running the VSC action a second time.
+    this.claimedShortcutFollowups = new Map();
+
     // Fight detection: track how many times a site resets our speed
     this.fightCount = 0;
     this.fightTimer = null;
@@ -68,11 +73,36 @@ class EventManager {
         if (!this.listeners.has(target)) {
           this.listeners.set(target, []);
         }
+
         this.listeners.get(target).push({
           type: 'keydown',
           handler: keydownHandler,
           useCapture: true,
         });
+
+        // X/Twitter may react to a printable shortcut on a follow-up keyboard
+        // event even after VSC has already claimed keydown. Listen for those
+        // events too, but only suppress them when their keydown was actually
+        // claimed by VSC. The VSC action still runs only from keydown.
+        if (EventManager.isTwitterHost(window.location.hostname)) {
+          const followupHandler = (event) => this.handleClaimedShortcutFollowup(event);
+
+          target.addEventListener('keypress', followupHandler, true);
+          target.addEventListener('keyup', followupHandler, true);
+
+          this.listeners.get(target).push(
+            {
+              type: 'keypress',
+              handler: followupHandler,
+              useCapture: true,
+            },
+            {
+              type: 'keyup',
+              handler: followupHandler,
+              useCapture: true,
+            }
+          );
+        }
       } catch {
         // Inaccessible target (cross-origin top window) — ignore.
       }
@@ -109,6 +139,13 @@ class EventManager {
       return;
     }
 
+    // Clear any stale follow-up state for this physical/logical key before
+    // processing a new keydown. This prevents a missed keyup (for example after
+    // focus loss) from causing a later keypress to be swallowed incorrectly.
+    if (EventManager.isTwitterHost(window.location.hostname)) {
+      this.clearClaimedShortcutFollowup(event);
+    }
+
     // Fast path: if there is no controlled media on this page, there is usually
     // no shortcut to run. Checked before the dedup signature string and the
     // (composedPath-walking) typing-context check so media-less pages — the
@@ -117,6 +154,7 @@ class EventManager {
     let mediaElements = window.VSC.stateManager
       ? window.VSC.stateManager.getControlledElements()
       : [];
+
     if (!mediaElements.length) {
       // Reactive safety net for late-loaded media: a VSC-bound key was pressed
       // but no controller exists yet (e.g. a lazily-loaded embed the observers
@@ -127,6 +165,7 @@ class EventManager {
       // binding lookup runs for irrelevant keys. The composedPath-walking
       // typing check and the scan run only for a bound key.
       const keyBinding = this.findMatchingBinding(event);
+
       if (!keyBinding) {
         // Diagnostic for shortcut-retention loss (e.g. YouTube reclaiming `s`).
         // If this fires on the failing keypress, our controller was dropped — the
@@ -139,6 +178,7 @@ class EventManager {
             `Shortcut keydown ignored — no controlled media (code=${event.code || 'unknown'})`
           );
         }
+
         return false;
       }
 
@@ -148,12 +188,14 @@ class EventManager {
       }
 
       const now = event.timeStamp || performance.now();
+
       if (
         !this.requestMediaRescan ||
         now - this.lastRescanAt < EventManager.MEDIA_RESCAN_THROTTLE_MS
       ) {
         return false;
       }
+
       // Stamp before invoking so key-mashing on a genuinely media-less frame
       // can't spin the scan more than once per throttle window.
       this.lastRescanAt = now;
@@ -166,18 +208,22 @@ class EventManager {
       mediaElements = window.VSC.stateManager
         ? window.VSC.stateManager.getControlledElements()
         : [];
+
       if (!mediaElements.length) {
         return false;
       }
+
       // A ready video attached synchronously — fall through to the normal
       // dedup → typing → binding → claim/run block and act on this keypress.
     }
 
     // Event deduplication — include code+key to handle empty-code cases
     const eventSignature = `${event.code}_${event.key}_${event.timeStamp}_${event.type}`;
+
     if (this.lastKeyEventSignature === eventSignature) {
       return;
     }
+
     this.lastKeyEventSignature = eventSignature;
 
     // Ignore keydown event if typing in an input box
@@ -194,24 +240,183 @@ class EventManager {
 
     if (keyBinding) {
       if (this.shouldClaimShortcutEvent()) {
+        // X/Twitter may also handle keypress/keyup. Remember the key that VSC
+        // actually claimed so those follow-up events can be suppressed without
+        // running the action again.
+        if (EventManager.isTwitterHost(window.location.hostname)) {
+          this.rememberClaimedShortcutFollowup(event);
+        }
+
         event.preventDefault();
+
         if (event.stopImmediatePropagation) {
           event.stopImmediatePropagation();
         } else {
           event.stopPropagation();
         }
       }
+
       this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
     } else {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
       // Mark as user interaction so an immediately-following ratechange is accepted.
       this.lastUserInteractionAt = event.timeStamp;
+
       if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
         window.VSC.logger.verbose(`No key binding found for code=${event.code || 'unknown'}`);
       }
     }
 
     return false;
+  }
+
+  /**
+   * Suppress keypress/keyup corresponding to a shortcut whose keydown VSC
+   * already claimed. This prevents sites such as X/Twitter from performing
+   * their own action after VSC has handled the shortcut.
+   *
+   * The VSC action is intentionally NOT run here.
+   *
+   * @param {KeyboardEvent} event
+   * @private
+   */
+  handleClaimedShortcutFollowup(event) {
+    if (
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.key === 'Process' ||
+      event.key === 'Dead'
+    ) {
+      return;
+    }
+
+    if (!EventManager.isTwitterHost(window.location.hostname)) {
+      return;
+    }
+
+    if (!this.matchesClaimedShortcutFollowup(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (event.stopImmediatePropagation) {
+      event.stopImmediatePropagation();
+    } else {
+      event.stopPropagation();
+    }
+
+    // The key sequence is complete after keyup. Do not clear on keypress because
+    // the subsequent keyup for the same claimed shortcut must also be swallowed.
+    if (event.type === 'keyup') {
+      this.clearClaimedShortcutFollowup(event);
+    }
+
+    return false;
+  }
+
+  /**
+   * Return the useful identifiers for a keyboard event. Keep them grouped per
+   * key so simultaneous keys that share a character cannot erase each other's
+   * follow-up state.
+   *
+   * @param {KeyboardEvent} event
+   * @returns {{code: string, key: string, keyCode: number}}
+   * @private
+   */
+  getShortcutEventIdentity(event) {
+    const code = event.code && event.code !== 'Unidentified' ? event.code : '';
+    const key =
+      event.key && event.key !== 'Unidentified' && event.key !== 'Process' && event.key !== 'Dead'
+        ? event.key
+        : '';
+
+    return { code, key, keyCode: event.keyCode || 0 };
+  }
+
+  /**
+   * Find remembered keydowns that match this event. A stable event.code wins.
+   * Character and legacy keyCode matching are fallbacks only when one side has
+   * no code, avoiding false matches such as Period versus NumpadDecimal.
+   *
+   * @param {KeyboardEvent} event
+   * @returns {string[]}
+   * @private
+   */
+  findClaimedShortcutFollowupIds(event) {
+    const identity = this.getShortcutEventIdentity(event);
+
+    if (identity.code) {
+      const exactId = `code:${identity.code}`;
+
+      if (this.claimedShortcutFollowups.has(exactId)) {
+        return [exactId];
+      }
+    }
+
+    const matches = [];
+
+    this.claimedShortcutFollowups.forEach((remembered, id) => {
+      if (identity.code && remembered.code) {
+        return;
+      }
+
+      if (
+        (identity.key && remembered.key === identity.key) ||
+        (identity.keyCode && remembered.keyCode === identity.keyCode)
+      ) {
+        matches.push(id);
+      }
+    });
+
+    return matches;
+  }
+
+  /**
+   * Remember identifiers for a claimed keydown so its follow-up events can be
+   * recognized even when one KeyboardEvent field differs between event types.
+   *
+   * @param {KeyboardEvent} event
+   * @private
+   */
+  rememberClaimedShortcutFollowup(event) {
+    const identity = this.getShortcutEventIdentity(event);
+    let id = null;
+
+    if (identity.code) {
+      id = `code:${identity.code}`;
+    } else if (identity.keyCode) {
+      id = `keyCode:${identity.keyCode}`;
+    } else if (identity.key) {
+      id = `key:${identity.key}`;
+    }
+
+    if (id) {
+      this.claimedShortcutFollowups.set(id, identity);
+    }
+  }
+
+  /**
+   * Determine whether this event belongs to a keydown VSC already claimed.
+   *
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   * @private
+   */
+  matchesClaimedShortcutFollowup(event) {
+    return this.findClaimedShortcutFollowupIds(event).length > 0;
+  }
+
+  /**
+   * Remove remembered identifiers for a claimed key.
+   *
+   * @param {KeyboardEvent} event
+   * @private
+   */
+  clearClaimedShortcutFollowup(event) {
+    this.findClaimedShortcutFollowupIds(event).forEach((id) => {
+      this.claimedShortcutFollowups.delete(id);
+    });
   }
 
   /**
@@ -238,9 +443,11 @@ class EventManager {
     if (!code || code === 'Unidentified') {
       return bindings.find((b) => {
         const bKey = b.keyCode ?? b.key;
+
         if (bKey !== keyCode) {
           return false;
         }
+
         return b.modifiers
           ? EventManager.modifiersMatch(b.modifiers, ctrl, alt, meta, shift)
           : !hasModifier;
@@ -254,6 +461,7 @@ class EventManager {
         b.code === code &&
         EventManager.modifiersMatch(b.modifiers, ctrl, alt, meta, shift)
     );
+
     if (chordMatch) {
       return chordMatch;
     }
@@ -261,6 +469,7 @@ class EventManager {
     // Tier 2: Simple match — bindings WITHOUT modifiers, no Ctrl/Alt/Meta active
     if (!hasModifier) {
       const simpleMatch = bindings.find((b) => !b.modifiers && b.code === code);
+
       if (simpleMatch) {
         return simpleMatch;
       }
@@ -272,8 +481,10 @@ class EventManager {
         if (b.code !== null && b.code !== undefined) {
           return false;
         }
+
         return (b.keyCode ?? b.key) === keyCode;
       });
+
       if (legacyMatch) {
         return legacyMatch;
       }
@@ -303,7 +514,9 @@ class EventManager {
       eventOrTarget.target?.ownerDocument ||
       eventOrTarget.ownerDocument ||
       document;
+
     const deepActiveElement = EventManager.getDeepActiveElement(eventDocument);
+
     if (deepActiveElement && !path.includes(deepActiveElement)) {
       path.push(deepActiveElement);
     }
@@ -327,10 +540,10 @@ class EventManager {
 
   /**
    * Decide whether a matched VSC shortcut should block page handlers.
-   * Generic sites keep honoring the user's exclusiveKeys preference. YouTube
-   * and Reddit attach aggressive page-level shortcuts, so matched VSC
-   * shortcuts are claimed there without disabling unrelated site shortcuts
-   * globally.
+   * Generic sites keep honoring the user's exclusiveKeys preference. YouTube,
+   * Reddit, and X/Twitter attach aggressive/conflicting page-level shortcuts,
+   * so matched VSC shortcuts are claimed there without disabling unrelated
+   * site shortcuts globally.
    * @returns {boolean}
    * @private
    */
@@ -356,14 +569,21 @@ class EventManager {
       if (event.target?.closest?.('vsc-controller')) {
         return;
       }
+
       this.lastUserInteractionAt = event.timeStamp;
     };
+
     document.addEventListener('click', clickHandler, true);
 
     if (!this.listeners.has(document)) {
       this.listeners.set(document, []);
     }
-    this.listeners.get(document).push({ type: 'click', handler: clickHandler, useCapture: true });
+
+    this.listeners.get(document).push({
+      type: 'click',
+      handler: clickHandler,
+      useCapture: true,
+    });
   }
 
   /**
@@ -372,12 +592,14 @@ class EventManager {
    */
   setupRateChangeListener(document) {
     const rateChangeHandler = (event) => this.handleRateChange(event);
+
     document.addEventListener('ratechange', rateChangeHandler, true);
 
     // Store reference for cleanup
     if (!this.listeners.has(document)) {
       this.listeners.set(document, []);
     }
+
     this.listeners.get(document).push({
       type: 'ratechange',
       handler: rateChangeHandler,
@@ -391,11 +613,16 @@ class EventManager {
    * @private
    */
   handleRateChange(event) {
+    // Resolve ownership before cooldown handling. A VSC write to media A must
+    // never swallow an unrelated page-owned ratechange from media B.
+    const video = event.composedPath ? event.composedPath()[0] : event.target;
+    if (!video?.vsc) {
+      window.VSC.logger.debug('Skipping ratechange - no VSC controller attached');
+      return;
+    }
+
     if (this.coolDown) {
       window.VSC.logger.debug('Rate change event blocked by cooldown');
-
-      // Get the video element to restore authoritative speed
-      const video = event.composedPath ? event.composedPath()[0] : event.target;
 
       // Don't fight back during video initialization — the player's own setup
       // fires ratechange at readyState=0; overwriting it can break the player.
@@ -407,24 +634,17 @@ class EventManager {
       // RESTORE our authoritative value since external change already happened
       if (video.vsc && this.config.settings.lastSpeed !== null) {
         const authoritativeSpeed = this.config.settings.lastSpeed;
+
         if (Math.abs(video.playbackRate - authoritativeSpeed) > 0.01) {
           window.VSC.logger.info(
             `Restoring speed during cooldown from external ${video.playbackRate} to authoritative ${authoritativeSpeed}`
           );
+
           window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
         }
       }
 
       event.stopImmediatePropagation();
-      return;
-    }
-
-    // Get the actual video element (handle shadow DOM)
-    const video = event.composedPath ? event.composedPath()[0] : event.target;
-
-    // Skip if no VSC controller attached
-    if (!video.vsc) {
-      window.VSC.logger.debug('Skipping ratechange - no VSC controller attached');
       return;
     }
 
@@ -445,7 +665,9 @@ class EventManager {
 
     // Ignore spurious external ratechanges below our supported MIN
     const rawExternalRate = typeof video.playbackRate === 'number' ? video.playbackRate : NaN;
+
     const min = window.VSC.Constants.SPEED_LIMITS.MIN;
+
     if (!isNaN(rawExternalRate) && rawExternalRate <= min) {
       window.VSC.logger.debug(
         `Ignoring external ratechange below MIN: raw=${rawExternalRate}, MIN=${min}`
@@ -461,6 +683,7 @@ class EventManager {
 
     if (authoritativeSpeed && Math.abs(video.playbackRate - authoritativeSpeed) > 0.01) {
       const timeSinceGesture = event.timeStamp - this.lastUserInteractionAt;
+
       const isUserGesture = timeSinceGesture < EventManager.USER_GESTURE_WINDOW_MS;
 
       if (isUserGesture) {
@@ -469,15 +692,20 @@ class EventManager {
         window.VSC.logger.info(
           `Accepting site speed change as user-intentional (gesture ${timeSinceGesture}ms ago): ${video.playbackRate}`
         );
+
         this.fightCount = 0;
+
         if (this.fightTimer) {
           clearTimeout(this.fightTimer);
           this.fightTimer = null;
         }
+
         this.lastUserInteractionAt = 0;
+
         if (this.actionHandler) {
           this.actionHandler.adjustSpeed(video, video.playbackRate);
         }
+
         return;
       }
 
@@ -487,6 +715,7 @@ class EventManager {
       if (this.fightTimer) {
         clearTimeout(this.fightTimer);
       }
+
       this.fightTimer = setTimeout(() => {
         this.fightCount = 0;
         this.fightTimer = null;
@@ -497,7 +726,9 @@ class EventManager {
         window.VSC.logger.info(
           `Fight detection: surrendering after ${this.fightCount} resets. Accepting site speed ${video.playbackRate}`
         );
+
         this.fightCount = 0;
+
         // Fall through to accept the external change below
       } else {
         // Fight back — restore our speed with exponential backoff
@@ -505,12 +736,16 @@ class EventManager {
           EventManager.BASE_COOLDOWN_MS * Math.pow(2, this.fightCount - 1),
           EventManager.MAX_COOLDOWN_MS
         );
+
         window.VSC.logger.info(
           `Fight detection: attempt ${this.fightCount}/${EventManager.MAX_FIGHT_COUNT}, re-applying ${authoritativeSpeed} (cooldown ${cooldown}ms)`
         );
+
         window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
+
         this.refreshCoolDown(cooldown);
         event.stopImmediatePropagation();
+
         return;
       }
     }
@@ -543,10 +778,10 @@ class EventManager {
    * Clean up all event listeners
    */
   cleanup() {
-    this.listeners.forEach((eventList, doc) => {
+    this.listeners.forEach((eventList, target) => {
       eventList.forEach(({ type, handler, useCapture }) => {
         try {
-          doc.removeEventListener(type, handler, useCapture);
+          target.removeEventListener(type, handler, useCapture);
         } catch (e) {
           window.VSC.logger.warn(`Failed to remove event listener: ${e.message}`);
         }
@@ -554,6 +789,7 @@ class EventManager {
     });
 
     this.listeners.clear();
+    this.claimedShortcutFollowups.clear();
 
     if (this.coolDown) {
       clearTimeout(this.coolDown);
@@ -564,11 +800,13 @@ class EventManager {
       clearTimeout(this.fightTimer);
       this.fightTimer = null;
     }
+
     this.fightCount = 0;
 
     // Reset keypress-rescan state (teardown discipline). Reset to NEVER_RESCANNED
     // so the first rescan after a re-init is never throttled away (see constructor).
     this.lastRescanAt = EventManager.NEVER_RESCANNED;
+
     this.requestMediaRescan = null;
   }
 }
@@ -589,8 +827,16 @@ EventManager.isRedditHost = function (hostname) {
   return /(^|\.)reddit\.com$/.test(hostname);
 };
 
+EventManager.isTwitterHost = function (hostname) {
+  return /(^|\.)x\.com$/.test(hostname) || /(^|\.)twitter\.com$/.test(hostname);
+};
+
 EventManager.isShortcutClaimHost = function (hostname) {
-  return EventManager.isYouTubeHost(hostname) || EventManager.isRedditHost(hostname);
+  return (
+    EventManager.isYouTubeHost(hostname) ||
+    EventManager.isRedditHost(hostname) ||
+    EventManager.isTwitterHost(hostname)
+  );
 };
 
 EventManager.getDeepActiveElement = function (root) {
