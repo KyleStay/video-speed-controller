@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # jsdom 30 supports Node 22.22.2+ in the 22.x line.
         node-version: [22.22.2]
 
     steps:
