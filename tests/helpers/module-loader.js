@@ -13,6 +13,7 @@ export async function loadCoreModules() {
   await import('../../src/utils/logger.js');
   await import('../../src/utils/dom-utils.js');
   await import('../../src/utils/event-manager.js');
+  await import('../../src/utils/bridge-events.js');
 
   // Site pattern matching — must come before settings.js (mirrors inject-entry.js).
   // The module self-registers on window.VSC.matchSiteRule.

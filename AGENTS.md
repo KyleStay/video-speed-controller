@@ -50,6 +50,12 @@ with direct `chrome.*` access.
 
 ### Bridge protocol (CustomEvents on `document.documentElement`)
 
+- `utils/bridge-events.js` owns the event subscriptions in each world and
+  rebinds them when the document root changes, including after `document.open()` /
+  `document.write()`. Its observer watches only direct document children. Bridge
+  and lifecycle subscriptions persist through enable toggles; temporary response
+  and CSS subscriptions are removed through the same transport.
+
 - Settings handshake: MAIN fires `VSC_REQUEST_SETTINGS`; the persistent bridge
   listener replies `VSC_SETTINGS_READY` from a fresh bounded storage read (or
   `{abort:true}` for disabled/blacklisted sites and read failures). This supports
@@ -116,6 +122,12 @@ with direct `chrome.*` access.
   `VideoController.remove()` must `cancelVideoFrameCallback` any pending fps-burst
   handle and remove the `emptied`/`loadstart` re-arm listeners — the fps burst
   must never leak across teardown / re-init / document replacement.
+  Removed media must clear pending attachment listeners even if it never received
+  a controller. A sourceless element can outlive its attachment fallback timer.
+- **Shadow media rate changes**: keep document capture for light-DOM media and
+  forward non-composed shadow events through each controller's media listener.
+  Forward only when the event path excludes the owner document, so composed and
+  light-DOM events are handled once. `remove()` unregisters this listener.
 - **Reliability guards**: wrap `chrome.*` and page-API access in try/catch;
   treat cross-origin frames as inaccessible; never assume `parentElement`
   exists — site handlers fall back to the media's own parent

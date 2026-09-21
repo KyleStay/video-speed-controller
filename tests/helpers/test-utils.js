@@ -99,7 +99,9 @@ export function createMockVideo(options = {}) {
   video.dispatchEvent = (event) => {
     if (eventListeners.has(event.type)) {
       eventListeners.get(event.type).forEach((listener) => {
-        event.target = video;
+        // Native Event.target is getter-only. Our manual dispatcher must
+        // define the target rather than assigning through that accessor.
+        Object.defineProperty(event, 'target', { value: video, configurable: true });
         listener(event);
       });
     }
