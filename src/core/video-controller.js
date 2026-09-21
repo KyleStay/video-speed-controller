@@ -473,6 +473,17 @@ class VideoController {
     this.video.addEventListener('play', this.handlePlay);
     this.video.addEventListener('seeked', this.handleSeek);
 
+    // Native ratechange events are not composed: a shadow root prevents them
+    // from reaching EventManager's document capture listener. Forward only
+    // events whose path excludes the document, avoiding duplicate processing
+    // for light-DOM media and composed events.
+    this.handleShadowRateChange = (event) => {
+      if (!event.composed && !event.composedPath().includes(this.video.ownerDocument)) {
+        this.actionHandler.eventManager?.handleRateChange(event);
+      }
+    };
+    this.video.addEventListener('ratechange', this.handleShadowRateChange);
+
     window.VSC.logger.debug('Added essential media event handlers: play, seeked');
   }
 
@@ -530,6 +541,10 @@ class VideoController {
     }
     if (this.handleSeek) {
       this.video.removeEventListener('seeked', this.handleSeek);
+    }
+    if (this.handleShadowRateChange) {
+      this.video.removeEventListener('ratechange', this.handleShadowRateChange);
+      this.handleShadowRateChange = null;
     }
 
     // Stop fps detection: mark disposed first (a rVFC callback already in flight

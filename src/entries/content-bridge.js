@@ -1,3 +1,5 @@
+import { bridgeEvents } from '../utils/bridge-events.js';
+
 /**
  * Content Bridge — ISOLATED world thin bridge for chrome.* API access.
  *
@@ -19,7 +21,6 @@ import { SYNCED_SETTING_KEYS } from '../utils/setting-keys.js';
 const SPEED_MIN = 0.07;
 const SPEED_MAX = 16;
 
-const docEl = document.documentElement;
 let bridgeInitialized = false;
 let pendingLastSpeed = null;
 let lastSpeedWriteTimer = null;
@@ -66,7 +67,7 @@ async function init() {
     // set for every request so the MAIN world never falls back to stale defaults.
     // Storage failures fail closed: an invalidated extension context must not
     // accidentally initialize an extension that may be disabled for this site.
-    docEl.addEventListener('VSC_REQUEST_SETTINGS', async () => {
+    bridgeEvents.addEventListener('VSC_REQUEST_SETTINGS', async () => {
       let payload;
       try {
         payload = await loadSettingsPayload();
@@ -74,7 +75,7 @@ async function init() {
         console.error('[VSC] Settings bridge read failed:', error);
         payload = { abort: true };
       }
-      docEl.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
+      bridgeEvents.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
     });
 
     // --- Ongoing: storage change relay + lifecycle ---
@@ -88,11 +89,15 @@ async function init() {
       // lifecycle — it only relays settings via VSC_STORAGE_CHANGED below.
       // siteRules/blacklist changes take effect on next page load.
       if (changes.enabled?.newValue === false) {
-        docEl.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_TEARDOWN' } }));
+        bridgeEvents.dispatchEvent(
+          new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_TEARDOWN' } })
+        );
         return;
       }
       if (changes.enabled?.oldValue === false && changes.enabled?.newValue !== false) {
-        docEl.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_REINIT' } }));
+        bridgeEvents.dispatchEvent(
+          new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_REINIT' } })
+        );
       }
 
       // Relay changes to MAIN world (filter out keys MAIN never received)
@@ -100,7 +105,9 @@ async function init() {
       delete relayChanges.enabled;
       delete relayChanges.blacklist;
       if (Object.keys(relayChanges).length > 0) {
-        docEl.dispatchEvent(new CustomEvent('VSC_STORAGE_CHANGED', { detail: relayChanges }));
+        bridgeEvents.dispatchEvent(
+          new CustomEvent('VSC_STORAGE_CHANGED', { detail: relayChanges })
+        );
       }
     });
 
@@ -113,7 +120,7 @@ async function init() {
       const requestWithId = { ...request, requestId };
 
       const timeout = setTimeout(() => {
-        docEl.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
+        bridgeEvents.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
         sendResponse({ ok: false, mediaCount: null, error: 'timeout' });
       }, 250);
 
@@ -122,12 +129,12 @@ async function init() {
           return;
         }
         clearTimeout(timeout);
-        docEl.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
+        bridgeEvents.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
         sendResponse(event.detail);
       };
 
-      docEl.addEventListener('VSC_MESSAGE_RESULT', handleResult);
-      docEl.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: requestWithId }));
+      bridgeEvents.addEventListener('VSC_MESSAGE_RESULT', handleResult);
+      bridgeEvents.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: requestWithId }));
       return true;
     });
 
@@ -163,11 +170,11 @@ async function init() {
         }
       } catch (err) {
         if (err.message?.includes('Extension context invalidated')) {
-          docEl.removeEventListener('VSC_WRITE_STORAGE', handleWriteStorage);
+          bridgeEvents.removeEventListener('VSC_WRITE_STORAGE', handleWriteStorage);
         }
       }
     };
-    docEl.addEventListener('VSC_WRITE_STORAGE', handleWriteStorage);
+    bridgeEvents.addEventListener('VSC_WRITE_STORAGE', handleWriteStorage);
   } catch (error) {
     console.error('[VSC] Bridge init failed:', error);
   }

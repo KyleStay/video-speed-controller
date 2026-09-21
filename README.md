@@ -28,6 +28,9 @@ advertising, analytics, or StayTech backend.
 - **Private by design** — playback and page processing stay in your browser.
   See the [privacy policy](PRIVACY.md) for details.
 
+Controls recover when a page replaces its document. Players inside open shadow
+DOM keep the speed indicator synchronized with native player speed changes.
+
 ## Default keyboard shortcuts
 
 | Key | Action                                         |

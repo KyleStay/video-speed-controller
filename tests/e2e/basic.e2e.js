@@ -15,8 +15,9 @@ import {
   assert,
   sleep,
 } from './e2e-utils.js';
+import { runReliabilityChecks } from './reliability-checks.js';
 
-export default async function runBasicE2ETests() {
+export default async function runBasicE2ETests({ launch = launchChromeWithExtension } = {}) {
   console.log('🎭 Running Basic E2E Tests...\n');
 
   let browser;
@@ -37,7 +38,7 @@ export default async function runBasicE2ETests() {
 
   try {
     // Launch Chrome with extension
-    const { browser: chromeBrowser, page } = await launchChromeWithExtension();
+    const { browser: chromeBrowser, page } = await launch();
     browser = chromeBrowser;
 
     await runTest('Extension should load in Chrome', async () => {
@@ -147,6 +148,12 @@ export default async function runBasicE2ETests() {
 
     // Take a screenshot for verification
     await takeScreenshot(page, 'basic-test-final.png');
+    const reliabilityPage = await browser.newPage();
+    try {
+      await runReliabilityChecks(reliabilityPage, runTest);
+    } finally {
+      await reliabilityPage.close();
+    }
   } catch (error) {
     console.log(`   💥 Test setup failed: ${error.message}`);
     failed++;
