@@ -1,3 +1,5 @@
+import { bridgeEvents } from '../utils/bridge-events.js';
+
 /**
  * StayFast Video — Main Content Script
  */
@@ -424,7 +426,7 @@ class VideoSpeedExtension {
       }
     };
 
-    document.documentElement.addEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
+    bridgeEvents.addEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
   }
 
   /**
@@ -716,10 +718,7 @@ class VideoSpeedExtension {
     }
 
     if (this.cssLiveUpdateHandler) {
-      document.documentElement.removeEventListener(
-        'VSC_STORAGE_CHANGED',
-        this.cssLiveUpdateHandler
-      );
+      bridgeEvents.removeEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
       this.cssLiveUpdateHandler = null;
     }
 
@@ -779,7 +778,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
   const extension = new VideoSpeedExtension();
 
   // Lifecycle commands from bridge (popup, background, storage changes)
-  document.documentElement.addEventListener('VSC_MESSAGE', (event) => {
+  bridgeEvents.addEventListener('VSC_MESSAGE', (event) => {
     const message = event.detail;
 
     // Handle namespaced VSC message types
@@ -865,7 +864,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
 
       if (message.requestId) {
         const status = message._status || extension.getMediaStatus(videos);
-        document.documentElement.dispatchEvent(
+        bridgeEvents.dispatchEvent(
           new CustomEvent('VSC_MESSAGE_RESULT', {
             detail: {
               requestId: message.requestId,
