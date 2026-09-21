@@ -21,6 +21,7 @@ import {
 } from '../../helpers/chrome-mock.js';
 
 const docEl = document.documentElement;
+let bridgeTransport;
 
 // --- Minimal test infrastructure ---
 
@@ -77,6 +78,7 @@ async function loadBridge() {
     origAddListener(cb);
   };
   vi.resetModules();
+  bridgeTransport = (await import('../../../src/utils/bridge-events.js')).bridgeEvents;
   await import('../../../src/entries/content-bridge.js');
   await vi.advanceTimersByTimeAsync(50);
   await vi.advanceTimersByTimeAsync(10);
@@ -114,6 +116,8 @@ describe('content-bridge', () => {
   });
 
   afterEach(() => {
+    bridgeTransport?.disconnect();
+    bridgeTransport = null;
     if (eventCleanup) {
       eventCleanup();
       eventCleanup = null;

@@ -10,6 +10,7 @@ import '../utils/logger.js';
 import '../utils/debug-helper.js';
 import '../utils/dom-utils.js';
 import '../utils/event-manager.js';
+import '../utils/bridge-events.js';
 
 // Site pattern matching — side-effect import registers window.VSC.matchSiteRule.
 // Must come before settings.js so load() can call it.

@@ -368,9 +368,9 @@ class VideoMutationObserver {
       if (added) {
         this.onVideoFound(node, parent);
       } else {
-        if (node.vsc) {
-          this.onVideoRemoved(node);
-        }
+        // Unloaded media may only have a pending attachment. Always notify
+        // removal so its listeners and strong pending-set reference are freed.
+        this.onVideoRemoved(node);
       }
     } else {
       this.processNodeChildren(node, parent, added);

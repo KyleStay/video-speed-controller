@@ -24,6 +24,7 @@ let StorageManager;
 
 // Stash the original StorageManager so we can restore it for other test files.
 let originalStorageManager;
+let bridgeTransport;
 
 describe('StorageManager — MAIN world (CustomEvent paths)', () => {
   beforeEach(async () => {
@@ -40,12 +41,14 @@ describe('StorageManager — MAIN world (CustomEvent paths)', () => {
 
     // Force vitest to re-evaluate the module file
     vi.resetModules();
+    bridgeTransport = (await import('../../../src/utils/bridge-events.js')).bridgeEvents;
     await import('../../../src/core/storage-manager.js');
 
     StorageManager = window.VSC.StorageManager;
   });
 
   afterEach(() => {
+    bridgeTransport.disconnect();
     // Restore the original chrome-backed StorageManager for other test files
     installChromeMock();
     if (originalStorageManager) {
