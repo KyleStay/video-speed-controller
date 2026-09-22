@@ -26,6 +26,7 @@ export function isBlacklisted(blacklist, href) {
     }
 
     let regexp;
+    let target = href;
     if (match.startsWith('/')) {
       try {
         const parts = match.split('/');
@@ -49,13 +50,20 @@ export function isBlacklisted(blacklist, href) {
       const looksLikeDomain = match.includes('.') && !match.includes('/');
 
       if (looksLikeDomain) {
-        regexp = new RegExp(`(^|\\.|//)${escapedMatch}(\\/|:|$)`);
+        try {
+          const url = new URL(href);
+          const port = url.port || { 'http:': '80', 'https:': '443' }[url.protocol];
+          target = match.includes(':') && port ? `${url.hostname}:${port}` : url.hostname;
+        } catch {
+          continue;
+        }
+        regexp = new RegExp(`(^|\\.)${escapedMatch}$`, 'i');
       } else {
         regexp = new RegExp(escapedMatch);
       }
     }
 
-    if (regexp.test(href)) {
+    if (regexp.test(target)) {
       return true;
     }
   }

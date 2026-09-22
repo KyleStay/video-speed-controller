@@ -433,36 +433,39 @@ describe('EventManager', () => {
     expect(eventStopped).toBe(false);
   });
 
-  it('should fight back when external speed change has no preceding user gesture', async () => {
-    const config = window.VSC.videoSpeedConfig;
-    await config.load();
-    config.settings.lastSpeed = 1.5;
+  it.each([0, 250, 1000])(
+    'should fight back without a user gesture at page timestamp %sms',
+    async (timeStamp) => {
+      const config = window.VSC.videoSpeedConfig;
+      await config.load();
+      config.settings.lastSpeed = 1.5;
 
-    const actionHandler = new window.VSC.ActionHandler(config, null);
-    const eventManager = new window.VSC.EventManager(config, actionHandler);
+      const actionHandler = new window.VSC.ActionHandler(config, null);
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    const mockVideo = createMockVideo({ playbackRate: 1.0 });
-    mockVideo.vsc = { speedIndicator: { textContent: '1.50' } };
-    Object.defineProperty(mockVideo, 'readyState', { value: 4, configurable: true });
+      const mockVideo = createMockVideo({ playbackRate: 1.0 });
+      mockVideo.vsc = { speedIndicator: { textContent: '1.50' } };
+      Object.defineProperty(mockVideo, 'readyState', { value: 4, configurable: true });
 
-    // Use fixed timestamps: gesture window is 300ms, so delta of 1000ms is clearly outside
-    eventManager.lastUserInteractionAt = 0;
-    let eventStopped = false;
-    eventManager.handleRateChange({
-      composedPath: () => [mockVideo],
-      target: mockVideo,
-      detail: null,
-      timeStamp: 1000, // 1000ms - 0ms = 1000ms >> 300ms window
-      stopImmediatePropagation: () => {
-        eventStopped = true;
-      },
-    });
+      // A fresh page has no recorded gesture, even inside the first 300ms.
+      eventManager.lastUserInteractionAt = 0;
+      let eventStopped = false;
+      eventManager.handleRateChange({
+        composedPath: () => [mockVideo],
+        target: mockVideo,
+        detail: null,
+        timeStamp,
+        stopImmediatePropagation: () => {
+          eventStopped = true;
+        },
+      });
 
-    // Should fight: speed restored to 1.5
-    expect(mockVideo.playbackRate).toBe(1.5);
-    expect(eventManager.fightCount).toBe(1);
-    expect(eventStopped).toBe(true);
-  });
+      // Should fight: speed restored to 1.5
+      expect(mockVideo.playbackRate).toBe(1.5);
+      expect(eventManager.fightCount).toBe(1);
+      expect(eventStopped).toBe(true);
+    }
+  );
 
   it('should fight back when user gesture is outside the window', async () => {
     const config = window.VSC.videoSpeedConfig;

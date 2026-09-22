@@ -101,3 +101,45 @@ describe('SitePattern', () => {
     expect(isBlacklisted(undefined, 'https://youtube.com/')).toBe(false);
   });
 });
+
+describe('domain patterns use only the URL hostname', () => {
+  it.each([
+    ['https://youtube.com?watch=1', true],
+    ['https://youtube.com#player', true],
+    ['https://YOUTUBE.COM/watch', true],
+    ['https://music.youtube.com:8443/watch', true],
+    ['https://example.com/?next=https://youtube.com/watch', false],
+    ['https://example.com/a.youtube.com/', false],
+    ['https://youtube.com@example.com/', false],
+    ['https://youtube.com.example.com/', false],
+    ['not a URL', false],
+  ])('%s → %s', (href, expected) => {
+    expect(matchSiteRule([{ pattern: 'youtube.com' }], href) !== null).toBe(expected);
+  });
+});
+
+describe('full-URL and explicit-port patterns remain supported', () => {
+  it.each([
+    ['watch?v=', 'https://example.com/watch?v=123'],
+    ['/youtube\\.com/', 'https://example.com/?next=https://youtube.com/watch'],
+    ['youtube.com:8443', 'https://music.youtube.com:8443/watch'],
+  ])('%s matches %s', (pattern, href) => {
+    expect(matchSiteRule([{ pattern }], href) !== null).toBe(true);
+  });
+});
+
+describe('port patterns match the effective HTTP(S) port', () => {
+  it.each([
+    ['youtube.com:443', 'https://youtube.com:443/watch', true],
+    ['youtube.com:443', 'https://youtube.com/watch', true],
+    ['youtube.com:80', 'http://youtube.com:80/watch', true],
+    ['youtube.com:80', 'http://youtube.com/watch', true],
+    ['youtube.com:443', 'https://youtube.com:8443/watch', false],
+    ['youtube.com:80', 'https://youtube.com/watch', false],
+    ['youtube.com:443', 'http://youtube.com/watch', false],
+    ['youtube.com:8443', 'https://youtube.com:9443/watch', false],
+    ['youtube.com:443', 'https://example.com/?next=https://youtube.com:443/watch', false],
+  ])('%s against %s → %s', (pattern, href, expected) => {
+    expect(matchSiteRule([{ pattern }], href) !== null).toBe(expected);
+  });
+});
