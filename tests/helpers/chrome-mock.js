@@ -70,7 +70,7 @@ export const chromeMock = {
       remove: (keys, callback) => {
         const keysArray = Array.isArray(keys) ? keys : [keys];
         keysArray.forEach((key) => delete mockStorage[key]);
-        setTimeout(() => callback && callback(), 10);
+        setTimeout(() => globalThis.chrome && callback && callback(), 10);
       },
       clear: (callback) => {
         Object.keys(mockStorage).forEach((key) => delete mockStorage[key]);
