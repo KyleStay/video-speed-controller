@@ -31,6 +31,12 @@ advertising, analytics, or StayTech backend.
 Controls recover when a page replaces its document. Players inside open shadow
 DOM keep the speed indicator synchronized with native player speed changes.
 
+Site rules and legacy blacklist entries written as a domain, such as
+`youtube.com`, match that host and its subdomains, regardless of capitalization.
+A domain mentioned in another site's path or query does not match. Regex rules
+and other text patterns still match the full URL. Port-qualified rules match the
+effective port, including HTTPS port 443 and HTTP port 80 when omitted.
+
 ## Default keyboard shortcuts
 
 | Key | Action                                         |
