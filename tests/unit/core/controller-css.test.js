@@ -21,12 +21,22 @@ function setupMock() {
 }
 
 describe('ControllerCSS', () => {
+  let removeSpy;
+
   beforeEach(() => {
     setupMock();
+    removeSpy = vi.spyOn(window.VSC.StorageManager, 'remove');
   });
 
-  afterEach(() => {
-    cleanupChromeMock();
+  afterEach(async () => {
+    try {
+      // load() starts legacy CSS removal in the background. Keep chrome alive
+      // until those callbacks finish before this test's mock is removed.
+      await Promise.all(removeSpy.mock.results.map((result) => result.value));
+    } finally {
+      removeSpy.mockRestore();
+      cleanupChromeMock();
+    }
   });
 
   // --- Default CSS (code-driven) ---

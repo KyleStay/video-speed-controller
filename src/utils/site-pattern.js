@@ -14,7 +14,7 @@ const escapeRegExp = (str) => str.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
  *
  * Supports three forms:
  *   1. Regex notation:  /pattern/flags
- *   2. Domain literal:  youtube.com  →  /(^|\.|\/\/)youtube\.com(\/|:|$)/
+ *   2. Domain literal:  youtube.com  →  hostname and subdomain match
  *   3. Substring:       any other string  →  escaped literal match
  *
  * @param {string} raw - Pattern string (trimmed)
@@ -50,7 +50,7 @@ function compilePattern(raw) {
   const looksLikeDomain = pattern.includes('.') && !pattern.includes('/');
 
   if (looksLikeDomain) {
-    return new RegExp(`(^|\\.|//)${escaped}(\\/|:|$)`);
+    return new RegExp(`(^|\\.)${escaped}$`, 'i');
   }
   return new RegExp(escaped);
 }
@@ -69,8 +69,19 @@ export function matchSiteRule(rules, href) {
   }
 
   for (const rule of rules) {
-    const regexp = compilePattern(rule.pattern || '');
-    if (regexp && regexp.test(href)) {
+    const pattern = (rule.pattern || '').replace(regStrip, '');
+    let target = href;
+    if (!pattern.startsWith('/') && pattern.includes('.') && !pattern.includes('/')) {
+      try {
+        const url = new URL(href);
+        const port = url.port || { 'http:': '80', 'https:': '443' }[url.protocol];
+        target = pattern.includes(':') && port ? `${url.hostname}:${port}` : url.hostname;
+      } catch {
+        continue;
+      }
+    }
+    const regexp = compilePattern(pattern);
+    if (regexp && regexp.test(target)) {
       return rule;
     }
   }
