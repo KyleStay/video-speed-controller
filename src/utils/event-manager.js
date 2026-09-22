@@ -684,7 +684,12 @@ class EventManager {
     if (authoritativeSpeed && Math.abs(video.playbackRate - authoritativeSpeed) > 0.01) {
       const timeSinceGesture = event.timeStamp - this.lastUserInteractionAt;
 
-      const isUserGesture = timeSinceGesture < EventManager.USER_GESTURE_WINDOW_MS;
+      // Zero means no gesture was recorded (or the prior one was consumed).
+      // Page-relative event timestamps can themselves be below the window.
+      const isUserGesture =
+        this.lastUserInteractionAt > 0 &&
+        timeSinceGesture >= 0 &&
+        timeSinceGesture < EventManager.USER_GESTURE_WINDOW_MS;
 
       if (isUserGesture) {
         // User interacted with the site's native controls — accept immediately.
