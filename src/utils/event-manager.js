@@ -259,8 +259,10 @@ class EventManager {
       this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
     } else {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
-      // Mark as user interaction so an immediately-following ratechange is accepted.
-      this.lastUserInteractionAt = event.timeStamp;
+      // Page-dispatched keys do not establish user intent.
+      if (event.isTrusted) {
+        this.lastUserInteractionAt = event.timeStamp;
+      }
 
       if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
         window.VSC.logger.verbose(`No key binding found for code=${event.code || 'unknown'}`);
@@ -565,6 +567,10 @@ class EventManager {
    */
   setupUserGestureListener(document) {
     const clickHandler = (event) => {
+      if (!event.isTrusted) {
+        return;
+      }
+
       // Skip clicks on our own controller (shadow host retargeted at boundary)
       if (event.target?.closest?.('vsc-controller')) {
         return;
