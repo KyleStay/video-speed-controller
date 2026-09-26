@@ -398,6 +398,79 @@ describe('EventManager', () => {
 
   // User gesture window tests
 
+  it.each(['click', 'keydown'])(
+    'does not accept a page speed reset after a synthetic %s',
+    async (type) => {
+      const config = window.VSC.videoSpeedConfig;
+      await config.load();
+      config.settings.lastSpeed = 1.5;
+      const actionHandler = new window.VSC.ActionHandler(config, null);
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      const video = createMockVideo({ playbackRate: 1 });
+      video.vsc = { speedIndicator: { textContent: '1.50' } };
+      const mediaSpy = vi
+        .spyOn(window.VSC.stateManager, 'getControlledElements')
+        .mockReturnValue([video]);
+      eventManager.setupEventListeners(document);
+
+      try {
+        const gesture =
+          type === 'click'
+            ? new MouseEvent(type, { bubbles: true })
+            : new KeyboardEvent(type, { key: 'k', code: 'KeyK', bubbles: true });
+        Object.defineProperty(gesture, 'timeStamp', { value: 1000 });
+        document.dispatchEvent(gesture);
+        eventManager.handleRateChange({
+          target: video,
+          timeStamp: 1050,
+          stopImmediatePropagation: vi.fn(),
+        });
+
+        expect(eventManager.lastUserInteractionAt).toBe(0);
+        expect(video.playbackRate).toBe(1.5);
+        expect(config.settings.lastSpeed).toBe(1.5);
+        expect(eventManager.fightCount).toBe(1);
+      } finally {
+        eventManager.cleanup();
+        mediaSpy.mockRestore();
+      }
+    }
+  );
+
+  it.each(['click', 'keydown'])('records a trusted %s as user intent', async (type) => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const eventManager = new window.VSC.EventManager(config, null);
+    const mediaSpy = vi
+      .spyOn(window.VSC.stateManager, 'getControlledElements')
+      .mockReturnValue([createMockVideo()]);
+    const listenerSpy = vi.spyOn(document, 'addEventListener');
+
+    try {
+      eventManager.setupUserGestureListener(document);
+      // jsdom cannot generate trusted input. Invoke the browser callback with
+      // its trusted event shape; synthetic dispatch is covered above.
+      const gesture = {
+        isTrusted: true,
+        type,
+        key: 'k',
+        code: 'KeyK',
+        timeStamp: 1000,
+        target: document.body,
+      };
+      if (type === 'click') {
+        listenerSpy.mock.calls.find(([eventType]) => eventType === 'click')[1](gesture);
+      } else {
+        eventManager.handleKeydown(gesture);
+      }
+      expect(eventManager.lastUserInteractionAt).toBe(1000);
+    } finally {
+      eventManager.cleanup();
+      listenerSpy.mockRestore();
+      mediaSpy.mockRestore();
+    }
+  });
+
   it('should accept external speed change when user interaction preceded it', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();

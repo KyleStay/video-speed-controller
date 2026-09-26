@@ -128,6 +128,9 @@ with direct `chrome.*` access.
   forward non-composed shadow events through each controller's media listener.
   Forward only when the event path excludes the owner document, so composed and
   light-DOM events are handled once. `remove()` unregisters this listener.
+- **Native speed controls**: only trusted clicks and unhandled key events open
+  the user-gesture window for accepting a site's rate change. Programmatic
+  clicks and dispatched keyboard events must not authorize a page speed reset.
 - **Reliability guards**: wrap `chrome.*` and page-API access in try/catch;
   treat cross-origin frames as inaccessible; never assume `parentElement`
   exists — site handlers fall back to the media's own parent
