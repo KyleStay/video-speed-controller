@@ -62,6 +62,23 @@ export async function runReliabilityChecks(page, runTest) {
       await page.waitForFunction(
         () => document.querySelector('#player').shadowRoot.querySelector('video').playbackRate === 2
       );
+      for (const type of ['click', 'keydown']) {
+        await page.waitForFunction(() => !window.VSC_controller.eventManager.coolDown);
+        await page.evaluate((eventType) => {
+          if (eventType === 'click') {
+            document.querySelector('#native-speed').click();
+          } else {
+            document.body.dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', bubbles: true })
+            );
+            document.querySelector('#player').shadowRoot.querySelector('video').playbackRate = 1;
+          }
+        }, type);
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player').shadowRoot.querySelector('video');
+          return video.playbackRate === 2 && window.VSC_controller.config.settings.lastSpeed === 2;
+        });
+      }
       await page.waitForFunction(() => !window.VSC_controller.eventManager.coolDown);
       await page.click('#native-speed');
       await page.waitForFunction(() => {

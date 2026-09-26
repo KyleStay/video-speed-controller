@@ -30,6 +30,8 @@ advertising, analytics, or StayTech backend.
 
 Controls recover when a page replaces its document. Players inside open shadow
 DOM keep the speed indicator synchronized with native player speed changes.
+Speed changes following a real click or unhandled keypress are accepted as your
+choice. Programmatic clicks and keyboard events do not authorize a speed reset.
 
 Site rules and legacy blacklist entries written as a domain, such as
 `youtube.com`, match that host and its subdomains, regardless of capitalization.
