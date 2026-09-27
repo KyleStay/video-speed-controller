@@ -159,3 +159,12 @@ All test cases should pass, confirming:
 4. Keyboard shortcuts work
 5. Settings persist appropriately
 6. Cross-site compatibility
+
+## Local media fixture
+
+The basic E2E suite uses a generated 60-second clip so media loading does not
+depend on external hosts. Regenerate it with:
+
+```sh
+ffmpeg -f lavfi -i color=c=blue:s=160x90:r=1:d=60 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/e2e/sample.mp4
+```
