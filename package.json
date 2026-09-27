@@ -45,21 +45,21 @@
     ]
   },
   "devDependencies": {
-    "archiver": "^8.0.0",
     "@eslint/js": "^10.0.1",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.5.0",
-    "fs-extra": "^11.3.5",
-    "globals": "^17.6.0",
+    "archiver": "^8.0.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "fs-extra": "^11.4.0",
+    "globals": "^17.11.0",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
-    "lint-staged": "^17.0.7",
-    "prettier": "^3.8.4",
-    "puppeteer": "^25.1.0",
-    "vitest": "^4.1.9"
+    "lint-staged": "^17.3.0",
+    "prettier": "^3.9.6",
+    "puppeteer": "^25.9.0",
+    "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.22.1 || >=24.0.0"
   },
   "prettier": {
     "singleQuote": true,
