@@ -61,8 +61,8 @@ All shortcuts and their values can be changed in the extension settings.
 
 ## Install for local development
 
-Requirements: a current Node.js release compatible with the version in
-`.nvmrc`, npm, and a Chromium-based browser.
+Requirements: Node.js 22.22.1+ on the 22.x line, or 24+, npm, and a
+Chromium-based browser. `.nvmrc` selects the supported Node.js 22 release line.
 
 ```sh
 npm install
