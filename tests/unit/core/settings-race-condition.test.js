@@ -257,6 +257,25 @@ describe('SettingsRaceCondition', () => {
     expect(config.settings.lastSpeed).toBe(3.0);
   });
 
+  it('removed settings return to defaults and a removed speed cancels a stale debounce', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    config.settings.rememberSpeed = true;
+    config.settings.customCSS = 'vsc-controller { color: red; }';
+    await config.save({ lastSpeed: 2 });
+    simulateExternalStorageWrite({
+      rememberSpeed: undefined,
+      customCSS: undefined,
+      lastSpeed: undefined,
+    });
+    expect(config.settings.rememberSpeed).toBe(false);
+    expect(config.settings.customCSS).toBe('');
+    expect(config.settings.lastSpeed).toBe(window.VSC.Constants.DEFAULT_SETTINGS.lastSpeed);
+    expect(config.saveTimer).toBeNull();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(getMockStorage().lastSpeed).toBeUndefined();
+  });
+
   it('onChanged listener updates multiple keys at once', async () => {
     const config = new window.VSC.VideoSpeedConfig();
     await config.load();

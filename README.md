@@ -59,6 +59,16 @@ Frame stepping is video-only. StayFast Video uses the detected frame rate when
 available and otherwise uses the configurable fallback (30 fps by default).
 All shortcuts and their values can be changed in the extension settings.
 
+The toolbar popup controls media across the current tab, including iframe
+players. It shows when players use different speeds and disables speed controls
+when the extension is off or no media is available. Turning it back on refreshes
+the controls in the same popup.
+
+Settings can be exported and imported as JSON. Invalid shortcut values, site
+rules, and preference values are rejected before an import changes your saved
+settings. If saving defaults fails, your existing settings are preserved. Use Tab or Shift+Tab
+to move out of a shortcut recorder without assigning that key.
+
 ## Install for local development
 
 Requirements: Node.js 22.22.1+ on the 22.x line, or 24+, npm, and a

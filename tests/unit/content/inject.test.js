@@ -825,24 +825,27 @@ describe('Inject', () => {
     replaceSync.mockRestore();
   });
 
-  it('setupCSSLiveUpdates removes custom sheet when customCSS cleared', () => {
-    extension = window.VSC_controller;
-    resetCSSState(extension);
-    extension.config.settings.customCSS = 'vsc-controller { color: red; }';
+  it.each([{ newValue: '' }, { oldValue: 'vsc-controller { color: red; }' }])(
+    'setupCSSLiveUpdates removes custom sheet when customCSS cleared or deleted (%j)',
+    (change) => {
+      extension = window.VSC_controller;
+      resetCSSState(extension);
+      extension.config.settings.customCSS = 'vsc-controller { color: red; }';
 
-    extension.injectControllerCSS();
-    extension.setupCSSLiveUpdates();
-    expect(extension._customSheet).not.toBeNull();
+      extension.injectControllerCSS();
+      extension.setupCSSLiveUpdates();
+      expect(extension._customSheet).not.toBeNull();
 
-    document.documentElement.dispatchEvent(
-      new CustomEvent('VSC_STORAGE_CHANGED', {
-        detail: { customCSS: { newValue: '' } },
-      })
-    );
+      document.documentElement.dispatchEvent(
+        new CustomEvent('VSC_STORAGE_CHANGED', {
+          detail: { customCSS: change },
+        })
+      );
 
-    expect(extension._customSheet).toBeNull();
-    expect(document.adoptedStyleSheets).toContain(extension._controllerSheet);
-  });
+      expect(extension._customSheet).toBeNull();
+      expect(document.adoptedStyleSheets).toContain(extension._controllerSheet);
+    }
+  );
 
   it('setupCSSLiveUpdates is removed during teardown', () => {
     extension = window.VSC_controller;

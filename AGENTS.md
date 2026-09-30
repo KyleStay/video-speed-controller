@@ -66,6 +66,12 @@ with direct `chrome.*` access.
   alone drives lifecycle `VSC_MESSAGE` `VSC_TEARDOWN`/`VSC_REINIT`.
 - Popup/background → content: `chrome.runtime.onMessage` → `VSC_MESSAGE` →
   MAIN handles → `VSC_MESSAGE_RESULT`.
+- Popup commands include a `commandId`. Each ISOLATED bridge also returns its
+  result via `VSC_FRAME_RESULT` to the popup, which aggregates replies for a
+  bounded 350ms window. This avoids `tabs.sendMessage`'s first-response race
+  when the parent has no media and an iframe does. Replies are scoped to the
+  command, extension, tab, and frame; popup close removes pending listeners
+  and timers. Ordinary commands retain the single-response protocol.
 - **Trust boundary**: the MAIN world may write **only `lastSpeed`** back to
   storage (`VSC_WRITE_STORAGE`); everything else is read-only from MAIN.
 
@@ -102,6 +108,8 @@ with direct `chrome.*` access.
   listener bundled for all pages (must be robust on non-Netflix sites).
 - `ui/` — `controls`, `drag-handler`, `shadow-dom`, `vsc-controller-element`,
   `popup/`, `options/`.
+  `popup/tab-command.js` aggregates frame replies in the popup extension context
+  only; it is not part of the MAIN-world module loader.
 - `utils/` — `constants` (+ `key-maps`), `logger`, `dom-utils`, `event-manager`,
   `blacklist`, `site-pattern`, `setting-keys`, `debug-helper`.
 - `styles/` — `inject.css`, `controller-css-defaults.js`.
@@ -169,6 +177,9 @@ with direct `chrome.*` access.
 - **Settings keys**: the bridge's bounded fetch (`SYNCED_SETTING_KEYS`) must
   cover every key in `DEFAULT_SETTINGS`. A test enforces this
   (`tests/unit/utils/setting-keys.test.js`) — add new settings to both.
+  Removing a stored key restores its default in existing config instances and
+  deletes it from the MAIN-world cache. Removing `customCSS` also removes its
+  adopted sheet; removing `lastSpeed` cancels any pending stale speed write.
 - **Logging**: use `window.VSC.logger` (levels in `Constants.LOG_LEVELS`), not
   `console.*`, in content/UI code.
 - **Formatting**: Prettier + ESLint are enforced via Husky pre-commit and CI;

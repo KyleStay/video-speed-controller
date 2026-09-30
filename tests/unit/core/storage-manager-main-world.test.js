@@ -199,6 +199,16 @@ describe('StorageManager — MAIN world (CustomEvent paths)', () => {
   // ONCHANGED
   // ---------------------------------------------------------------------------
   describe('onChanged()', () => {
+    it('removes deleted settings from the MAIN-world cache', () => {
+      StorageManager.onChanged(vi.fn());
+      window.VSC_settings = { rememberSpeed: true, lastSpeed: 2 };
+      docEl.dispatchEvent(
+        new CustomEvent('VSC_STORAGE_CHANGED', {
+          detail: { rememberSpeed: { oldValue: true } },
+        })
+      );
+      expect(window.VSC_settings).toEqual({ lastSpeed: 2 });
+    });
     it('listens for VSC_STORAGE_CHANGED CustomEvent', () => {
       const callback = vi.fn();
       StorageManager.onChanged(callback);

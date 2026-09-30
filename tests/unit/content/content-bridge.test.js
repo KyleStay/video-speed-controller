@@ -453,6 +453,68 @@ describe('content-bridge', () => {
   });
 
   describe('runtime message relay', () => {
+    it.each([false, true])(
+      'sends per-frame replies only for an opted-in popup request (%s)',
+      async (collectFrames) => {
+        let onMessage;
+        const originalAdd = chrome.runtime.onMessage.addListener;
+        const originalSend = chrome.runtime.sendMessage;
+        chrome.runtime.onMessage.addListener = (listener) => {
+          onMessage = listener;
+        };
+        chrome.runtime.sendMessage = vi.fn();
+        const respond = (event) => {
+          event.stopImmediatePropagation();
+          docEl.dispatchEvent(
+            new CustomEvent('VSC_MESSAGE_RESULT', {
+              detail: {
+                requestId: event.detail.requestId,
+                ok: true,
+                mediaCount: 1,
+                currentSpeed: 1.5,
+                speeds: [1.5],
+              },
+            })
+          );
+        };
+        docEl.addEventListener('VSC_MESSAGE', respond, true);
+        try {
+          await loadBridge();
+          const sendResponse = vi.fn();
+          const request = {
+            type: 'VSC_GET_STATUS',
+            ...(collectFrames ? { commandId: 'popup-command' } : {}),
+          };
+          expect(onMessage(request, {}, sendResponse)).toBe(true);
+          expect(sendResponse).toHaveBeenCalledWith(
+            expect.objectContaining({ ok: true, mediaCount: 1 })
+          );
+          if (collectFrames) {
+            expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+              {
+                type: 'VSC_FRAME_RESULT',
+                commandId: 'popup-command',
+                response: sendResponse.mock.calls[0][0],
+              },
+              expect.any(Function)
+            );
+          } else {
+            expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+          }
+          await vi.advanceTimersByTimeAsync(300);
+          expect(sendResponse).toHaveBeenCalledOnce();
+        } finally {
+          chrome.runtime.onMessage.addListener = originalAdd;
+          if (originalSend) {
+            chrome.runtime.sendMessage = originalSend;
+          } else {
+            delete chrome.runtime.sendMessage;
+          }
+          docEl.removeEventListener('VSC_MESSAGE', respond, true);
+        }
+      }
+    );
+
     it('reports timeout as an explicit failure', async () => {
       const listeners = [];
       const originalAddListener = globalThis.chrome.runtime.onMessage.addListener;
