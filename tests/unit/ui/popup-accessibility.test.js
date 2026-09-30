@@ -5,6 +5,7 @@ import {
   cleanupChromeMock,
   installChromeMock,
   resetMockStorage,
+  getMockStorage,
 } from '../../helpers/chrome-mock.js';
 
 const popupHtml = readFileSync(resolve(process.cwd(), 'src/ui/popup/popup.html'), 'utf8');
@@ -32,25 +33,42 @@ function renderPopup() {
 
 async function initializePopup() {
   vi.resetModules();
+  let initialize;
+  const add = document.addEventListener.bind(document);
+  const spy = vi
+    .spyOn(document, 'addEventListener')
+    .mockImplementation((type, listener, options) => {
+      if (type === 'DOMContentLoaded') {
+        initialize = listener;
+      } else {
+        add(type, listener, options);
+      }
+    });
   await import('../../../src/ui/popup/popup.js');
-  document.dispatchEvent(new Event('DOMContentLoaded'));
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  spy.mockRestore();
+  initialize();
+  await vi.waitFor(() =>
+    expect(document.getElementById('status').classList.contains('hide')).toBe(false)
+  );
 }
 
 describe('Popup accessibility', () => {
   beforeEach(() => {
     installChromeMock();
     resetMockStorage();
-    chrome.tabs.sendMessage = vi.fn((_tabId, _message, callback) => {
+    chrome.runtime.onMessage.removeListener = vi.fn();
+    vi.spyOn(chrome.tabs, 'sendMessage').mockImplementation((_tabId, _message, callback) => {
       callback?.({ ok: true, mediaCount: 1, currentSpeed: 1 });
     });
     renderPopup();
   });
 
   afterEach(() => {
-    cleanupChromeMock();
+    window.dispatchEvent(new Event('pagehide'));
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    delete chrome.runtime.onMessage.removeListener;
+    cleanupChromeMock();
   });
 
   it('names preset groups and initializes pressed states', async () => {
@@ -94,7 +112,7 @@ describe('Popup accessibility', () => {
     expect(customSpeedInput.getAttribute('aria-invalid')).toBe('false');
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
       1,
-      { type: 'VSC_SET_SPEED', payload: { speed: 1.25 } },
+      expect.objectContaining({ type: 'VSC_SET_SPEED', payload: { speed: 1.25 } }),
       expect.any(Function)
     );
   });
@@ -119,10 +137,10 @@ describe('Popup accessibility', () => {
   });
 
   it('disables speed controls when the active tab cannot be controlled', async () => {
-    chrome.tabs.query = vi.fn((_query, callback) => {
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
       callback([{ id: 1, url: 'chrome://extensions' }]);
     });
-    chrome.tabs.sendMessage = vi.fn((_tabId, _message, callback) => {
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
       chrome.runtime.lastError = { message: 'Cannot access this page' };
       callback?.();
       chrome.runtime.lastError = null;
@@ -137,6 +155,144 @@ describe('Popup accessibility', () => {
     expect(document.querySelector('.preset-btn').disabled).toBe(true);
     expect(document.getElementById('custom-speed-input').disabled).toBe(true);
     expect(document.getElementById('config').disabled).toBe(false);
+    expect(document.getElementById('disable').disabled).toBe(false);
+  });
+
+  it('disables controls on power off and refreshes them on power on in the same popup', async () => {
+    await initializePopup();
+    document.getElementById('disable').click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('status').textContent).toBe('Extension disabled.')
+    );
+    expect(document.getElementById('speed-increase').disabled).toBe(true);
+    expect(document.getElementById('custom-speed-input').value).toBe('');
+    document.getElementById('disable').click();
+    await vi.waitFor(() => expect(document.getElementById('speed-increase').disabled).toBe(false));
+    expect(document.getElementById('status').textContent).toBe('Current 1x');
+  });
+
+  it('enables presets when only an iframe contains media', async () => {
+    let receive;
+    vi.spyOn(chrome.runtime.onMessage, 'addListener').mockImplementation((listener) => {
+      receive = listener;
+    });
+    chrome.tabs.sendMessage.mockImplementation((_tabId, message, callback) => {
+      callback({ ok: true, mediaCount: 0, currentSpeed: null, speeds: [] });
+      receive(
+        {
+          type: 'VSC_FRAME_RESULT',
+          commandId: message.commandId,
+          response: {
+            ok: true,
+            mediaCount: 1,
+            currentSpeed: 1.5,
+            speeds: [1.5],
+          },
+        },
+        { id: chrome.runtime.id, tab: { id: 1 }, frameId: 3 }
+      );
+    });
+    await initializePopup();
+    expect(document.getElementById('speed-increase').disabled).toBe(false);
+    expect(
+      document.querySelector('.preset-btn[data-speed="1.5"]').getAttribute('aria-pressed')
+    ).toBe('true');
+  });
+
+  it('does not allow an in-flight status response to re-enable controls after power off', async () => {
+    await initializePopup();
+    document.getElementById('speed-increase').click();
+    document.getElementById('disable').click();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(document.getElementById('speed-increase').disabled).toBe(true);
+    expect(document.getElementById('status').textContent).toBe('Extension disabled.');
+  });
+
+  it('sends each rapid adjustment even when active-tab lookups are still pending', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    const queries = [];
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      queries.push(callback);
+    });
+
+    document.getElementById('speed-increase').click();
+    document.getElementById('speed-increase').click();
+    expect(queries).toHaveLength(2);
+    queries.forEach((callback) => callback([{ id: 1 }]));
+
+    const adjustments = chrome.tabs.sendMessage.mock.calls.filter(
+      ([, message]) => message.type === 'VSC_ADJUST_SPEED'
+    );
+    expect(adjustments).toHaveLength(2);
+    expect(adjustments.every(([, message]) => message.payload.delta === 0.1)).toBe(true);
+  });
+
+  it('cancels pending commands when the enabled session ends', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    let query;
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      query = callback;
+    });
+    document.getElementById('speed-increase').click();
+    document.getElementById('disable').click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('status').textContent).toBe('Extension disabled.')
+    );
+    query([{ id: 1 }]);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending commands when the popup closes', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    let query;
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      query = callback;
+    });
+    document.getElementById('speed-increase').click();
+    window.dispatchEvent(new Event('pagehide'));
+    query([{ id: 1 }]);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('starts disabled and can re-enable controls without reopening the popup', async () => {
+    getMockStorage().enabled = false;
+    await initializePopup();
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(document.getElementById('speed-increase').disabled).toBe(true);
+    document.getElementById('disable').click();
+    await vi.waitFor(() => expect(document.getElementById('speed-increase').disabled).toBe(false));
+  });
+
+  it('waits for asynchronously reattached media after turning the extension back on', async () => {
+    getMockStorage().enabled = false;
+    let reads = 0;
+    chrome.tabs.sendMessage.mockImplementation((_tab, _message, callback) => {
+      reads++;
+      callback({ ok: true, mediaCount: reads < 3 ? 0 : 1, currentSpeed: reads < 3 ? null : 1 });
+    });
+    await initializePopup();
+    document.getElementById('disable').click();
+    await vi.waitFor(() => expect(document.getElementById('speed-increase').disabled).toBe(false), {
+      timeout: 2000,
+    });
+    expect(reads).toBe(3);
+  });
+
+  it('reports failed power writes and preserves the current enabled state', async () => {
+    await initializePopup();
+    vi.spyOn(chrome.storage.sync, 'set').mockImplementation((_items, callback) => {
+      chrome.runtime.lastError = { message: 'Quota exceeded' };
+      callback();
+      chrome.runtime.lastError = null;
+    });
+    document.getElementById('disable').click();
+    expect(document.getElementById('status').textContent).toBe(
+      'Unable to save the enabled setting.'
+    );
+    expect(document.getElementById('disable').getAttribute('aria-pressed')).toBe('false');
     expect(document.getElementById('disable').disabled).toBe(false);
   });
 

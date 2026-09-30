@@ -408,7 +408,7 @@ class VideoSpeedExtension {
     }
 
     this.cssLiveUpdateHandler = (e) => {
-      if (e.detail?.customCSS?.newValue === undefined || !this._controllerSheet) {
+      if (!e.detail?.customCSS || !this._controllerSheet) {
         return;
       }
       const customCSS = e.detail.customCSS.newValue || '';
