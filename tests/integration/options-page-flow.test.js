@@ -233,6 +233,54 @@ describe('Actual options page flows', () => {
     expect(document.getElementById('save').classList.contains('has-changes')).toBe(false);
   });
 
+  it.each(['reset', 'import'])(
+    'cancels a pending media speed save on %s even if storage already has that speed',
+    async (action) => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      let onChanged;
+      vi.spyOn(window.VSC.StorageManager, 'onChanged').mockImplementation((listener) => {
+        onChanged = listener;
+      });
+      const mediaConfig = new window.VSC.VideoSpeedConfig();
+      await mediaConfig.load();
+      getMockStorage().lastSpeed = 1;
+      await mediaConfig.save({ lastSpeed: 2 });
+
+      // Chrome emits changes only for changed values. The general test mock
+      // emits equal-value writes too, which would hide this cross-context race.
+      vi.spyOn(window.VSC.StorageManager, 'set').mockImplementation(async (settings) => {
+        const changes = {};
+        for (const [key, newValue] of Object.entries(settings)) {
+          const oldValue = getMockStorage()[key];
+          if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+            changes[key] = { oldValue, newValue };
+          }
+        }
+        Object.assign(getMockStorage(), settings);
+        onChanged(changes);
+      });
+      vi.spyOn(window.VSC.StorageManager, 'remove').mockImplementation(async (keys) => {
+        const changes = {};
+        for (const key of [keys].flat()) {
+          if (Object.hasOwn(getMockStorage(), key)) {
+            changes[key] = { oldValue: getMockStorage()[key], newValue: undefined };
+            delete getMockStorage()[key];
+          }
+        }
+        onChanged(changes);
+      });
+
+      if (action === 'reset') {
+        await clickAndWait('restore', 'Default options restored');
+      } else {
+        await importSettings({ keyBindings: [], lastSpeed: 1 }, 'Settings imported successfully');
+      }
+      expect(mediaConfig.pendingSave).toBeNull();
+      expect(mediaConfig.saveTimer).toBeNull();
+      expect(getMockStorage().lastSpeed).toBe(1);
+    }
+  );
+
   it('preserves existing settings when the storage read before an import fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const previous = JSON.stringify(getMockStorage());

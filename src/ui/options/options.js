@@ -1075,6 +1075,13 @@ async function restore_options() {
   }
 }
 
+async function refreshPersistedSpeed(lastSpeed) {
+  // A replacement must emit a change even if the saved speed is unchanged.
+  // Removal cancels queued saves in active configs and their isolated bridges.
+  await window.VSC.StorageManager.remove('lastSpeed');
+  await window.VSC.StorageManager.set({ lastSpeed });
+}
+
 async function restore_defaults() {
   const status = document.getElementById('status');
   try {
@@ -1092,6 +1099,7 @@ async function restore_defaults() {
     // erase the user's shortcuts and preferences.
     const existingSettings = await window.VSC.StorageManager.get(null);
     await window.VSC.StorageManager.set(defaults);
+    await refreshPersistedSpeed(defaults.lastSpeed);
     const staleKeys = Object.keys(existingSettings).filter((key) => !(key in defaults));
     if (staleKeys.length > 0) {
       await window.VSC.StorageManager.remove(staleKeys);
@@ -1291,6 +1299,9 @@ async function handleImportFile(event) {
     const ok = await window.VSC.videoSpeedConfig.save(imported);
     if (!ok) {
       throw new Error('Failed to write imported settings to storage');
+    }
+    if (Object.hasOwn(imported, 'lastSpeed')) {
+      await refreshPersistedSpeed(imported.lastSpeed);
     }
     const staleKeys = Object.keys(existingSettings).filter((key) => !(key in imported));
     if (staleKeys.length > 0) {
