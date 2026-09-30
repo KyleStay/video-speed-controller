@@ -183,6 +183,9 @@ with direct `chrome.*` access.
   Removing a stored key restores its default in existing config instances and
   deletes it from the MAIN-world cache. Removing `customCSS` also removes its
   adopted sheet; removing `lastSpeed` cancels any pending stale speed write.
+  Reset/import writes replacement settings first, then removes and restores an
+  explicit `lastSpeed` so unchanged speeds still invalidate pending config and
+  bridge saves. Never clear all storage before the replacement write succeeds.
 - **Logging**: use `window.VSC.logger` (levels in `Constants.LOG_LEVELS`), not
   `console.*`, in content/UI code.
 - **Formatting**: Prettier + ESLint are enforced via Husky pre-commit and CI;

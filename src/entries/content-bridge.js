@@ -84,6 +84,12 @@ async function init() {
         return;
       }
 
+      if (changes.lastSpeed && changes.lastSpeed.newValue === undefined) {
+        clearTimeout(lastSpeedWriteTimer);
+        lastSpeedWriteTimer = null;
+        pendingLastSpeed = null;
+      }
+
       // Lifecycle: only the popup's enabled toggle triggers teardown/reinit.
       // Options page never writes `enabled`, so saving options can't trigger
       // lifecycle — it only relays settings via VSC_STORAGE_CHANGED below.

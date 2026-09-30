@@ -318,6 +318,17 @@ describe('content-bridge', () => {
       expect(getMockStorage().lastSpeed).toBe(2.5);
     });
 
+    it('cancels a queued bridge speed write when replacement settings remove the key', async () => {
+      const onChanged = await loadBridge();
+      const set = vi.spyOn(globalThis.chrome.storage.sync, 'set');
+      docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 2 } }));
+      onChanged({ lastSpeed: { oldValue: 1, newValue: undefined } }, 'sync');
+      onChanged({ lastSpeed: { oldValue: undefined, newValue: 1 } }, 'sync');
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(set).not.toHaveBeenCalled();
+      expect(getMockStorage().lastSpeed).toBe(1);
+    });
+
     it('rejects invalid speed values and non-speed keys', async () => {
       await loadBridge();
       const storage = getMockStorage();
