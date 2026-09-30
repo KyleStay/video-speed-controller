@@ -30,7 +30,7 @@ if (!window.VSC.VideoSpeedConfig) {
       try {
         window.VSC.StorageManager.onChanged((changes) => {
           for (const [key, change] of Object.entries(changes)) {
-            if (!(key in this.settings) || change.newValue === undefined) {
+            if (!(key in this.settings)) {
               continue;
             }
 
@@ -45,7 +45,12 @@ if (!window.VSC.VideoSpeedConfig) {
               }
             }
 
-            this.settings[key] = change.newValue;
+            // Imports may omit a setting and remove its stored key. Existing
+            // contexts must adopt the default rather than keep the old value.
+            this.settings[key] =
+              change.newValue === undefined
+                ? window.VSC.Constants.DEFAULT_SETTINGS[key]
+                : change.newValue;
 
             // External lastSpeed write while we have a pending debounce:
             // cancel our stale timer — the external value is more recent.

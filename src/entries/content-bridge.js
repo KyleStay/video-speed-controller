@@ -131,6 +131,25 @@ async function init() {
         clearTimeout(timeout);
         bridgeEvents.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
         sendResponse(event.detail);
+        // Only popup requests opt into per-frame replies. tabs.sendMessage's
+        // callback otherwise reports whichever frame answered first.
+        if (typeof request.commandId === 'string') {
+          try {
+            chrome.runtime.sendMessage(
+              {
+                type: 'VSC_FRAME_RESULT',
+                commandId: request.commandId,
+                response: event.detail,
+              },
+              () => {
+                // The popup can close before the frame finishes responding.
+                void chrome.runtime.lastError;
+              }
+            );
+          } catch {
+            // An invalidated bridge must not break a page's media controls.
+          }
+        }
       };
 
       bridgeEvents.addEventListener('VSC_MESSAGE_RESULT', handleResult);
