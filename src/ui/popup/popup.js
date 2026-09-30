@@ -17,7 +17,15 @@ const SPEED_LIMITS = {
 document.addEventListener('DOMContentLoaded', () => {
   let enabled = true;
   let commandGeneration = 0;
-  window.addEventListener('pagehide', () => commandGeneration++, { once: true });
+  let lifecycleGeneration = 0;
+  window.addEventListener(
+    'pagehide',
+    () => {
+      commandGeneration++;
+      lifecycleGeneration++;
+    },
+    { once: true }
+  );
   setSpeedControlsAvailable(false);
   // Load settings and initialize speed controls
   loadSettingsAndInitialize();
@@ -49,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
         commandGeneration++;
+        lifecycleGeneration++;
         toggleEnabledUI(nextEnabled);
         if (nextEnabled) {
           setStatusState('Finding media…');
@@ -253,14 +262,19 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     const generation = ++commandGeneration;
+    const lifecycle = lifecycleGeneration;
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (generation !== commandGeneration) {
+        // A newer click supersedes the response, not the action. Cancel queued
+        // commands only when this enabled session ends or the popup closes.
+        if (lifecycle !== lifecycleGeneration || !enabled) {
           return;
         }
         if (chrome.runtime.lastError || !tabs?.[0]) {
-          setSpeedControlsAvailable(false);
-          setStatusState('No active tab.', 'error');
+          if (generation === commandGeneration) {
+            setSpeedControlsAvailable(false);
+            setStatusState('No active tab.', 'error');
+          }
           return;
         }
 
