@@ -233,9 +233,15 @@ describe('Actual options page flows', () => {
     expect(document.getElementById('save').classList.contains('has-changes')).toBe(false);
   });
 
-  it.each(['reset', 'import'])(
-    'cancels a pending media speed save on %s even if storage already has that speed',
-    async (action) => {
+  it.each([
+    ['reset', 1],
+    ['reset', undefined],
+    ['import', 1],
+    ['import', undefined],
+    ['import', null],
+  ])(
+    'cancels a pending media speed save on %s with stored speed %s',
+    async (action, storedSpeed) => {
       vi.spyOn(window, 'confirm').mockReturnValue(true);
       let onChanged;
       vi.spyOn(window.VSC.StorageManager, 'onChanged').mockImplementation((listener) => {
@@ -243,7 +249,11 @@ describe('Actual options page flows', () => {
       });
       const mediaConfig = new window.VSC.VideoSpeedConfig();
       await mediaConfig.load();
-      getMockStorage().lastSpeed = 1;
+      if (storedSpeed === undefined) {
+        delete getMockStorage().lastSpeed;
+      } else {
+        getMockStorage().lastSpeed = storedSpeed;
+      }
       await mediaConfig.save({ lastSpeed: 2 });
 
       // Chrome emits changes only for changed values. The general test mock
@@ -273,11 +283,17 @@ describe('Actual options page flows', () => {
       if (action === 'reset') {
         await clickAndWait('restore', 'Default options restored');
       } else {
-        await importSettings({ keyBindings: [], lastSpeed: 1 }, 'Settings imported successfully');
+        await importSettings(
+          {
+            keyBindings: [],
+            ...(storedSpeed !== undefined ? { lastSpeed: storedSpeed } : {}),
+          },
+          'Settings imported successfully'
+        );
       }
       expect(mediaConfig.pendingSave).toBeNull();
       expect(mediaConfig.saveTimer).toBeNull();
-      expect(getMockStorage().lastSpeed).toBe(1);
+      expect(getMockStorage().lastSpeed).toBe(action === 'reset' ? 1 : storedSpeed);
     }
   );
 
