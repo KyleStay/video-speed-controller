@@ -30,10 +30,19 @@ if (!window.VSC.StorageManager) {
      */
     static async get(defaults = {}) {
       if (hasChrome) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
+          const runtime = chrome.runtime;
           chrome.storage.sync.get(defaults, (storage) => {
-            window.VSC.logger?.debug?.('StorageManager: settings from chrome.storage');
-            resolve(storage);
+            try {
+              if (runtime.lastError) {
+                reject(new Error(`Storage read failed: ${runtime.lastError.message}`));
+                return;
+              }
+              window.VSC.logger?.debug?.('StorageManager: settings from chrome.storage');
+              resolve(storage);
+            } catch (error) {
+              reject(error);
+            }
           });
         });
       }
@@ -197,6 +206,8 @@ if (!window.VSC.StorageManager) {
             if (change.newValue !== undefined) {
               window.VSC_settings = window.VSC_settings || {};
               window.VSC_settings[key] = change.newValue;
+            } else if (window.VSC_settings) {
+              delete window.VSC_settings[key];
             }
           }
           callback(changes);

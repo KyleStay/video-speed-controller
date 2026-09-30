@@ -538,6 +538,11 @@ function autoSizeKeyInput(input) {
 }
 
 function recordKeyPress(e) {
+  // Tab belongs to focus navigation, including Shift+Tab out of the recorder.
+  if (e.code === 'Tab') {
+    return;
+  }
+
   // Special handling for backspace and escape (via event.code)
   if (e.code === 'Backspace') {
     e.target.value = '';
@@ -545,6 +550,7 @@ function recordKeyPress(e) {
     e.target.keyCode = null;
     e.target.displayKey = null;
     e.target.modifiers = undefined;
+    e.target.dispatchEvent(new Event('input', { bubbles: true }));
     e.preventDefault();
     e.stopPropagation();
     return;
@@ -554,6 +560,7 @@ function recordKeyPress(e) {
     e.target.keyCode = null;
     e.target.displayKey = null;
     e.target.modifiers = undefined;
+    e.target.dispatchEvent(new Event('input', { bubbles: true }));
     e.preventDefault();
     e.stopPropagation();
     return;
@@ -595,6 +602,7 @@ function recordKeyPress(e) {
   // Display formatted shortcut
   e.target.value = formatShortcutDisplay(e.target.displayKey, e.target.modifiers);
   autoSizeKeyInput(e.target);
+  e.target.dispatchEvent(new Event('input', { bubbles: true }));
 
   // Show contextual warnings for problematic modifier combos
   clearWarning(e.target);
@@ -773,7 +781,7 @@ function add_site_rule(data = { enabled: true }) {
 
 /**
  * Parse a speed input string.
- * Returns the numeric value, or null if empty/invalid.
+ * Returns the numeric value, null if empty, or NaN for invalid input.
  */
 function parseSpeed(s) {
   if (typeof s !== 'string') {
@@ -783,8 +791,7 @@ function parseSpeed(s) {
   if (trimmed === '') {
     return null;
   }
-  const v = parseFloat(trimmed);
-  return isNaN(v) ? null : v;
+  return Number(trimmed);
 }
 
 /**
@@ -802,6 +809,44 @@ function collectSiteRules() {
     .filter((r) => r.pattern);
 }
 
+function shortcutValueError(action, value) {
+  if (window.VSC.Constants.CUSTOM_ACTIONS_NO_VALUES.includes(action)) {
+    return '';
+  }
+  if (
+    (typeof value === 'string' && !value.trim()) ||
+    !Number.isFinite(Number(value)) ||
+    Number(value) < 0
+  ) {
+    return 'Shortcut value must be a non-negative number.';
+  }
+  if (SHIFT_EXCLUSIVE_ACTIONS.has(action) && Number(value) <= 0) {
+    return 'Frame rate must be greater than zero.';
+  }
+  const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
+  if (['reset', 'fast'].includes(action) && (Number(value) < MIN || Number(value) > MAX)) {
+    return `Playback speed must be between ${MIN} and ${MAX}.`;
+  }
+  return '';
+}
+
+function isValidSiteRulePattern(pattern) {
+  const trimmed = pattern.trim();
+  if (!trimmed.startsWith('/')) {
+    return trimmed.length > 0;
+  }
+  const end = trimmed.lastIndexOf('/');
+  if (end <= 1) {
+    return false;
+  }
+  try {
+    new RegExp(trimmed.slice(1, end), trimmed.slice(end + 1));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Validates settings before saving
 export function validate() {
   let valid = true;
@@ -812,7 +857,17 @@ export function validate() {
     clearTimeout(window.validationTimeout);
   }
 
-  const regEndsWithFlags = window.VSC.Constants.regEndsWithFlags;
+  for (const row of document.querySelectorAll('.customs')) {
+    const input = row.querySelector('.customValue');
+    const error = shortcutValueError(row.querySelector('.customDo').value, input.value);
+    input.setAttribute('aria-invalid', String(Boolean(error)));
+    if (error) {
+      showTimedStatus(`Error: ${error}`, 'error', 0);
+      switchTab('settings');
+      input.focus();
+      return false;
+    }
+  }
 
   const controllerSettings = validateControllerSettings();
   if (!controllerSettings.valid) {
@@ -829,34 +884,21 @@ export function validate() {
   const rules = collectSiteRules();
   for (const rule of rules) {
     // Validate regex patterns
-    if (rule.pattern.startsWith('/')) {
-      try {
-        const parts = rule.pattern.split('/');
-        if (parts.length < 3) {
-          throw 'invalid regex';
-        }
-        const hasFlags = regEndsWithFlags.test(rule.pattern);
-        const flags = hasFlags ? parts.pop() : '';
-        const regex = parts.slice(1, hasFlags ? undefined : -1).join('/');
-        if (!regex) {
-          throw 'empty regex';
-        }
-        new RegExp(regex, flags);
-      } catch {
-        status.textContent = `Error: Invalid site rule regex: "${rule.pattern}". Unable to save.`;
-        status.classList.add('show', 'error');
-        valid = false;
-        window.validationTimeout = setTimeout(() => {
-          status.textContent = '';
-          status.classList.remove('show', 'error');
-        }, 5000);
-        return valid;
-      }
+    if (!isValidSiteRulePattern(rule.pattern)) {
+      status.textContent = `Error: Invalid site rule regex: "${rule.pattern}". Unable to save.`;
+      status.classList.add('show', 'error');
+      valid = false;
+      window.validationTimeout = setTimeout(() => {
+        status.textContent = '';
+        status.classList.remove('show', 'error');
+      }, 5000);
+      return valid;
     }
 
     // Validate speed range
     if (rule.speed !== null && rule.speed !== undefined) {
       if (
+        !Number.isFinite(rule.speed) ||
         rule.speed < window.VSC.Constants.SPEED_LIMITS.MIN ||
         rule.speed > window.VSC.Constants.SPEED_LIMITS.MAX
       ) {
@@ -995,6 +1037,8 @@ async function restore_options() {
     document.getElementById('controllerButtonSize').value = storage.controllerButtonSize;
     document.getElementById('logLevel').value = storage.logLevel;
     document.getElementById('controllerCSS').value = storage.customCSS ?? '';
+    updateCSSHighlight();
+    validateControllerCSS(storage.customCSS ?? '');
 
     // Render site rules
     const siteRules = storage.siteRules || window.VSC.Constants.DEFAULT_SETTINGS.siteRules;
@@ -1031,15 +1075,28 @@ async function restore_options() {
   }
 }
 
+async function refreshPersistedSpeed(lastSpeed) {
+  // A replacement must emit a change even if the saved speed is unchanged.
+  // Removal cancels queued saves in active configs and their isolated bridges.
+  // An omitted speed may already be absent, so create it before removal to
+  // guarantee the notification while leaving the imported key omitted.
+  if (lastSpeed === undefined) {
+    await window.VSC.StorageManager.set({
+      lastSpeed: window.VSC.Constants.DEFAULT_SETTINGS.lastSpeed,
+    });
+  }
+  await window.VSC.StorageManager.remove('lastSpeed');
+  if (lastSpeed !== undefined) {
+    await window.VSC.StorageManager.set({ lastSpeed });
+  }
+}
+
 async function restore_defaults() {
+  const status = document.getElementById('status');
   try {
-    const status = document.getElementById('status');
     status.textContent = 'Restoring defaults...';
     status.classList.remove('success', 'error');
     status.classList.add('show');
-
-    // Clear all storage
-    await window.VSC.StorageManager.clear();
 
     // Ensure VideoSpeedConfig singleton is initialized
     if (!window.VSC.videoSpeedConfig) {
@@ -1047,9 +1104,14 @@ async function restore_defaults() {
     }
 
     const defaults = { ...window.VSC.Constants.DEFAULT_SETTINGS, schemaVersion: 3 };
-    const ok = await window.VSC.videoSpeedConfig.save(defaults);
-    if (!ok) {
-      throw new Error('failed to write defaults to storage');
+    // Commit defaults before removing obsolete keys. A failed write must not
+    // erase the user's shortcuts and preferences.
+    const existingSettings = await window.VSC.StorageManager.get(null);
+    await window.VSC.StorageManager.set(defaults);
+    await refreshPersistedSpeed(defaults.lastSpeed);
+    const staleKeys = Object.keys(existingSettings).filter((key) => !(key in defaults));
+    if (staleKeys.length > 0) {
+      await window.VSC.StorageManager.remove(staleKeys);
     }
 
     // Reload the options page (clears and re-renders all shortcut rows)
@@ -1061,6 +1123,7 @@ async function restore_defaults() {
       status.textContent = '';
       status.classList.remove('show', 'success');
     }, 2000);
+    return true;
   } catch (error) {
     console.error('Failed to restore defaults:', error);
     status.textContent = `Error restoring defaults: ${error.message}`;
@@ -1069,6 +1132,7 @@ async function restore_defaults() {
       status.textContent = '';
       status.classList.remove('show', 'error');
     }, 3000);
+    return false;
   }
 }
 
@@ -1120,6 +1184,75 @@ function import_settings() {
   document.getElementById('importFile').click();
 }
 
+function validateImportedSettings(settings) {
+  if (!settings || typeof settings !== 'object' || !Array.isArray(settings.keyBindings)) {
+    return 'File does not look like a StayFast Video settings file';
+  }
+  const actions = new Set(ACTION_OPTIONS.map(([action]) => action));
+  for (const binding of settings.keyBindings) {
+    if (
+      !binding ||
+      typeof binding !== 'object' ||
+      !actions.has(binding.action) ||
+      (!window.VSC.Constants.CUSTOM_ACTIONS_NO_VALUES.includes(binding.action) &&
+        (!Number.isFinite(binding.value) || shortcutValueError(binding.action, binding.value))) ||
+      (binding.code !== null && binding.code !== undefined && typeof binding.code !== 'string') ||
+      (binding.modifiers !== null &&
+        binding.modifiers !== undefined &&
+        (typeof binding.modifiers !== 'object' ||
+          Object.values(binding.modifiers).some((value) => typeof value !== 'boolean')))
+    ) {
+      return 'Invalid imported shortcut';
+    }
+  }
+  for (const [key, value] of Object.entries(window.VSC.Constants.DEFAULT_SETTINGS)) {
+    if (key in settings && typeof value === 'boolean' && typeof settings[key] !== 'boolean') {
+      return `Invalid imported setting "${key}"`;
+    }
+  }
+  for (const [key, min, max] of [
+    ['controllerOpacity', 0, 1],
+    ['controllerButtonSize', 10, 32],
+    ['logLevel', 1, 6],
+    ['defaultLogLevel', 1, 6],
+    ['lastSpeed', 0.07, 16],
+  ]) {
+    if (key === 'lastSpeed' && settings[key] === null) {
+      continue;
+    }
+    if (
+      key in settings &&
+      (!Number.isFinite(settings[key]) || settings[key] < min || settings[key] > max)
+    ) {
+      return `Invalid imported setting "${key}"`;
+    }
+  }
+  if (
+    settings.customCSS !== null &&
+    settings.customCSS !== undefined &&
+    typeof settings.customCSS !== 'string'
+  ) {
+    return 'Invalid imported controller CSS';
+  }
+  if (
+    'siteRules' in settings &&
+    (!Array.isArray(settings.siteRules) ||
+      settings.siteRules.some(
+        (rule) =>
+          !rule ||
+          typeof rule.pattern !== 'string' ||
+          !isValidSiteRulePattern(rule.pattern) ||
+          typeof rule.enabled !== 'boolean' ||
+          (rule.speed !== null &&
+            rule.speed !== undefined &&
+            (!Number.isFinite(rule.speed) || rule.speed < 0.07 || rule.speed > 16))
+      ))
+  ) {
+    return 'Invalid imported site rule';
+  }
+  return '';
+}
+
 async function handleImportFile(event) {
   const status = document.getElementById('status');
   const file = event.target.files[0];
@@ -1139,8 +1272,9 @@ async function handleImportFile(event) {
       throw new Error('File is not valid JSON', { cause: e });
     }
 
-    if (!imported || typeof imported !== 'object' || !Array.isArray(imported.keyBindings)) {
-      throw new Error('File does not look like a StayFast Video settings file');
+    const validationError = validateImportedSettings(imported);
+    if (validationError) {
+      throw new Error(validationError);
     }
 
     if (typeof imported.customCSS === 'string') {
@@ -1170,11 +1304,12 @@ async function handleImportFile(event) {
     // Write first so a rejected quota/API operation cannot erase the user's
     // current settings. Once the atomic set succeeds, remove keys omitted by
     // the import so they fall back to defaults on the subsequent restore.
-    const existingSettings = await chrome.storage.sync.get(null);
+    const existingSettings = await window.VSC.StorageManager.get(null);
     const ok = await window.VSC.videoSpeedConfig.save(imported);
     if (!ok) {
       throw new Error('Failed to write imported settings to storage');
     }
+    await refreshPersistedSpeed(imported.lastSpeed);
     const staleKeys = Object.keys(existingSettings).filter((key) => !(key in imported));
     if (staleKeys.length > 0) {
       await window.VSC.StorageManager.remove(staleKeys);
@@ -1359,8 +1494,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!confirmed) {
       return;
     }
-    await restore_defaults();
-    markClean();
+    if (await restore_defaults()) {
+      markClean();
+    }
   });
 
   document.getElementById('export').addEventListener('click', (e) => {
@@ -1408,12 +1544,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('beforeinput', (event) => {
     eventCaller(event, 'customValue', inputFilterNumbersOnly);
   });
-  document.addEventListener('focus', (event) => {
-    eventCaller(event, 'customKey', inputFocus);
-  });
-  document.addEventListener('blur', (event) => {
-    eventCaller(event, 'customKey', inputBlur);
-  });
+  document.addEventListener(
+    'focus',
+    (event) => {
+      eventCaller(event, 'customKey', inputFocus);
+    },
+    true
+  );
+  document.addEventListener(
+    'blur',
+    (event) => {
+      eventCaller(event, 'customKey', inputBlur);
+    },
+    true
+  );
   document.addEventListener('keydown', (event) => {
     eventCaller(event, 'customKey', recordKeyPress);
   });

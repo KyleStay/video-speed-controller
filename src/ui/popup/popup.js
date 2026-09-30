@@ -1,3 +1,5 @@
+import { sendTabCommand } from './tab-command.js';
+
 // Message type constants
 const MessageTypes = {
   SET_SPEED: 'VSC_SET_SPEED',
@@ -13,41 +15,67 @@ const SPEED_LIMITS = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+  let enabled = true;
+  let commandGeneration = 0;
+  let lifecycleGeneration = 0;
+  window.addEventListener(
+    'pagehide',
+    () => {
+      commandGeneration++;
+      lifecycleGeneration++;
+    },
+    { once: true }
+  );
+  setSpeedControlsAvailable(false);
   // Load settings and initialize speed controls
   loadSettingsAndInitialize();
 
   // Settings button event listener
   document.querySelector('#config').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
+    try {
+      chrome.runtime.openOptionsPage();
+    } catch {
+      setStatusState('Unable to open settings.', 'error');
+    }
   });
 
   // Power button toggle event listener
   document.querySelector('#disable').addEventListener('click', function () {
     // Toggle based on current state
     const isCurrentlyEnabled = !this.classList.contains('disabled');
-    toggleEnabled(!isCurrentlyEnabled, settingsSavedReloadMessage);
+    toggleEnabled(!isCurrentlyEnabled);
   });
 
-  // Initialize enabled state
-  chrome.storage.sync.get({ enabled: true }, (storage) => {
-    toggleEnabledUI(storage.enabled);
-  });
-
-  function toggleEnabled(enabled, callback) {
-    chrome.storage.sync.set(
-      {
-        enabled: enabled,
-      },
-      () => {
-        toggleEnabledUI(enabled);
-        if (callback) {
-          callback(enabled);
+  function toggleEnabled(nextEnabled) {
+    const button = document.querySelector('#disable');
+    button.disabled = true;
+    try {
+      chrome.storage.sync.set({ enabled: nextEnabled }, () => {
+        button.disabled = false;
+        if (chrome.runtime.lastError) {
+          setStatusState('Unable to save the enabled setting.', 'error');
+          return;
         }
-      }
-    );
+        commandGeneration++;
+        lifecycleGeneration++;
+        toggleEnabledUI(nextEnabled);
+        if (nextEnabled) {
+          setStatusState('Finding media…');
+          refreshStatus(6);
+        } else {
+          setSpeedControlsAvailable(false);
+          updateCurrentSpeed(null);
+          setStatusState('Extension disabled.');
+        }
+      });
+    } catch {
+      button.disabled = false;
+      setStatusState('Unable to save the enabled setting.', 'error');
+    }
   }
 
-  function toggleEnabledUI(enabled) {
+  function toggleEnabledUI(nextEnabled) {
+    enabled = nextEnabled;
     const disableBtn = document.querySelector('#disable');
     disableBtn.classList.toggle('disabled', !enabled);
     disableBtn.setAttribute('aria-pressed', String(!enabled));
@@ -55,17 +83,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Update tooltip
     disableBtn.title = enabled ? 'Disable Extension' : 'Enable Extension';
-  }
-
-  function settingsSavedReloadMessage(enabled) {
-    setStatusMessage(`${enabled ? 'Enabled' : 'Disabled'}. Reload page.`);
-  }
-
-  function setStatusMessage(str) {
-    const status_element = document.querySelector('#status');
-    status_element.classList.toggle('hide', false);
-    status_element.classList.remove('error', 'success');
-    status_element.textContent = str;
   }
 
   function setStatusState(str, state = '') {
@@ -119,30 +136,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load settings and initialize UI
   function loadSettingsAndInitialize() {
-    chrome.storage.sync.get(null, (storage) => {
-      // Find the step values from keyBindings
-      let slowerStep = 0.1;
-      let fasterStep = 0.1;
-
-      if (storage.keyBindings && Array.isArray(storage.keyBindings)) {
-        const slowerBinding = storage.keyBindings.find((kb) => kb.action === 'slower');
-        const fasterBinding = storage.keyBindings.find((kb) => kb.action === 'faster');
-
-        if (slowerBinding && typeof slowerBinding.value === 'number') {
-          slowerStep = slowerBinding.value;
+    initializeSpeedControls();
+    try {
+      chrome.storage.sync.get(['enabled', 'keyBindings'], (storage) => {
+        if (chrome.runtime.lastError || !storage) {
+          setStatusState('Unable to load settings.', 'error');
+          return;
         }
-        if (fasterBinding && typeof fasterBinding.value === 'number') {
-          fasterStep = fasterBinding.value;
+        toggleEnabledUI(storage.enabled !== false);
+        // Find the step values from keyBindings
+        let slowerStep = 0.1;
+        let fasterStep = 0.1;
+
+        if (storage.keyBindings && Array.isArray(storage.keyBindings)) {
+          const slowerBinding = storage.keyBindings.find((kb) => kb.action === 'slower');
+          const fasterBinding = storage.keyBindings.find((kb) => kb.action === 'faster');
+
+          if (slowerBinding && typeof slowerBinding.value === 'number') {
+            slowerStep = slowerBinding.value;
+          }
+          if (fasterBinding && typeof fasterBinding.value === 'number') {
+            fasterStep = fasterBinding.value;
+          }
         }
-      }
 
-      // Update the UI with dynamic values
-      updateSpeedControlsUI(slowerStep, fasterStep);
+        // Update the UI with dynamic values
+        updateSpeedControlsUI(slowerStep, fasterStep);
 
-      // Initialize event listeners
-      initializeSpeedControls();
-      refreshStatus();
-    });
+        if (enabled) {
+          refreshStatus();
+        } else {
+          setStatusState('Extension disabled.');
+        }
+      });
+    } catch {
+      setStatusState('Unable to load settings.', 'error');
+    }
   }
 
   function updateSpeedControlsUI(slowerStep, fasterStep) {
@@ -224,61 +253,91 @@ document.addEventListener('DOMContentLoaded', () => {
     sendCommand(MessageTypes.ADJUST_SPEED, { delta: delta }, `${delta > 0 ? '+' : ''}${delta}x`);
   }
 
-  function refreshStatus() {
-    sendCommand(MessageTypes.GET_STATUS, {}, '', { silent: true });
+  function refreshStatus(retries = 0) {
+    sendCommand(MessageTypes.GET_STATUS, {}, '', { silent: true, retries });
   }
 
   function sendCommand(type, payload, successMessage, options = {}) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]) {
-        setSpeedControlsAvailable(false);
-        setStatusState('No active tab.', 'error');
-        return;
-      }
-
-      chrome.tabs.sendMessage(tabs[0].id, { type, payload }, (response) => {
-        if (chrome.runtime.lastError) {
-          const tabUrl = tabs[0].url || '';
-          const restrictedPage = /^(chrome|edge|about|chrome-extension):/i.test(tabUrl);
-          setSpeedControlsAvailable(false);
-          setStatusState(
-            restrictedPage
-              ? 'Controls are not available on browser pages.'
-              : 'Reload this page to enable controls.',
-            'error'
-          );
-          updateCurrentSpeed(null);
+    if (!enabled) {
+      return;
+    }
+    const generation = ++commandGeneration;
+    const lifecycle = lifecycleGeneration;
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        // A newer click supersedes the response, not the action. Cancel queued
+        // commands only when this enabled session ends or the popup closes.
+        if (lifecycle !== lifecycleGeneration || !enabled) {
+          return;
+        }
+        if (chrome.runtime.lastError || !tabs?.[0]) {
+          if (generation === commandGeneration) {
+            setSpeedControlsAvailable(false);
+            setStatusState('No active tab.', 'error');
+          }
           return;
         }
 
-        if (!response?.ok) {
-          setSpeedControlsAvailable(false);
-          setStatusState('No response from this page. Try reloading the tab.', 'error');
-          updateCurrentSpeed(null);
-          return;
-        }
+        sendTabCommand(tabs[0].id, { type, payload })
+          .then((response) => {
+            if (generation !== commandGeneration) {
+              return;
+            }
+            // Re-enable initializes media asynchronously and defers DOM work.
+            // Retry only status reads, for a bounded period while the popup is
+            // open; never repeat a speed-changing command.
+            if (
+              type === MessageTypes.GET_STATUS &&
+              options.retries > 0 &&
+              (!response?.ok || response.mediaCount === 0)
+            ) {
+              refreshStatus(options.retries - 1);
+              return;
+            }
+            if (!response?.ok) {
+              setSpeedControlsAvailable(false);
+              setStatusState('No response from this page. Try reloading the tab.', 'error');
+              updateCurrentSpeed(null);
+              return;
+            }
 
-        if (response.mediaCount === 0) {
-          setSpeedControlsAvailable(false);
-          setStatusState('No media found on this page.', 'error');
-          updateCurrentSpeed(null);
-          return;
-        }
+            if (response.mediaCount === 0) {
+              setSpeedControlsAvailable(false);
+              setStatusState('No media found on this page.', 'error');
+              updateCurrentSpeed(null);
+              return;
+            }
 
-        setSpeedControlsAvailable(true);
-        if (typeof response.currentSpeed === 'number') {
-          updateCurrentSpeed(response.currentSpeed);
-        } else {
-          updateCurrentSpeed(null);
-        }
+            setSpeedControlsAvailable(true);
+            updateCurrentSpeed(response.currentSpeed);
 
-        if (!options.silent) {
-          setStatusState(successMessage, 'success');
-        } else if (typeof response.currentSpeed === 'number') {
-          setStatusState(`Current ${formatSpeed(response.currentSpeed)}x`, 'success');
-        }
+            if (!options.silent) {
+              setStatusState(successMessage, 'success');
+            } else if (typeof response.currentSpeed === 'number') {
+              setStatusState(`Current ${formatSpeed(response.currentSpeed)}x`, 'success');
+            } else {
+              setStatusState('Multiple playback speeds.', 'success');
+            }
+          })
+          .catch(() => {
+            if (generation === commandGeneration) {
+              const tabUrl = tabs[0].url || '';
+              const restrictedPage = /^(chrome|edge|about|chrome-extension):/i.test(tabUrl);
+              setSpeedControlsAvailable(false);
+              setStatusState(
+                restrictedPage
+                  ? 'Controls are not available on browser pages.'
+                  : 'Reload this page to enable controls.',
+                'error'
+              );
+              updateCurrentSpeed(null);
+            }
+          });
       });
-    });
+    } catch {
+      setSpeedControlsAvailable(false);
+      setStatusState('Unable to contact the active tab.', 'error');
+    }
   }
 
   function updateCurrentSpeed(speed) {
@@ -290,8 +349,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const input = document.querySelector('#custom-speed-input');
-    if (input && typeof speed === 'number') {
-      input.value = formatSpeed(speed);
+    if (input) {
+      input.value = typeof speed === 'number' ? formatSpeed(speed) : '';
       setCustomSpeedValidity(true);
     }
   }
