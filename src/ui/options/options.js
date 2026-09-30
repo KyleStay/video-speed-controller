@@ -1078,8 +1078,17 @@ async function restore_options() {
 async function refreshPersistedSpeed(lastSpeed) {
   // A replacement must emit a change even if the saved speed is unchanged.
   // Removal cancels queued saves in active configs and their isolated bridges.
+  // An omitted speed may already be absent, so create it before removal to
+  // guarantee the notification while leaving the imported key omitted.
+  if (lastSpeed === undefined) {
+    await window.VSC.StorageManager.set({
+      lastSpeed: window.VSC.Constants.DEFAULT_SETTINGS.lastSpeed,
+    });
+  }
   await window.VSC.StorageManager.remove('lastSpeed');
-  await window.VSC.StorageManager.set({ lastSpeed });
+  if (lastSpeed !== undefined) {
+    await window.VSC.StorageManager.set({ lastSpeed });
+  }
 }
 
 async function restore_defaults() {
@@ -1300,9 +1309,7 @@ async function handleImportFile(event) {
     if (!ok) {
       throw new Error('Failed to write imported settings to storage');
     }
-    if (Object.hasOwn(imported, 'lastSpeed')) {
-      await refreshPersistedSpeed(imported.lastSpeed);
-    }
+    await refreshPersistedSpeed(imported.lastSpeed);
     const staleKeys = Object.keys(existingSettings).filter((key) => !(key in imported));
     if (staleKeys.length > 0) {
       await window.VSC.StorageManager.remove(staleKeys);

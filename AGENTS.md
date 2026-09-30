@@ -186,6 +186,8 @@ with direct `chrome.*` access.
   Reset/import writes replacement settings first, then removes and restores an
   explicit `lastSpeed` so unchanged speeds still invalidate pending config and
   bridge saves. Never clear all storage before the replacement write succeeds.
+  Imports omitting `lastSpeed` create and remove it to guarantee cancellation
+  even when the key was already absent; its final stored state remains absent.
 - **Logging**: use `window.VSC.logger` (levels in `Constants.LOG_LEVELS`), not
   `console.*`, in content/UI code.
 - **Formatting**: Prettier + ESLint are enforced via Husky pre-commit and CI;
