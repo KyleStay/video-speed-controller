@@ -72,6 +72,9 @@ with direct `chrome.*` access.
   when the parent has no media and an iframe does. Replies are scoped to the
   command, extension, tab, and frame; popup close removes pending listeners
   and timers. Ordinary commands retain the single-response protocol.
+  Popup response generations prevent stale replies from changing the UI;
+  separate lifecycle generations cancel pending dispatch only on power changes
+  or popup close, so rapid relative-speed clicks each reach the media.
 - **Trust boundary**: the MAIN world may write **only `lastSpeed`** back to
   storage (`VSC_WRITE_STORAGE`); everything else is read-only from MAIN.
 

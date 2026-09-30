@@ -208,6 +208,55 @@ describe('Popup accessibility', () => {
     expect(document.getElementById('status').textContent).toBe('Extension disabled.');
   });
 
+  it('sends each rapid adjustment even when active-tab lookups are still pending', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    const queries = [];
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      queries.push(callback);
+    });
+
+    document.getElementById('speed-increase').click();
+    document.getElementById('speed-increase').click();
+    expect(queries).toHaveLength(2);
+    queries.forEach((callback) => callback([{ id: 1 }]));
+
+    const adjustments = chrome.tabs.sendMessage.mock.calls.filter(
+      ([, message]) => message.type === 'VSC_ADJUST_SPEED'
+    );
+    expect(adjustments).toHaveLength(2);
+    expect(adjustments.every(([, message]) => message.payload.delta === 0.1)).toBe(true);
+  });
+
+  it('cancels pending commands when the enabled session ends', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    let query;
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      query = callback;
+    });
+    document.getElementById('speed-increase').click();
+    document.getElementById('disable').click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('status').textContent).toBe('Extension disabled.')
+    );
+    query([{ id: 1 }]);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending commands when the popup closes', async () => {
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    let query;
+    vi.spyOn(chrome.tabs, 'query').mockImplementation((_query, callback) => {
+      query = callback;
+    });
+    document.getElementById('speed-increase').click();
+    window.dispatchEvent(new Event('pagehide'));
+    query([{ id: 1 }]);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('starts disabled and can re-enable controls without reopening the popup', async () => {
     getMockStorage().enabled = false;
     await initializePopup();
