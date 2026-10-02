@@ -60,11 +60,24 @@ npm run release:github
 
 ## Quality gates
 
-| Hook       | Runs                                                      | When                      |
-| ---------- | --------------------------------------------------------- | ------------------------- |
-| Pre-commit | `lint-staged` (eslint + prettier on changed files)        | Every commit              |
-| Pre-push   | `npm run lint` + `npm test`                               | Every push                |
-| CI         | lint, Chrome + Firefox release builds, test, package ZIPs | Push/PR to main or master |
+| Hook       | Runs                                                                   | When            |
+| ---------- | ---------------------------------------------------------------------- | --------------- |
+| Pre-commit | `lint-staged` (eslint + prettier on changed files)                     | Every commit    |
+| Pre-push   | `npm run lint` + `npm test`                                            | Every push      |
+| CI         | lint, browser release builds, test, browser fixtures, benchmarks, ZIPs | Push/PR to main |
 
 CI uploads both versioned browser ZIPs as artifacts, so every passing build on
 the maintained branches produces release candidates.
+
+## Updating an existing Chrome Web Store item
+
+Build a complete Chrome ZIP with `npm run release:chrome`. Check that the
+version exceeds every package previously uploaded for the existing item; release
+tags alone do not establish the dashboard's latest uploaded version.
+
+Open the existing item in the [developer dashboard](https://chrome.google.com/webstore/devconsole/),
+choose **Package → Upload New Package**, upload the versioned Chrome ZIP, and
+submit it for review. Keep the existing listing and extension ID. Update listing
+or privacy fields only when the release changes them. See Google's
+[update guide](https://developer.chrome.com/docs/webstore/update) and the
+[0.11.2 upload notes](releases/0.11.2.md).

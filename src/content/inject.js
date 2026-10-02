@@ -532,6 +532,11 @@ class VideoSpeedExtension {
    */
   onVideoFound(video, parent, options = {}) {
     try {
+      // all_frames owns each document independently, including same-origin
+      // embeds. A parent must never register another frame's media.
+      if (video.ownerDocument && video.ownerDocument !== document) {
+        return;
+      }
       // A media element exists on the page (even if not yet valid/attachable) —
       // start watching style/class mutations so a later visibility/validity
       // change on it is observed. No-op after the first call. Done before the
@@ -549,6 +554,7 @@ class VideoSpeedExtension {
       }
 
       if (video.vsc) {
+        video.vsc.repairDOMPlacement?.();
         this.logger.debug('Video already has controller attached');
         this.clearPendingVideoAttachment(video);
         return;

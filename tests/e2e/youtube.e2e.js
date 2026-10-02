@@ -14,21 +14,33 @@ import {
   takeScreenshot,
   assert,
   sleep,
+  monitorPageErrors,
 } from './e2e-utils.js';
 
 const YOUTUBE_TEST_URL = 'https://www.youtube.com/watch?v=gGCJOTvECVQ';
 
-export default async function runYouTubeE2ETests() {
+function isUnrelatedYouTubePageError(error) {
+  const detail = `${error.name || ''}: ${error.message || ''}\n${error.stack || ''}`;
+  return (
+    /doubleclick\.net|googleadservices\.com|googlesyndication\.com/i.test(detail) ||
+    /AbortError|NetworkError|Failed to fetch|Load failed/i.test(detail)
+  );
+}
+
+export default async function runYouTubeE2ETests({ launch = launchChromeWithExtension } = {}) {
   console.log('🎭 Running YouTube E2E Tests...\n');
 
   let browser;
   let passed = 0;
   let failed = 0;
+  let pageErrors;
 
   const runTest = async (testName, testFn) => {
     try {
       console.log(`   🧪 ${testName}`);
+      pageErrors?.clear();
       await testFn();
+      pageErrors?.assertNone(testName);
       console.log(`   ✅ ${testName}`);
       passed++;
     } catch (error) {
@@ -39,8 +51,9 @@ export default async function runYouTubeE2ETests() {
 
   try {
     // Launch Chrome with extension
-    const { browser: chromeBrowser, page } = await launchChromeWithExtension();
+    const { browser: chromeBrowser, page } = await launch();
     browser = chromeBrowser;
+    pageErrors = monitorPageErrors(page, { ignore: isUnrelatedYouTubePageError });
 
     await runTest('Extension should load on YouTube', async () => {
       console.log(`   🌐 Navigating to: ${YOUTUBE_TEST_URL}`);
@@ -152,7 +165,7 @@ export default async function runYouTubeE2ETests() {
       );
     });
 
-    await runTest('Extension should handle YouTube page navigation', async () => {
+    await runTest('Extension should maintain speed after seeking', async () => {
       // Get current speed
       const currentSpeed = await getVideoSpeed(page, 'video.html5-main-video');
 
@@ -172,11 +185,12 @@ export default async function runYouTubeE2ETests() {
     });
 
     await runTest('Multiple speed changes should work correctly', async () => {
-      // Ensure we start from 1.0 baseline by setting it directly
+      // Establish a new user speed rather than racing the ratechange guard by
+      // assigning playbackRate behind the controller's back.
       await page.evaluate(() => {
         const video = document.querySelector('video.html5-main-video');
         if (video) {
-          video.playbackRate = 1.0;
+          window.VSC_controller.actionHandler.adjustSpeed(video, 1);
         }
       });
       await sleep(200);
@@ -245,10 +259,64 @@ export default async function runYouTubeE2ETests() {
     });
 
     await takeScreenshot(page, 'youtube-test-final.png');
+
+    await runTest('Shortcuts and buttons survive real YouTube SPA navigation', async () => {
+      const beforeUrl = page.url();
+      const token = await page.evaluate(() => {
+        window.__stayfastQaDocument = crypto.randomUUID();
+        return window.__stayfastQaDocument;
+      });
+      const nextHandle = await page.evaluateHandle(() =>
+        [...document.querySelectorAll('#secondary a[href*="/watch?v="]')].find(
+          (link) =>
+            link.textContent.trim() &&
+            new URL(link.href).searchParams.get('v') !==
+              new URL(location.href).searchParams.get('v')
+        )
+      );
+      try {
+        const next = nextHandle.asElement();
+        assert.exists(next, 'A recommendation link is required for the SPA check');
+        await next.click();
+      } finally {
+        await nextHandle.dispose();
+      }
+      await page.waitForFunction((previous) => location.href !== previous, {}, beforeUrl);
+      assert.equal(
+        await page.evaluate(() => window.__stayfastQaDocument),
+        token,
+        'Recommendation navigation must reuse the document'
+      );
+      assert.true(
+        await waitForVideo(page, 'video.html5-main-video', 20000),
+        'The next YouTube video must load'
+      );
+      await page.waitForFunction(
+        () => document.querySelector('video.html5-main-video')?.vsc?.div.isConnected
+      );
+      const initial = await getVideoSpeed(page, 'video.html5-main-video');
+      await page.keyboard.press('d');
+      await page.waitForFunction(
+        (previous) => document.querySelector('video.html5-main-video').playbackRate > previous,
+        {},
+        initial
+      );
+      const faster = await getVideoSpeed(page, 'video.html5-main-video');
+      assert.true(
+        await controlVideo(page, 'slower'),
+        'The next video needs a clickable slower button'
+      );
+      assert.true(
+        (await getVideoSpeed(page, 'video.html5-main-video')) < faster,
+        'A pointer click must change the next video speed'
+      );
+      await takeScreenshot(page, 'youtube-spa-next-video.png');
+    });
   } catch (error) {
     console.log(`   💥 Test setup failed: ${error.message}`);
     failed++;
   } finally {
+    pageErrors?.dispose();
     if (browser) {
       await browser.close();
     }

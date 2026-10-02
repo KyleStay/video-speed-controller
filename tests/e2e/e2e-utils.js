@@ -17,6 +17,35 @@ const __dirname = dirname(__filename);
  */
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Treat uncaught page exceptions as test failures instead of diagnostics. */
+export function monitorPageErrors(page, { ignore = () => false } = {}) {
+  const errors = [];
+  const onPageError = (error) => {
+    if (ignore(error)) {
+      console.warn(`   ⚠️ Ignored unrelated page error: ${error.message}`);
+      return;
+    }
+    errors.push(error);
+    console.error(`   💥 Page Error: ${error.message}`);
+  };
+  page.on('pageerror', onPageError);
+
+  return {
+    clear() {
+      errors.length = 0;
+    },
+    assertNone(context = 'browser check') {
+      if (errors.length) {
+        const details = errors.map((error) => error.stack || error.message).join('\n---\n');
+        throw new Error(`${context} raised ${errors.length} uncaught page error(s):\n${details}`);
+      }
+    },
+    dispose() {
+      page.off('pageerror', onPageError);
+    },
+  };
+}
+
 export function getChromeLaunchArgs({ ci = process.env.CI, platform = process.platform } = {}) {
   const args = [
     '--disable-dev-shm-usage',
@@ -78,11 +107,6 @@ export async function launchChromeWithExtension() {
         consoleErrors.push(msg.text());
         console.log(`   🔴 Console Error: ${msg.text()}`);
       }
-    });
-
-    // Listen for page errors
-    page.on('pageerror', (error) => {
-      console.log(`   💥 Page Error: ${error.message}`);
     });
 
     // Add some debug info
@@ -275,42 +299,86 @@ export async function getVideoSpeed(page, selector = 'video') {
  * @returns {Promise<boolean>}
  */
 export async function controlVideo(page, action) {
+  let buttonHandle;
+  let controllerHandle;
+  let videoHandle;
   try {
-    // Access shadow DOM to click the button
-    const success = await page.evaluate((action) => {
-      const controller = document.querySelector('.vsc-controller');
-      if (!controller || !controller.shadowRoot) {
-        console.log('Controller or shadow DOM not found');
-        return false;
-      }
-
-      const button = controller.shadowRoot.querySelector(`button[data-action="${action}"]`);
-      if (button) {
-        button.click();
-        return true;
-      } else {
-        // Debug: list all available buttons
-        const allButtons = controller.shadowRoot.querySelectorAll('button');
-        console.log(
-          'Available buttons:',
-          Array.from(allButtons).map((b) => b.getAttribute('data-action'))
-        );
-        return false;
-      }
-    }, action);
-
-    if (success) {
-      // Wait a bit for the action to take effect
-      await sleep(500);
-      console.log(`   🔄 Performed action: ${action}`);
-      return true;
-    } else {
-      console.log(`   ❌ Button not found for action: ${action}`);
-      return false;
+    videoHandle = await page.$('video');
+    if (videoHandle) {
+      // YouTube's native autohide can also suppress the extension host. Move a
+      // real pointer over the player before targeting controls inside shadow DOM.
+      await videoHandle.hover();
+      await sleep(150);
     }
-  } catch {
-    console.log(`   ❌ Failed to perform action: ${action}`);
+    controllerHandle = await page.evaluateHandle(() =>
+      document.querySelector('.vsc-controller')?.shadowRoot?.querySelector('#controller')
+    );
+    const controller = controllerHandle.asElement();
+    if (!controller) {
+      throw new Error('Controller is missing');
+    }
+    // Reveal hover controls, then send a genuine browser pointer click. A
+    // JavaScript button.click() bypasses hit testing and can hide layout bugs.
+    await controller.hover();
+    buttonHandle = await page.evaluateHandle(
+      (action) =>
+        document
+          .querySelector('.vsc-controller')
+          ?.shadowRoot?.querySelector(`button[data-action="${action}"]`),
+      action
+    );
+    const button = buttonHandle.asElement();
+    if (!button) {
+      throw new Error(`Button ${action} is missing`);
+    }
+    let clickError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await videoHandle?.hover();
+        await controller.hover();
+        await page.waitForFunction(
+          (requestedAction) => {
+            const target = document
+              .querySelector('.vsc-controller')
+              ?.shadowRoot?.querySelector(`button[data-action="${requestedAction}"]`);
+            if (!target) {
+              return false;
+            }
+            const bounds = target.getBoundingClientRect();
+            const style = getComputedStyle(target);
+            return (
+              bounds.width > 0 &&
+              bounds.height > 0 &&
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              Number(style.opacity) > 0
+            );
+          },
+          { timeout: 1500 },
+          action
+        );
+        await button.click();
+        clickError = null;
+        break;
+      } catch (error) {
+        clickError = error;
+        await sleep(150);
+      }
+    }
+    if (clickError) {
+      await takeScreenshot(page, `control-${action}-failed.png`);
+      throw clickError;
+    }
+    await sleep(500);
+    console.log(`   🔄 Clicked action: ${action}`);
+    return true;
+  } catch (error) {
+    console.log(`   ❌ Failed to perform action ${action}: ${error.message}`);
     return false;
+  } finally {
+    await videoHandle?.dispose();
+    await buttonHandle?.dispose();
+    await controllerHandle?.dispose();
   }
 }
 
