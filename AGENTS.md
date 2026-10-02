@@ -190,7 +190,10 @@ with direct `chrome.*` access.
   synchronous ratechange must not recurse. `VideoController.remove()` releases
   that media's state; manager cleanup cancels every remaining timer.
 - **Mutation budget**: deferred work coalesces repeated target/attribute records
-  and walks overlapping subtrees once with TreeWalker, including open roots.
+  and deduplicates overlapping subtrees per mutation delivery with TreeWalker,
+  including open roots. Later deliveries must rediscover reinserted media even
+  while old work remains queued. A removed/reparented paused cursor restarts
+  traversal at its root, skipping visited elements but entering their children.
   Slices yield after 4ms or 500 work units, with a 50ms continuation timeout.
   Individual browser operations can exceed the time budget; report measured
   `mutationStats.maxSliceMs`, not an assumed guarantee. Removals and document

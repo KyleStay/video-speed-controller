@@ -112,6 +112,68 @@ describe('bounded mutation work', () => {
     expect(found).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['remove', 'reparent'])('reaches trailing media after a paused cursor %s', (action) => {
+    const root = document.createElement('div');
+    const inner = document.createElement('section');
+    for (let i = 0; i < 1400; i++) {
+      inner.append(document.createElement('span'));
+    }
+    const video = document.createElement('video');
+    inner.append(video);
+    root.append(inner);
+    document.body.append(root);
+    observer.scheduleMutationProcessing([record(root)]);
+    callbacks.shift()();
+    const job = observer.pendingWalks.find((work) => work.walker);
+    expect(job.next.tagName).toBe('SPAN');
+    const cursor = job.next;
+    const destination = document.createElement('div');
+    if (action === 'remove') {
+      cursor.remove();
+    } else {
+      document.body.append(destination);
+      destination.append(cursor);
+    }
+    observer.scheduleMutationProcessing([record(cursor, false)]);
+    drain();
+    expect(found).toHaveBeenCalledExactlyOnceWith(video, inner);
+    expect(observer.getPendingWorkCount()).toBe(0);
+    root.remove();
+    destination.remove();
+  });
+
+  it('rediscovers reinserted media while an unrelated scan remains queued', () => {
+    const root = document.createElement('div');
+    for (let i = 0; i < 5000; i++) {
+      root.append(document.createElement('span'));
+    }
+    const video = document.createElement('video');
+    document.body.append(root, video);
+    let attached = false;
+    found.mockImplementation((media) => {
+      if (media === video) attached = true;
+    });
+    removed.mockImplementation((media) => {
+      if (media === video) attached = false;
+    });
+    observer.scheduleMutationProcessing([record(root), record(video)]);
+    callbacks.shift()();
+    expect(attached).toBe(true);
+    video.remove();
+    observer.scheduleMutationProcessing([record(video, false)]);
+    callbacks.shift()();
+    expect(attached).toBe(false);
+    expect(observer.getPendingWorkCount()).toBeGreaterThan(0);
+    document.body.append(video);
+    observer.scheduleMutationProcessing([record(video)]);
+    drain();
+    expect(attached).toBe(true);
+    expect(found.mock.calls.filter(([media]) => media === video)).toHaveLength(2);
+    expect(observer.getPendingWorkCount()).toBe(0);
+    root.remove();
+    video.remove();
+  });
+
   it('keeps connected media moved inside shadow DOM', () => {
     const host = document.createElement('div');
     const shadow = host.attachShadow({ mode: 'open' });
