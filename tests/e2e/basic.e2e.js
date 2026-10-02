@@ -14,6 +14,7 @@ import {
   takeScreenshot,
   assert,
   sleep,
+  monitorPageErrors,
 } from './e2e-utils.js';
 import { runReliabilityChecks } from './reliability-checks.js';
 
@@ -23,11 +24,14 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
   let browser;
   let passed = 0;
   let failed = 0;
+  let pageErrors;
 
   const runTest = async (testName, testFn) => {
     try {
       console.log(`   🧪 ${testName}`);
+      pageErrors?.clear();
       await testFn();
+      pageErrors?.assertNone(testName);
       console.log(`   ✅ ${testName}`);
       passed++;
     } catch (error) {
@@ -40,6 +44,7 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
     // Launch Chrome with extension
     const { browser: chromeBrowser, page } = await launch();
     browser = chromeBrowser;
+    pageErrors = monitorPageErrors(page);
 
     await runTest('Extension should load in Chrome', async () => {
       // Navigate to our test HTML file with video
@@ -158,6 +163,7 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
     console.log(`   💥 Test setup failed: ${error.message}`);
     failed++;
   } finally {
+    pageErrors?.dispose();
     if (browser) {
       await browser.close();
     }

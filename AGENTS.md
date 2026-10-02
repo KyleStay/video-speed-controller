@@ -56,6 +56,10 @@ with direct `chrome.*` access.
   and lifecycle subscriptions persist through enable toggles; temporary response
   and CSS subscriptions are removed through the same transport.
 
+- Firefox's ISOLATED world uses `cloneInto(payload, document.defaultView)` for
+  outbound object payloads (`dispatchPageEvent` in `content-bridge.js`). Page
+  scripts otherwise cannot read CustomEvent details from that realm. Keep
+  filtering and validation before cloning; never clone extension functions/APIs.
 - Settings handshake: MAIN fires `VSC_REQUEST_SETTINGS`; the persistent bridge
   listener replies `VSC_SETTINGS_READY` from a fresh bounded storage read (or
   `{abort:true}` for disabled/blacklisted sites and read failures). This supports
@@ -104,6 +108,10 @@ with direct `chrome.*` access.
   - `media-observer.js` — light/comprehensive media scanning (incl. shadow DOM,
     depth-capped); `hasMediaIndicators` gate.
   - `mutation-observer.js` — detects dynamically added/removed media; tracks
+    ready/playing X/Twitter media through capture listeners on the document and
+    observed open shadow roots, so busy feeds attach without waiting for
+    idle mutation processing; removes those listeners on stop/root pruning;
+    other sites retain deferred insertion so page player handlers finish first;
     existing and late-created open shadow roots (guarded `attachShadow` hook);
     deferred `style`/`class` watching; document-replace detection.
 - `site-handlers/` — `base-handler` + per-site (`netflix`, `youtube`, …),
@@ -171,6 +179,24 @@ with direct `chrome.*` access.
   re-stamps this all-false object when a bare key is re-recorded for these
   actions (`SHIFT_EXCLUSIVE_ACTIONS` in `options.js`), so re-recording can't
   silently downgrade them to a shift-catching simple binding.
+- **Controller recovery**: site DOM churn may remove the overlay while leaving
+  its media connected. Mutation reconciliation and media rediscovery call
+  `VideoController.repairDOMPlacement()` to reinsert the same wrapper, preserving
+  position, visibility and listeners. Detached media is disposed instead. Each
+  document owns only its own media; YouTube embeds use their own `all_frames`
+  instance, never a parent controller.
+- **Rate state**: cooldown, fight count and timers are per-media in
+  `EventManager.mediaRateStates`. Arm cooldown before writing `playbackRate`;
+  synchronous ratechange must not recurse. `VideoController.remove()` releases
+  that media's state; manager cleanup cancels every remaining timer.
+- **Mutation budget**: deferred work coalesces repeated target/attribute records
+  and walks overlapping subtrees once with TreeWalker, including open roots.
+  Slices yield after 4ms or 500 work units, with a 50ms continuation timeout.
+  Individual browser operations can exceed the time budget; report measured
+  `mutationStats.maxSliceMs`, not an assumed guarantee. Removals and document
+  replacement remain explicit work. Stop clears records, walkers and repair
+  iterators. Style/class changes only recheck known media, never scan arbitrary
+  page subtrees. Do not introduce polling for discovery or repair.
 - **Performance guards**: prefer `scheduleDeferredWork`/`requestIdleCallback`;
   idle callbacks use a bounded timeout so busy pages cannot stall startup; don't
   watch `style`/`class` mutations until the first media element exists
@@ -206,6 +232,9 @@ npm test               # full vitest suite (unit + integration)
 npm run test:unit      # unit only
 npm run test:integration
 npm run test:e2e       # builds, then Puppeteer E2E (needs Chrome)
+npm run test:e2e:isolated # release build, disposable macOS Chrome fixtures + live YouTube
+npm run test:e2e:browsers # deterministic Chrome + Firefox regression matrix
+npm run test:performance # paired enabled/disabled Chrome measurements
 npm run lint           # eslint src + tests
 npm run format         # prettier write
 ```
@@ -228,8 +257,47 @@ A change is done when **all** of the following hold:
 5. Docs are updated and accurate — this file when architecture/invariants change,
    `README.md` for user-facing behavior.
 
+### Browser verification for media/controller changes
+
+Changes to media discovery, controller insertion, readiness-event ordering,
+shortcuts, or lifecycle must be exercised in the real built extension before
+claiming a fix. Passing jsdom tests or building successfully is not browser
+verification. Keep early readiness recovery scoped to X/Twitter; other sites,
+especially YouTube/Polymer, must retain deferred controller insertion.
+
+On macOS, run `npm run test:e2e:isolated` (or append `-- basic` / `-- youtube`
+for a focused run) using the `chrome-extension-test-runner` skill. The default
+runner path is under `~/.codex/skills`; `STAYFAST_CHROME_RUNNER` can override it.
+If sandbox restrictions block localhost/CDP, request narrowly scoped escalation
+for this disposable browser QA through the normal approval mechanism. This repo
+authorizes that verification; do not change the user's browser profile or bypass
+an approval rejection.
+For the full hardening matrix, use
+`node tests/e2e/run-isolated.js fixtures benchmarks youtube`. This builds browser
+resources, runs both fixture browsers, records performance evidence, then tests
+live YouTube. Firefox requires `npx puppeteer browsers install firefox` or a
+`FIREFOX_BIN` runtime. Install disposable test runtimes in `/tmp` when needed.
+Batch browser work in this reusable command and reuse its scoped approval when
+available. Do not interrupt the user with separate permission requests for each
+read, screenshot, click, or diagnostic step within the authorized QA run.
+
+Verify the reported failure and neighboring behavior: newly loaded feed videos
+with older controlled media present; actual YouTube playback, buttons, shortcut
+keys, and navigation to another video. Check playbackRate and controller state,
+inspect a screenshot, and record any page errors. Uncaught page errors fail
+the active runtime check; network/ad console diagnostics alone do not. Use genuine browser clicks and
+keystrokes for interaction checks, not only dispatched events or `.click()` in
+page JavaScript. Do not count skipped assertions or unavailable playback as a
+pass. Label local fixtures and live-site checks separately in the final report.
+
+Close each disposable browser through `Browser.close`, verify its owned
+process tree exited, then remove its profile. If a required runtime check remains
+blocked, report the exact blocker and leave browser verification incomplete;
+do not present the change as a verified fix.
+
 CI (`.github/workflows/ci.yml`) runs audit → lint → Chrome/Firefox release builds
-→ test → Chrome/Firefox packages → local-fixture Chrome E2E on pushes/PRs to
+→ test → Chrome/Firefox deterministic fixtures → Chrome/Firefox packages
+→ local-fixture Chrome E2E on pushes/PRs to
 `main`. Keep the branch list in sync with the default branch.
 
 ## Codex usage — context-window efficiency

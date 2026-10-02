@@ -9,7 +9,12 @@ class EventManager {
     this.config = config;
     this.actionHandler = actionHandler;
     this.listeners = new Map();
-    this.coolDown = false;
+
+    // Cooldown and fight detection belong to one media element. A page can
+    // host several controlled players, and a write to one must not suppress or
+    // advance fight-back state for another. A Map is used instead of a WeakMap
+    // so teardown can explicitly cancel every outstanding timer.
+    this.mediaRateStates = new Map();
 
     // Event deduplication to prevent duplicate key processing
     this.lastKeyEventSignature = null;
@@ -18,10 +23,6 @@ class EventManager {
     // also react to the corresponding keypress/keyup. Follow-up events are
     // swallowed without running the VSC action a second time.
     this.claimedShortcutFollowups = new Map();
-
-    // Fight detection: track how many times a site resets our speed
-    this.fightCount = 0;
-    this.fightTimer = null;
 
     // User gesture tracking: timestamp of the last user interaction we did NOT
     // handle (click on page UI, unhandled key). A ratechange arriving within
@@ -627,7 +628,9 @@ class EventManager {
       return;
     }
 
-    if (this.coolDown) {
+    const mediaRateState = this.getMediaRateState(video);
+
+    if (mediaRateState?.coolDown) {
       window.VSC.logger.debug('Rate change event blocked by cooldown');
 
       // Don't fight back during video initialization — the player's own setup
@@ -704,11 +707,8 @@ class EventManager {
           `Accepting site speed change as user-intentional (gesture ${timeSinceGesture}ms ago): ${video.playbackRate}`
         );
 
-        this.fightCount = 0;
-
-        if (this.fightTimer) {
-          clearTimeout(this.fightTimer);
-          this.fightTimer = null;
+        if (mediaRateState) {
+          this.clearFightState(mediaRateState);
         }
 
         this.lastUserInteractionAt = 0;
@@ -720,41 +720,48 @@ class EventManager {
         return;
       }
 
-      this.fightCount++;
+      const fightState = this.getOrCreateMediaRateState(video);
+      fightState.fightCount++;
 
       // Reset fight count after a quiet period
-      if (this.fightTimer) {
-        clearTimeout(this.fightTimer);
+      if (fightState.fightTimer) {
+        clearTimeout(fightState.fightTimer);
       }
 
-      this.fightTimer = setTimeout(() => {
-        this.fightCount = 0;
-        this.fightTimer = null;
+      fightState.fightTimer = setTimeout(() => {
+        if (this.getMediaRateState(video) !== fightState) {
+          return;
+        }
+
+        fightState.fightCount = 0;
+        fightState.fightTimer = null;
       }, EventManager.FIGHT_WINDOW_MS);
 
-      if (this.fightCount >= EventManager.MAX_FIGHT_COUNT) {
+      if (fightState.fightCount >= EventManager.MAX_FIGHT_COUNT) {
         // Surrender — accept the site's speed
         window.VSC.logger.info(
-          `Fight detection: surrendering after ${this.fightCount} resets. Accepting site speed ${video.playbackRate}`
+          `Fight detection: surrendering after ${fightState.fightCount} resets. Accepting site speed ${video.playbackRate}`
         );
 
-        this.fightCount = 0;
+        fightState.fightCount = 0;
 
         // Fall through to accept the external change below
       } else {
         // Fight back — restore our speed with exponential backoff
         const cooldown = Math.min(
-          EventManager.BASE_COOLDOWN_MS * Math.pow(2, this.fightCount - 1),
+          EventManager.BASE_COOLDOWN_MS * Math.pow(2, fightState.fightCount - 1),
           EventManager.MAX_COOLDOWN_MS
         );
 
         window.VSC.logger.info(
-          `Fight detection: attempt ${this.fightCount}/${EventManager.MAX_FIGHT_COUNT}, re-applying ${authoritativeSpeed} (cooldown ${cooldown}ms)`
+          `Fight detection: attempt ${fightState.fightCount}/${EventManager.MAX_FIGHT_COUNT}, re-applying ${authoritativeSpeed} (cooldown ${cooldown}ms)`
         );
 
+        // Arm this media's cooldown before writing playbackRate. Native
+        // ratechange dispatch is synchronous in some players, so doing this
+        // afterward can recursively re-enter fight detection.
+        this.refreshCoolDown(video, cooldown);
         window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
-
-        this.refreshCoolDown(cooldown);
         event.stopImmediatePropagation();
 
         return;
@@ -769,20 +776,95 @@ class EventManager {
   }
 
   /**
-   * Start cooldown period to prevent event spam
+   * Return existing rate-change state for a media element.
+   * This read-only lookup intentionally does not retain unknown media.
+   * @param {HTMLMediaElement} video
+   * @returns {{coolDown: *|false, fightCount: number, fightTimer: *|null}|null}
    */
-  refreshCoolDown(duration = EventManager.BASE_COOLDOWN_MS) {
-    window.VSC.logger.debug(`Begin refreshCoolDown (${duration}ms)`);
+  getMediaRateState(video) {
+    return this.mediaRateStates.get(video) || null;
+  }
 
-    if (this.coolDown) {
-      clearTimeout(this.coolDown);
+  /**
+   * Return rate-change state for a media element, creating it when needed.
+   * @param {HTMLMediaElement} video
+   * @private
+   */
+  getOrCreateMediaRateState(video) {
+    let state = this.getMediaRateState(video);
+
+    if (!state) {
+      state = {
+        coolDown: false,
+        fightCount: 0,
+        fightTimer: null,
+      };
+      this.mediaRateStates.set(video, state);
     }
 
-    this.coolDown = setTimeout(() => {
-      this.coolDown = false;
+    return state;
+  }
+
+  /**
+   * Clear fight tracking while preserving an active cooldown.
+   * @param {{fightCount: number, fightTimer: *|null}} state
+   * @private
+   */
+  clearFightState(state) {
+    if (state.fightTimer) {
+      clearTimeout(state.fightTimer);
+      state.fightTimer = null;
+    }
+
+    state.fightCount = 0;
+  }
+
+  /**
+   * Start this media element's cooldown period to prevent event spam.
+   * @param {HTMLMediaElement} video
+   * @param {number} duration
+   */
+  refreshCoolDown(video, duration = EventManager.BASE_COOLDOWN_MS) {
+    if (!video) {
+      window.VSC.logger.warn('refreshCoolDown called without a media element');
+      return;
+    }
+
+    window.VSC.logger.debug(`Begin refreshCoolDown (${duration}ms)`);
+
+    const state = this.getOrCreateMediaRateState(video);
+
+    if (state.coolDown) {
+      clearTimeout(state.coolDown);
+    }
+
+    state.coolDown = setTimeout(() => {
+      if (this.getMediaRateState(video) === state) {
+        state.coolDown = false;
+      }
     }, duration);
 
     window.VSC.logger.debug('End refreshCoolDown');
+  }
+
+  /**
+   * Release timers and state retained for a removed media element.
+   * @param {HTMLMediaElement} video
+   */
+  releaseMediaState(video) {
+    const state = this.getMediaRateState(video);
+
+    if (!state) {
+      return;
+    }
+
+    if (state.coolDown) {
+      clearTimeout(state.coolDown);
+      state.coolDown = false;
+    }
+
+    this.clearFightState(state);
+    this.mediaRateStates.delete(video);
   }
 
   /**
@@ -802,17 +884,9 @@ class EventManager {
     this.listeners.clear();
     this.claimedShortcutFollowups.clear();
 
-    if (this.coolDown) {
-      clearTimeout(this.coolDown);
-      this.coolDown = false;
+    for (const video of this.mediaRateStates.keys()) {
+      this.releaseMediaState(video);
     }
-
-    if (this.fightTimer) {
-      clearTimeout(this.fightTimer);
-      this.fightTimer = null;
-    }
-
-    this.fightCount = 0;
 
     // Reset keypress-rescan state (teardown discipline). Reset to NEVER_RESCANNED
     // so the first rescan after a re-init is never throttled away (see constructor).

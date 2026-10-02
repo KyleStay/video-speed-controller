@@ -1,6 +1,6 @@
 {
   "name": "video-speed-controller",
-  "version": "0.10.3",
+  "version": "0.11.2",
   "description": "Speed up, slow down, advance and rewind HTML5 audio/video with shortcuts",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "test:unit": "vitest run tests/unit/",
     "test:integration": "vitest run tests/integration/",
     "test:e2e": "npm run build && node tests/e2e/run-e2e.js",
+    "test:e2e:isolated": "npm run build:release && node tests/e2e/run-isolated.js",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "serve": "python3 -m http.server 8000",
@@ -33,7 +34,9 @@
     "package:firefox": "node scripts/package-release.js --browser=firefox",
     "release:github": "node scripts/github-release.js",
     "clean": "node scripts/clean.mjs dist release",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:e2e:browsers": "npm run build:release:browsers && node tests/e2e/run-browser-fixtures.js all",
+    "test:performance": "npm run build:release:browsers && node tests/e2e/run-performance-benchmark.js"
   },
   "lint-staged": {
     "*.js": [

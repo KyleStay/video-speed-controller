@@ -311,8 +311,11 @@ describe('MutationObserver', () => {
 
     idleCallbacks[0]();
 
-    expect(observer.processMutations).toHaveBeenCalledOnce();
-    expect(observer.processMutations).toHaveBeenCalledWith([firstMutation, secondMutation]);
+    expect(observer.processMutations.mock.calls.flatMap(([records]) => records)).toEqual([
+      firstMutation,
+      secondMutation,
+    ]);
+    expect(observer.getPendingWorkCount()).toBe(0);
 
     window.requestIdleCallback = originalRequestIdleCallback;
   });

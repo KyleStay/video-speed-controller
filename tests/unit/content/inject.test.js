@@ -1076,4 +1076,14 @@ describe('Inject', () => {
     extension.eventManager = null;
     extension.eventListenersInitialized = false;
   });
+  it('leaves foreign-document media to its own frame instance', () => {
+    extension = window.VSC_controller;
+    const foreign = document.implementation.createHTMLDocument('child');
+    const video = foreign.createElement('video');
+    foreign.body.append(video);
+    extension.onVideoFound(video, foreign.body);
+    expect(video.vsc).toBeUndefined();
+    expect(video._vscPendingAttachment).toBeUndefined();
+    expect(new window.VSC.YouTubeHandler().detectSpecialVideos(document)).toEqual([]);
+  });
 });
