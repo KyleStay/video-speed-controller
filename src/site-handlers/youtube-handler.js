@@ -80,28 +80,9 @@ class YouTubeHandler extends window.VSC.BaseSiteHandler {
    * @param {Document} document - Document object
    * @returns {Array<HTMLMediaElement>} Additional videos found
    */
-  detectSpecialVideos(document) {
-    const videos = [];
-
-    // Look for videos in iframes (embedded players)
-    try {
-      const iframes = document.querySelectorAll('iframe[src*="youtube.com"]');
-      iframes.forEach((iframe) => {
-        try {
-          const iframeDoc = iframe.contentDocument;
-          if (iframeDoc) {
-            const iframeVideos = iframeDoc.querySelectorAll('video');
-            videos.push(...Array.from(iframeVideos));
-          }
-        } catch {
-          // Cross-origin iframe, ignore
-        }
-      });
-    } catch (e) {
-      window.VSC.logger.debug(`Could not access YouTube iframe videos: ${e.message}`);
-    }
-
-    return videos;
+  detectSpecialVideos(_document) {
+    // Each embedded player is discovered by its own all_frames instance.
+    return [];
   }
 }
 

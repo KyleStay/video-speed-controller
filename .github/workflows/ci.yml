@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 jobs:
   build-and-test:
@@ -26,6 +26,19 @@ jobs:
       - run: npm run lint
       - run: npm run build:release:browsers
       - run: npm test
+      - run: xvfb-run -a node tests/e2e/run-browser-fixtures.js chrome
+      - run: mkdir -p test-results && xvfb-run -a node tests/e2e/run-performance-benchmark.js
+        env:
+          STAYFAST_BENCHMARK_OUTPUT: test-results/performance.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stayfast-performance-node-${{ matrix.node-version }}
+          path: test-results/performance.json
+          if-no-files-found: warn
+          retention-days: 7
+      - run: npx puppeteer browsers install firefox
+      - run: node tests/e2e/run-browser-fixtures.js firefox
       - run: node scripts/package-release.js --all
       - run: xvfb-run -a npm run test:e2e -- basic
 

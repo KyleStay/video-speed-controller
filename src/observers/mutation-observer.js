@@ -15,6 +15,21 @@ class VideoMutationObserver {
     this.observedDocument = null;
     this.shadowObservers = new Map();
     this.pendingMutations = [];
+    this.pendingMutationIndex = 0;
+    this.pendingWalks = [];
+    this.pendingRepairs = null;
+    this.needsControllerReconciliation = false;
+    this.pendingAttributeTargets = new Map();
+    this.scannedAdded = new WeakSet();
+    this.scannedRemoved = new WeakSet();
+    this.mutationStats = {
+      queued: 0,
+      processed: 0,
+      coalesced: 0,
+      slices: 0,
+      maxSliceMs: 0,
+      maxQueueSize: 0,
+    };
     this.mutationCallbackScheduled = false;
     this.mutationCallbackId = null;
     this.mutationCallbackType = null;
@@ -26,6 +41,26 @@ class VideoMutationObserver {
     this.attachShadowPrototype = null;
     this.originalAttachShadow = null;
     this.attachShadowWrapper = null;
+    this.mediaReadyHandler = (event) => {
+      const media = event.target;
+      if (
+        !this.active ||
+        !media?.isConnected ||
+        media.ownerDocument !== this.observedDocument ||
+        media.vsc ||
+        media.readyState < 2 ||
+        !(
+          media.tagName === 'VIDEO' ||
+          (media.tagName === 'AUDIO' && this.config.settings.audioBoolean)
+        )
+      ) {
+        return;
+      }
+      // Infinite-scroll players can become ready before their queued DOM
+      // mutations run. Discover just this media, even with older controllers
+      // present, without rescanning the feed or waiting for an idle slot.
+      this.onVideoFound(media, media.parentElement || media.parentNode);
+    };
   }
 
   /**
@@ -40,8 +75,27 @@ class VideoMutationObserver {
     });
 
     this.observer.observe(document, this.buildObserverOptions());
+    this.listenForReadyMedia(document);
     this.setupAttachShadowHook();
     window.VSC.logger.debug('Video mutation observer started');
+  }
+
+  /** Capture non-bubbling media readiness events on a document or shadow root. */
+  listenForReadyMedia(root) {
+    // Feed recovery must not change readiness-event ordering on other sites.
+    // YouTube/Polymer needs its player handlers to finish before DOM insertion.
+    if (!window.VSC.EventManager.isTwitterHost(window.location.hostname)) {
+      return;
+    }
+    for (const type of VideoMutationObserver.MEDIA_READY_EVENTS) {
+      root.addEventListener(type, this.mediaReadyHandler, true);
+    }
+  }
+
+  unlistenForReadyMedia(root) {
+    for (const type of VideoMutationObserver.MEDIA_READY_EVENTS) {
+      root.removeEventListener(type, this.mediaReadyHandler, true);
+    }
   }
 
   /**
@@ -122,33 +176,224 @@ class VideoMutationObserver {
     if (!this.active || typeof window === 'undefined') {
       return;
     }
+    for (const mutation of mutations) {
+      if (mutation.type === 'attributes') {
+        let names = this.pendingAttributeTargets.get(mutation.target);
+        if (!names) {
+          names = new Set();
+          this.pendingAttributeTargets.set(mutation.target, names);
+        }
+        if (names.has(mutation.attributeName)) {
+          this.mutationStats.coalesced++;
+          continue;
+        }
+        names.add(mutation.attributeName);
+      }
+      this.pendingMutations.push(mutation);
+      this.mutationStats.queued++;
+    }
+    this.mutationStats.maxQueueSize = Math.max(
+      this.mutationStats.maxQueueSize,
+      this.getPendingWorkCount()
+    );
+    this.scheduleSlice(false);
+  }
 
-    this.pendingMutations.push(...mutations);
+  getPendingWorkCount() {
+    return (
+      this.pendingMutations.length -
+      this.pendingMutationIndex +
+      this.pendingWalks.length +
+      (this.pendingRepairs || this.needsControllerReconciliation ? 1 : 0)
+    );
+  }
 
-    if (this.mutationCallbackScheduled) {
+  scheduleSlice(continuation) {
+    if (
+      !this.active ||
+      typeof window === 'undefined' ||
+      this.mutationCallbackScheduled ||
+      !this.getPendingWorkCount()
+    ) {
       return;
     }
-
     this.mutationCallbackScheduled = true;
     const callback = () => {
       this.mutationCallbackId = null;
       this.mutationCallbackType = null;
       this.mutationCallbackScheduled = false;
-      if (!this.active || typeof window === 'undefined') {
-        this.pendingMutations = [];
-        return;
-      }
-      const queuedMutations = this.pendingMutations;
-      this.pendingMutations = [];
-      this.processMutations(queuedMutations);
+      this.drainSlice();
     };
-
-    if (typeof window !== 'undefined' && window.requestIdleCallback) {
+    if (window.requestIdleCallback) {
       this.mutationCallbackType = 'idle';
-      this.mutationCallbackId = window.requestIdleCallback(callback, { timeout: 1500 });
+      this.mutationCallbackId = window.requestIdleCallback(callback, {
+        timeout: continuation ? 50 : 1500,
+      });
     } else {
       this.mutationCallbackType = 'timer';
-      this.mutationCallbackId = setTimeout(callback, 100);
+      this.mutationCallbackId = setTimeout(callback, continuation ? 0 : 100);
+    }
+  }
+
+  drainSlice() {
+    if (!this.active || typeof window === 'undefined') {
+      return;
+    }
+    const started = performance.now();
+    let units = 0;
+    this.deferSubtreeTraversal = true;
+    this.visibilityChecked = new Set();
+    try {
+      while (this.active && this.getPendingWorkCount() && units++ < 500) {
+        if (units > 1 && performance.now() - started >= 4) {
+          break;
+        }
+        try {
+          if (this.pendingMutationIndex < this.pendingMutations.length) {
+            const mutation = this.pendingMutations[this.pendingMutationIndex];
+            this.pendingMutations[this.pendingMutationIndex++] = null;
+            if (mutation.type === 'attributes') {
+              const names = this.pendingAttributeTargets.get(mutation.target);
+              names?.delete(mutation.attributeName);
+              if (names?.size === 0) {
+                this.pendingAttributeTargets.delete(mutation.target);
+              }
+            }
+            this.processMutations([mutation]);
+            this.mutationStats.processed++;
+          } else if (this.needsControllerReconciliation || this.pendingRepairs) {
+            if (this.needsControllerReconciliation) {
+              this.needsControllerReconciliation = false;
+              this.pendingRepairs =
+                window.VSC.stateManager?.controllers?.values() || [][Symbol.iterator]();
+            }
+            const next = this.pendingRepairs.next();
+            if (next.done) {
+              this.pendingRepairs = null;
+            } else {
+              this.reconcileController(next.value);
+            }
+          } else {
+            const job = this.pendingWalks[this.pendingWalks.length - 1];
+            if (!this.stepWalk(job)) {
+              this.pendingWalks.pop();
+            }
+          }
+        } catch (error) {
+          window.VSC.logger.warn(`Mutation work failed: ${error.message}`);
+        }
+      }
+    } finally {
+      this.deferSubtreeTraversal = false;
+      this.visibilityChecked = null;
+      this.mutationStats.slices++;
+      this.mutationStats.maxSliceMs = Math.max(
+        this.mutationStats.maxSliceMs,
+        performance.now() - started
+      );
+    }
+    // Release processed records even when subtree work spans many slices.
+    if (this.pendingMutationIndex === this.pendingMutations.length) {
+      this.pendingMutations = [];
+      this.pendingMutationIndex = 0;
+    }
+    if (!this.getPendingWorkCount()) {
+      this.pendingAttributeTargets.clear();
+      this.scannedAdded = new WeakSet();
+      this.scannedRemoved = new WeakSet();
+    }
+    this.scheduleSlice(true);
+  }
+
+  createWalk(node, parent, added, depth = 0) {
+    const seen = added ? this.scannedAdded : this.scannedRemoved;
+    if (seen.has(node)) {
+      return null;
+    }
+    const walker = (node.ownerDocument || document).createTreeWalker(
+      node,
+      NodeFilter.SHOW_ELEMENT,
+      {
+        acceptNode: (candidate) =>
+          seen.has(candidate) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+      }
+    );
+    return { walker, next: node, parent, added, depth, seen };
+  }
+
+  stepWalk(job) {
+    if (job.mutation) {
+      const mutation = job.mutation;
+      const added = job.addedIndex < mutation.addedNodes.length;
+      const node = added
+        ? mutation.addedNodes[job.addedIndex++]
+        : mutation.removedNodes[job.removedIndex++];
+      if (!node) {
+        return false;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        this.checkForVideoAndShadowRoot(node, node.parentNode || mutation.target, added);
+      }
+      return true;
+    }
+    const node = job.next;
+    if (!node) {
+      return false;
+    }
+    if (job.seen.has(node)) {
+      // Another queued subtree may have covered this node while this walker
+      // yielded. Continue to its siblings; dropping the walker loses media.
+      job.next = job.walker.nextNode();
+      return Boolean(job.next);
+    }
+    job.seen.add(node);
+    // Advance before callbacks can move/remove the current node.
+    job.next = job.walker.nextNode();
+    if (!job.added && node.isConnected && node.ownerDocument === document) {
+      return Boolean(job.next);
+    }
+    if (node.shadowRoot && job.depth < 10 && node.tagName !== 'VSC-CONTROLLER') {
+      if (job.added) {
+        this.observeShadowRoot(node.shadowRoot);
+      }
+      const shadowJob = this.createWalk(node.shadowRoot, node, job.added, job.depth + 1);
+      if (shadowJob) {
+        this.pendingWalks.unshift(shadowJob);
+      }
+    }
+    if (
+      node.nodeName === 'VIDEO' ||
+      (node.nodeName === 'AUDIO' && this.config.settings.audioBoolean)
+    ) {
+      if (job.added) {
+        this.onVideoFound(node, node.parentNode || job.parent);
+      } else {
+        this.onVideoRemoved(node);
+      }
+    }
+    return Boolean(job.next);
+  }
+
+  reconcileController(info) {
+    const controller = info.controller;
+    const video = controller?.video || info.element;
+    if (video?.ownerDocument !== document) {
+      return;
+    }
+    if (video.isConnected) {
+      controller?.repairDOMPlacement?.();
+    } else {
+      this.onVideoRemoved(video);
+    }
+  }
+
+  reconcileControllers() {
+    for (const info of window.VSC.stateManager?.controllers?.values() || []) {
+      try {
+        this.reconcileController(info);
+      } catch (error) {
+        window.VSC.logger.warn(`Controller recovery failed: ${error.message}`);
+      }
     }
   }
 
@@ -163,6 +408,7 @@ class VideoMutationObserver {
     }
 
     let sawRemoval = false;
+    let sawChildren = false;
     for (const mutation of mutations) {
       // A document replacement (handled below) tears this observer down
       // mid-batch; bail out so we don't keep operating on stale state.
@@ -171,6 +417,7 @@ class VideoMutationObserver {
       }
       switch (mutation.type) {
         case 'childList':
+          sawChildren = true;
           if (mutation.removedNodes && mutation.removedNodes.length > 0) {
             sawRemoval = true;
           }
@@ -179,6 +426,14 @@ class VideoMutationObserver {
         case 'attributes':
           this.processAttributeMutation(mutation);
           break;
+      }
+    }
+
+    if (sawChildren && this.active) {
+      if (this.deferSubtreeTraversal) {
+        this.needsControllerReconciliation = true;
+      } else {
+        this.reconcileControllers();
       }
     }
 
@@ -196,6 +451,15 @@ class VideoMutationObserver {
    * @private
    */
   processChildListMutation(mutation) {
+    if (this.deferSubtreeTraversal) {
+      // Document replacement takes precedence over traversing any stale subtrees.
+      if (Array.prototype.includes.call(mutation.addedNodes, document.documentElement)) {
+        this.onDocumentReplaced();
+      } else {
+        this.pendingWalks.push({ mutation, addedIndex: 0, removedIndex: 0 });
+      }
+      return;
+    }
     // Handle added nodes
     mutation.addedNodes.forEach((node) => {
       // A prior node in this batch may have triggered a document-replacement
@@ -292,7 +556,7 @@ class VideoMutationObserver {
           .filter((video) => video === element || this.isShadowIncludingAncestor(element, video))
       : [];
 
-    if (videos.length === 0 && !this.nodeMayContainMedia(element)) {
+    if (videos.length === 0) {
       return;
     }
 
@@ -325,6 +589,10 @@ class VideoMutationObserver {
    * @private
    */
   recheckVideoElement(video) {
+    if (this.visibilityChecked?.has(video)) {
+      return;
+    }
+    this.visibilityChecked?.add(video);
     if (!this.mediaObserver) {
       return;
     }
@@ -337,6 +605,7 @@ class VideoMutationObserver {
         video.vsc = null;
       } else {
         // Video is still valid, update visibility based on current state
+        video.vsc.repairDOMPlacement?.();
         video.vsc.updateVisibility();
       }
     } else {
@@ -356,92 +625,36 @@ class VideoMutationObserver {
    * @private
    */
   checkForVideoAndShadowRoot(node, parent, added) {
-    // Only proceed with removal if node is missing from DOM
-    if (!added && document.body?.contains(node)) {
+    if (!added && node.isConnected && node.ownerDocument === document) {
       return;
     }
-
-    if (
-      node.nodeName === 'VIDEO' ||
-      (node.nodeName === 'AUDIO' && this.config.settings.audioBoolean)
-    ) {
-      if (added) {
-        this.onVideoFound(node, parent);
-      } else {
-        // Unloaded media may only have a pending attachment. Always notify
-        // removal so its listeners and strong pending-set reference are freed.
-        this.onVideoRemoved(node);
-      }
+    const job = this.createWalk(node, parent, added);
+    if (!job) {
+      return;
+    }
+    if (this.deferSubtreeTraversal) {
+      this.pendingWalks.push(job);
     } else {
-      this.processNodeChildren(node, parent, added);
+      // Direct callers retain synchronous semantics without retaining their nodes.
+      const previous = this.pendingWalks;
+      this.pendingWalks = [job];
+      try {
+        while (this.active && this.pendingWalks.length) {
+          const current = this.pendingWalks[this.pendingWalks.length - 1];
+          if (!this.stepWalk(current)) {
+            this.pendingWalks.pop();
+          }
+        }
+      } finally {
+        this.pendingWalks = previous;
+        this.scannedAdded = new WeakSet();
+        this.scannedRemoved = new WeakSet();
+      }
     }
   }
 
-  /**
-   * Process children of a node recursively
-   * @param {Node} node - Node to process
-   * @param {Node} parent - Parent node
-   * @param {boolean} added - True if node was added
-   * @private
-   */
   processNodeChildren(node, parent, added) {
-    if (!this.nodeMayContainMedia(node) && !this.nodeContainsShadowHost(node)) {
-      return;
-    }
-
-    let children = [];
-
-    // Handle shadow DOM
-    if (node.shadowRoot) {
-      this.observeShadowRoot(node.shadowRoot);
-      children = Array.from(node.shadowRoot.children);
-    }
-
-    // Handle regular children
-    if (node.children) {
-      children = [...children, ...Array.from(node.children)];
-    }
-
-    // Process all children
-    for (const child of children) {
-      this.checkForVideoAndShadowRoot(child, child.parentNode || parent, added);
-    }
-  }
-
-  /**
-   * Fast preflight for expensive subtree walks.
-   * @param {Node} node - Candidate node
-   * @returns {boolean} True when node or descendants might include media
-   * @private
-   */
-  nodeMayContainMedia(node) {
-    if (!node || node.nodeType !== Node.ELEMENT_NODE) {
-      return false;
-    }
-
-    const mediaSelector = this.config.settings.audioBoolean ? 'video,audio' : 'video';
-    if (node.matches?.(mediaSelector) || node.querySelector?.(mediaSelector)) {
-      return true;
-    }
-
-    if (node.shadowRoot) {
-      return true;
-    }
-
-    return Boolean(Array.from(node.children || []).some((child) => child.shadowRoot));
-  }
-
-  /**
-   * Added subtrees may wrap a custom player several light-DOM levels deep.
-   * Keep that bounded walk out of the style/class hot path.
-   * @param {Node} node - Added subtree root
-   * @returns {boolean}
-   * @private
-   */
-  nodeContainsShadowHost(node) {
-    return Boolean(
-      Array.from(node.querySelectorAll?.('*') || []).some((child) => child.shadowRoot)
-    );
+    this.checkForVideoAndShadowRoot(node, parent, added);
   }
 
   /**
@@ -468,7 +681,7 @@ class VideoMutationObserver {
    * @private
    */
   observeShadowRoot(shadowRoot) {
-    if (this.shadowObservers.has(shadowRoot)) {
+    if (shadowRoot.host?.tagName === 'VSC-CONTROLLER' || this.shadowObservers.has(shadowRoot)) {
       return; // Already observing
     }
 
@@ -477,6 +690,7 @@ class VideoMutationObserver {
     });
 
     shadowObserver.observe(shadowRoot, this.buildObserverOptions());
+    this.listenForReadyMedia(shadowRoot);
     this.shadowObservers.set(shadowRoot, shadowObserver);
 
     window.VSC.logger.debug('Shadow root observer added');
@@ -491,6 +705,7 @@ class VideoMutationObserver {
       const host = shadowRoot.host;
       if (!host || host.isConnected === false) {
         shadowObserver.disconnect();
+        this.unlistenForReadyMedia(shadowRoot);
         this.shadowObservers.delete(shadowRoot);
         window.VSC.logger.debug('Pruned shadow observer for detached host');
       }
@@ -516,6 +731,10 @@ class VideoMutationObserver {
    */
   stop() {
     this.active = false;
+    if (this.observedDocument) {
+      this.unlistenForReadyMedia(this.observedDocument);
+      this.observedDocument = null;
+    }
 
     if (
       this.attachShadowPrototype &&
@@ -544,16 +763,26 @@ class VideoMutationObserver {
     }
 
     // Clean up shadow observers
-    this.shadowObservers.forEach((shadowObserver) => {
+    this.shadowObservers.forEach((shadowObserver, shadowRoot) => {
       shadowObserver.disconnect();
+      this.unlistenForReadyMedia(shadowRoot);
     });
     this.shadowObservers.clear();
     this.pendingMutations = [];
+    this.pendingMutationIndex = 0;
+    this.pendingWalks = [];
+    this.pendingRepairs = null;
+    this.needsControllerReconciliation = false;
+    this.pendingAttributeTargets.clear();
+    this.scannedAdded = new WeakSet();
+    this.scannedRemoved = new WeakSet();
     this.mutationCallbackScheduled = false;
 
     window.VSC.logger.debug('Video mutation observer stopped');
   }
 }
+
+VideoMutationObserver.MEDIA_READY_EVENTS = ['loadeddata', 'canplay', 'play'];
 
 // Create singleton instance
 window.VSC.VideoMutationObserver = VideoMutationObserver;

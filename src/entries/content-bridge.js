@@ -25,6 +25,17 @@ let bridgeInitialized = false;
 let pendingLastSpeed = null;
 let lastSpeedWriteTimer = null;
 
+// Firefox denies page access to objects created in a content-script realm.
+// Clone only the already-filtered bridge payload into the page's realm; Chrome
+// uses its native CustomEvent transfer. Never expose extension APIs/functions.
+export function dispatchPageEvent(type, detail) {
+  const pageDetail =
+    typeof globalThis.cloneInto === 'function'
+      ? globalThis.cloneInto(detail, document.defaultView)
+      : detail;
+  bridgeEvents.dispatchEvent(new CustomEvent(type, { detail: pageDetail }));
+}
+
 async function loadSettingsPayload() {
   // Bounded fetch (not get(null)): this content script runs in every frame, so
   // we pull only the keys the controller actually uses instead of the whole
@@ -75,7 +86,7 @@ async function init() {
         console.error('[VSC] Settings bridge read failed:', error);
         payload = { abort: true };
       }
-      bridgeEvents.dispatchEvent(new CustomEvent('VSC_SETTINGS_READY', { detail: payload }));
+      dispatchPageEvent('VSC_SETTINGS_READY', payload);
     });
 
     // --- Ongoing: storage change relay + lifecycle ---
@@ -95,15 +106,11 @@ async function init() {
       // lifecycle — it only relays settings via VSC_STORAGE_CHANGED below.
       // siteRules/blacklist changes take effect on next page load.
       if (changes.enabled?.newValue === false) {
-        bridgeEvents.dispatchEvent(
-          new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_TEARDOWN' } })
-        );
+        dispatchPageEvent('VSC_MESSAGE', { type: 'VSC_TEARDOWN' });
         return;
       }
       if (changes.enabled?.oldValue === false && changes.enabled?.newValue !== false) {
-        bridgeEvents.dispatchEvent(
-          new CustomEvent('VSC_MESSAGE', { detail: { type: 'VSC_REINIT' } })
-        );
+        dispatchPageEvent('VSC_MESSAGE', { type: 'VSC_REINIT' });
       }
 
       // Relay changes to MAIN world (filter out keys MAIN never received)
@@ -111,9 +118,7 @@ async function init() {
       delete relayChanges.enabled;
       delete relayChanges.blacklist;
       if (Object.keys(relayChanges).length > 0) {
-        bridgeEvents.dispatchEvent(
-          new CustomEvent('VSC_STORAGE_CHANGED', { detail: relayChanges })
-        );
+        dispatchPageEvent('VSC_STORAGE_CHANGED', relayChanges);
       }
     });
 
@@ -159,7 +164,7 @@ async function init() {
       };
 
       bridgeEvents.addEventListener('VSC_MESSAGE_RESULT', handleResult);
-      bridgeEvents.dispatchEvent(new CustomEvent('VSC_MESSAGE', { detail: requestWithId }));
+      dispatchPageEvent('VSC_MESSAGE', requestWithId);
       return true;
     });
 

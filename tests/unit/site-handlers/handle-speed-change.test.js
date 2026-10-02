@@ -161,7 +161,7 @@ describe('handleSpeedChange', () => {
     const spy = vi.spyOn(manager, 'handleSpeedChange');
 
     // Activate cooldown first
-    eventManager.refreshCoolDown();
+    eventManager.refreshCoolDown(mockVideo);
 
     const mockEvent = {
       composedPath: () => [mockVideo],

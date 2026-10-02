@@ -30,6 +30,8 @@ advertising, analytics, or StayTech backend.
 
 Controls recover when a page replaces its document. Players inside open shadow
 DOM keep the speed indicator synchronized with native player speed changes.
+Videos loaded further down X/Twitter's infinite-scroll feeds get
+controls as soon as they become ready or start playing, even on busy pages.
 Speed changes following a real click or unhandled keypress are accepted as your
 choice. Programmatic clicks and keyboard events do not authorize a speed reset.
 
@@ -117,3 +119,23 @@ Licensed under the [MIT License](LICENSE).
 - Copyright © 2026 StayTech for modifications
 
 The StayFast Video product and branding are maintained by StayTech.
+
+### Reliability and performance verification
+
+StayFast repairs controls removed by a site's DOM updates using the existing
+controller, and each iframe controls its own media. Speed cooldown and reset
+fight state belong to each video independently. Large DOM changes are processed
+in bounded slices, with duplicate visibility updates and overlapping scans
+coalesced.
+
+Run `npm run test:e2e:browsers` for deterministic Chrome and Firefox coverage of
+feed discovery, SPA replacement, source changes, enable toggles, shadow DOM,
+controller repair and iframe ownership. Install Firefox with
+`npx puppeteer browsers install firefox`, or set `FIREFOX_BIN`.
+
+Run `npm run test:performance` for paired enabled/disabled Chrome workloads:
+media-less DOM churn, media feeds and frames. It records attachment latency,
+main-thread work, mutation queue/slice metrics, heap measurements and controller
+retention after teardown. Results describe the measured machine; compare repeated
+runs before setting performance budgets. Live YouTube verification is available
+through `npm run test:e2e:isolated` on macOS with the disposable test runner.

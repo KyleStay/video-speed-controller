@@ -553,3 +553,24 @@ describe('content-bridge', () => {
     });
   });
 });
+
+describe('Firefox page-realm payloads', () => {
+  it('clones filtered event payloads into the document realm without changing the protocol', async () => {
+    const { dispatchPageEvent } = await import('../../../src/entries/content-bridge.js');
+    const clone = vi.fn((value) => structuredClone(value));
+    vi.stubGlobal('cloneInto', clone);
+    const received = [];
+    const listener = (event) => received.push(event.detail);
+    document.documentElement.addEventListener('VSC_FIREFOX_TEST', listener);
+    try {
+      const payload = { settings: { lastSpeed: 1.5 }, hostname: 'example.com' };
+      dispatchPageEvent('VSC_FIREFOX_TEST', payload);
+      expect(clone).toHaveBeenCalledExactlyOnceWith(payload, document.defaultView);
+      expect(received).toEqual([payload]);
+      expect(received[0]).not.toBe(payload);
+    } finally {
+      document.documentElement.removeEventListener('VSC_FIREFOX_TEST', listener);
+      vi.unstubAllGlobals();
+    }
+  });
+});
