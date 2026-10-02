@@ -192,8 +192,9 @@ with direct `chrome.*` access.
 - **Mutation budget**: deferred work coalesces repeated target/attribute records
   and deduplicates overlapping subtrees per mutation delivery with TreeWalker,
   including open roots. Later deliveries must rediscover reinserted media even
-  while old work remains queued. A removed/reparented paused cursor restarts
-  traversal at its root, skipping visited elements but entering their children.
+  while old work remains queued. Removing/reordering a paused cursor or its
+  ancestor restarts traversal at its root. Visited elements still consume a
+  work unit during recovery; do not skip them in an unbounded TreeWalker filter.
   Slices yield after 4ms or 500 work units, with a 50ms continuation timeout.
   Individual browser operations can exceed the time budget; report measured
   `mutationStats.maxSliceMs`, not an assumed guarantee. Removals and document
