@@ -370,6 +370,8 @@ class VideoController {
 
     // Insert into DOM FIRST — position calculation needs the wrapper in the DOM
     this.insertIntoDOM(document, wrapper);
+    this.insertionParent = wrapper.parentNode;
+    this.mediaParentAncestor = this.parent?.parentNode;
 
     // THEN compute position based on actual DOM state.
     // If a CSS override sets the wrapper to position:relative (e.g. YouTube, Netflix),
@@ -443,6 +445,35 @@ class VideoController {
     }
 
     window.VSC.logger.error('Unable to insert controller: no valid insertion point or parent');
+  }
+
+  /** Restore a removed/moved overlay without recreating its state or listeners. */
+  repairDOMPlacement() {
+    if (this.disposed || !this.div || !this.video.isConnected) {
+      return false;
+    }
+    const parent = this.video.parentElement || this.video.parentNode;
+    if (!parent) {
+      return false;
+    }
+    if (
+      this.div.isConnected &&
+      this.parent === parent &&
+      this.mediaParentAncestor === parent.parentNode &&
+      this.div.parentNode === this.insertionParent
+    ) {
+      return false;
+    }
+    try {
+      this.parent = parent;
+      this.insertIntoDOM(this.video.ownerDocument, this.div);
+      this.insertionParent = this.div.parentNode;
+      this.mediaParentAncestor = parent.parentNode;
+      return this.div.isConnected;
+    } catch (error) {
+      window.VSC.logger.warn(`Controller placement recovery failed: ${error.message}`);
+      return false;
+    }
   }
 
   /**
@@ -519,6 +550,7 @@ class VideoController {
    */
   remove() {
     window.VSC.logger.debug('Removing VideoController');
+    this.actionHandler?.eventManager?.releaseMediaState?.(this.video);
 
     // Remove DOM element
     if (this.div?.flashTimer !== undefined) {

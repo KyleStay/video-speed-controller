@@ -10,6 +10,16 @@ import {
   resetMockStorage,
 } from '../../helpers/chrome-mock.js';
 import { createMockVideo } from '../../helpers/test-utils.js';
+
+function endMediaCooldown(eventManager, video) {
+  const state = eventManager.getMediaRateState(video);
+
+  if (state?.coolDown) {
+    clearTimeout(state.coolDown);
+    state.coolDown = false;
+  }
+}
+
 describe('EventManager', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -22,14 +32,14 @@ describe('EventManager', () => {
     cleanupChromeMock();
   });
 
-  it('EventManager should initialize with cooldown disabled', async () => {
+  it('EventManager should initialize without retained media rate state', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
 
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    expect(eventManager.coolDown).toBe(false);
+    expect(eventManager.mediaRateStates.size).toBe(0);
   });
 
   it('handleKeydown takes the no-media fast path for a non-VSC key before building a signature (P5)', async () => {
@@ -72,11 +82,12 @@ describe('EventManager', () => {
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    expect(eventManager.coolDown).toBe(false);
+    const video = createMockVideo();
+    expect(eventManager.getMediaRateState(video)).toBeNull();
 
-    eventManager.refreshCoolDown();
+    eventManager.refreshCoolDown(video);
 
-    expect(eventManager.coolDown).not.toBe(false);
+    expect(eventManager.getMediaRateState(video).coolDown).not.toBe(false);
   });
 
   it('handleRateChange should block events during cooldown', async () => {
@@ -99,7 +110,7 @@ describe('EventManager', () => {
       },
     };
 
-    eventManager.refreshCoolDown();
+    eventManager.refreshCoolDown(mockVideo);
 
     eventManager.handleRateChange(mockEvent);
     expect(eventStopped).toBe(true);
@@ -112,7 +123,7 @@ describe('EventManager', () => {
     const uncontrolledVideo = createMockVideo({ playbackRate: 1.5 });
     const stopImmediatePropagation = vi.fn();
 
-    eventManager.refreshCoolDown();
+    eventManager.refreshCoolDown(createMockVideo());
     eventManager.handleRateChange({
       composedPath: () => [uncontrolledVideo],
       target: uncontrolledVideo,
@@ -129,13 +140,14 @@ describe('EventManager', () => {
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    eventManager.refreshCoolDown();
-    expect(eventManager.coolDown).not.toBe(false);
+    const video = createMockVideo();
+    eventManager.refreshCoolDown(video);
+    expect(eventManager.getMediaRateState(video).coolDown).not.toBe(false);
 
     const waitMs = (window.VSC.EventManager?.BASE_COOLDOWN_MS || 50) + 50;
     await vi.advanceTimersByTimeAsync(waitMs);
 
-    expect(eventManager.coolDown).toBe(false);
+    expect(eventManager.getMediaRateState(video).coolDown).toBe(false);
   });
 
   it('multiple refreshCoolDown calls should reset timer', async () => {
@@ -145,14 +157,15 @@ describe('EventManager', () => {
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    eventManager.refreshCoolDown();
-    const firstTimeout = eventManager.coolDown;
+    const video = createMockVideo();
+    eventManager.refreshCoolDown(video);
+    const firstTimeout = eventManager.getMediaRateState(video).coolDown;
     expect(firstTimeout).not.toBe(false);
 
     await vi.advanceTimersByTimeAsync(100);
 
-    eventManager.refreshCoolDown();
-    const secondTimeout = eventManager.coolDown;
+    eventManager.refreshCoolDown(video);
+    const secondTimeout = eventManager.getMediaRateState(video).coolDown;
 
     expect(secondTimeout).not.toBe(firstTimeout);
     expect(secondTimeout).not.toBe(false);
@@ -165,11 +178,14 @@ describe('EventManager', () => {
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    eventManager.refreshCoolDown();
-    expect(eventManager.coolDown).not.toBe(false);
+    const video = createMockVideo();
+    eventManager.refreshCoolDown(video);
+    const state = eventManager.getMediaRateState(video);
+    expect(state.coolDown).not.toBe(false);
 
     eventManager.cleanup();
-    expect(eventManager.coolDown).toBe(false);
+    expect(state.coolDown).toBe(false);
+    expect(eventManager.getMediaRateState(video)).toBeNull();
   });
 
   // Cooldown timing race tests
@@ -195,7 +211,9 @@ describe('EventManager', () => {
         return currentRate;
       },
       set(v) {
-        cooldownActiveDuringAssignment = eventManager.coolDown !== false;
+        cooldownActiveDuringAssignment = Boolean(
+          eventManager.getMediaRateState(mockVideo)?.coolDown
+        );
         currentRate = v;
       },
       configurable: true,
@@ -342,7 +360,7 @@ describe('EventManager', () => {
     const maxFights = window.VSC.EventManager.MAX_FIGHT_COUNT;
 
     for (let i = 0; i < maxFights - 1; i++) {
-      eventManager.coolDown = false;
+      endMediaCooldown(eventManager, mockVideo);
       mockVideo.playbackRate = 1.0;
       eventManager.handleRateChange({
         composedPath: () => [mockVideo],
@@ -352,7 +370,7 @@ describe('EventManager', () => {
       });
     }
 
-    eventManager.coolDown = false;
+    endMediaCooldown(eventManager, mockVideo);
     mockVideo.playbackRate = 1.0;
     externalAdjustSpy.mockClear();
     eventManager.handleRateChange({
@@ -378,7 +396,7 @@ describe('EventManager', () => {
     Object.defineProperty(mockVideo, 'readyState', { value: 4, configurable: true });
 
     for (let i = 0; i < 2; i++) {
-      eventManager.coolDown = false;
+      endMediaCooldown(eventManager, mockVideo);
       mockVideo.playbackRate = 1.0;
       eventManager.handleRateChange({
         composedPath: () => [mockVideo],
@@ -388,12 +406,140 @@ describe('EventManager', () => {
       });
     }
 
-    expect(eventManager.fightCount).toBe(2);
+    expect(eventManager.getMediaRateState(mockVideo).fightCount).toBe(2);
 
     const fightWindowMs = window.VSC.EventManager.FIGHT_WINDOW_MS;
     await vi.advanceTimersByTimeAsync(fightWindowMs + 50);
 
-    expect(eventManager.fightCount).toBe(0);
+    expect(eventManager.getMediaRateState(mockVideo)?.fightCount || 0).toBe(0);
+  });
+
+  it('does not let one media cooldown swallow another media ratechange', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.lastSpeed = 2.0;
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+    eventManager.actionHandler = actionHandler;
+    const videoA = createMockVideo({ playbackRate: 1.0 });
+    const videoB = createMockVideo({ playbackRate: 1.0 });
+    videoA.vsc = {
+      div: document.createElement('div'),
+      speedIndicator: { textContent: '1.00' },
+    };
+    videoB.vsc = { speedIndicator: { textContent: '1.00' } };
+    Object.defineProperty(videoB, 'readyState', { value: 4, configurable: true });
+
+    actionHandler.setSpeed(videoA, 2.0, 'internal');
+    const stopImmediatePropagation = vi.fn();
+    eventManager.handleRateChange({
+      target: videoB,
+      detail: null,
+      stopImmediatePropagation,
+    });
+
+    expect(stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(videoB.playbackRate).toBe(2.0);
+    expect(eventManager.getMediaRateState(videoA).fightCount).toBe(0);
+    expect(eventManager.getMediaRateState(videoB).fightCount).toBe(1);
+  });
+
+  it('does not count one media fights against another media', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.lastSpeed = 2.0;
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const videoA = createMockVideo({ playbackRate: 1.0 });
+    const videoB = createMockVideo({ playbackRate: 1.0 });
+
+    for (const video of [videoA, videoB]) {
+      video.vsc = { speedIndicator: { textContent: '1.00' } };
+      Object.defineProperty(video, 'readyState', { value: 4, configurable: true });
+    }
+
+    for (let attempt = 0; attempt < window.VSC.EventManager.MAX_FIGHT_COUNT - 1; attempt++) {
+      endMediaCooldown(eventManager, videoA);
+      videoA.playbackRate = 1.0;
+      eventManager.handleRateChange({
+        target: videoA,
+        detail: null,
+        stopImmediatePropagation: vi.fn(),
+      });
+    }
+
+    eventManager.handleRateChange({
+      target: videoB,
+      detail: null,
+      stopImmediatePropagation: vi.fn(),
+    });
+
+    expect(eventManager.getMediaRateState(videoA).fightCount).toBe(
+      window.VSC.EventManager.MAX_FIGHT_COUNT - 1
+    );
+    expect(eventManager.getMediaRateState(videoB).fightCount).toBe(1);
+    expect(videoB.playbackRate).toBe(2.0);
+  });
+
+  it('arms fight-back cooldown before a synchronous native ratechange', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.lastSpeed = 2.0;
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const video = createMockVideo({ playbackRate: 1.0 });
+    video.vsc = { speedIndicator: { textContent: '1.00' } };
+    Object.defineProperty(video, 'readyState', { value: 4, configurable: true });
+
+    let currentRate = 1.0;
+    let assignments = 0;
+    Object.defineProperty(video, 'playbackRate', {
+      configurable: true,
+      get: () => currentRate,
+      set: (value) => {
+        currentRate = value;
+        assignments++;
+        eventManager.handleRateChange({
+          target: video,
+          detail: null,
+          stopImmediatePropagation: vi.fn(),
+        });
+      },
+    });
+
+    eventManager.handleRateChange({
+      target: video,
+      detail: null,
+      stopImmediatePropagation: vi.fn(),
+    });
+
+    expect(assignments).toBe(1);
+    expect(currentRate).toBe(2.0);
+    expect(eventManager.getMediaRateState(video).fightCount).toBe(1);
+    expect(eventManager.getMediaRateState(video).coolDown).not.toBe(false);
+  });
+
+  it('releaseMediaState clears timers and forgets only that media element', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const eventManager = new window.VSC.EventManager(config, null);
+    const videoA = createMockVideo();
+    const videoB = createMockVideo();
+    eventManager.refreshCoolDown(videoA);
+    eventManager.refreshCoolDown(videoB);
+    const stateA = eventManager.getMediaRateState(videoA);
+    stateA.fightCount = 2;
+    stateA.fightTimer = setTimeout(() => {}, window.VSC.EventManager.FIGHT_WINDOW_MS);
+
+    eventManager.releaseMediaState(videoA);
+
+    expect(stateA.coolDown).toBe(false);
+    expect(stateA.fightCount).toBe(0);
+    expect(stateA.fightTimer).toBeNull();
+    expect(eventManager.getMediaRateState(videoA)).toBeNull();
+    expect(eventManager.getMediaRateState(videoB).coolDown).not.toBe(false);
   });
 
   // User gesture window tests
@@ -429,7 +575,7 @@ describe('EventManager', () => {
         expect(eventManager.lastUserInteractionAt).toBe(0);
         expect(video.playbackRate).toBe(1.5);
         expect(config.settings.lastSpeed).toBe(1.5);
-        expect(eventManager.fightCount).toBe(1);
+        expect(eventManager.getMediaRateState(video).fightCount).toBe(1);
       } finally {
         eventManager.cleanup();
         mediaSpy.mockRestore();
@@ -501,7 +647,7 @@ describe('EventManager', () => {
     // Should accept: speed stays at 2.0, lastSpeed updated, fightCount reset
     expect(mockVideo.playbackRate).toBe(2.0);
     expect(config.settings.lastSpeed).toBe(2.0);
-    expect(eventManager.fightCount).toBe(0);
+    expect(eventManager.getMediaRateState(mockVideo)?.fightCount || 0).toBe(0);
     expect(eventManager.lastUserInteractionAt).toBe(0); // consumed
     expect(eventStopped).toBe(false);
   });
@@ -535,7 +681,7 @@ describe('EventManager', () => {
 
       // Should fight: speed restored to 1.5
       expect(mockVideo.playbackRate).toBe(1.5);
-      expect(eventManager.fightCount).toBe(1);
+      expect(eventManager.getMediaRateState(mockVideo).fightCount).toBe(1);
       expect(eventStopped).toBe(true);
     }
   );
@@ -563,7 +709,7 @@ describe('EventManager', () => {
     });
 
     expect(mockVideo.playbackRate).toBe(1.5); // fought back
-    expect(eventManager.fightCount).toBe(1);
+    expect(eventManager.getMediaRateState(mockVideo).fightCount).toBe(1);
   });
 
   it('cleanup should clear fight detection state', async () => {
@@ -573,12 +719,16 @@ describe('EventManager', () => {
     const actionHandler = new window.VSC.ActionHandler(config, null);
     const eventManager = new window.VSC.EventManager(config, actionHandler);
 
-    eventManager.fightCount = 5;
-    eventManager.fightTimer = setTimeout(() => {}, 10000);
+    const video = createMockVideo();
+    eventManager.refreshCoolDown(video);
+    const state = eventManager.getMediaRateState(video);
+    state.fightCount = 5;
+    state.fightTimer = setTimeout(() => {}, 10000);
 
     eventManager.cleanup();
 
-    expect(eventManager.fightCount).toBe(0);
-    expect(eventManager.fightTimer).toBe(null);
+    expect(state.fightCount).toBe(0);
+    expect(state.fightTimer).toBe(null);
+    expect(eventManager.getMediaRateState(video)).toBeNull();
   });
 });
