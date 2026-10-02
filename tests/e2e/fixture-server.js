@@ -13,7 +13,7 @@ const frameHtml = `<!doctype html>
   <head><meta charset="utf-8"><title>StayFast frame fixture</title></head>
   <body>
     <main id="fixture-root">
-      <video id="frame-video" muted preload="auto" src="/sample.mp4"></video>
+      <video id="frame-video" muted preload="auto" src="/sample.webm"></video>
     </main>
   </body>
 </html>`;
@@ -48,7 +48,7 @@ function respondWithMedia(request, response, media) {
     response.writeHead(200, {
       'Accept-Ranges': 'bytes',
       'Content-Length': media.length,
-      'Content-Type': 'video/mp4',
+      'Content-Type': 'video/webm',
       'Cache-Control': 'no-store',
     });
     response.end(media);
@@ -67,18 +67,20 @@ function respondWithMedia(request, response, media) {
     'Accept-Ranges': 'bytes',
     'Content-Length': end - start + 1,
     'Content-Range': `bytes ${start}-${end}/${media.length}`,
-    'Content-Type': 'video/mp4',
+    'Content-Type': 'video/webm',
     'Cache-Control': 'no-store',
   });
   response.end(media.subarray(start, end + 1));
 }
 
 export async function startFixtureServer() {
-  const mediaPath = resolve('tests/e2e/sample.mp4');
+  // VP8/WebM has native Chrome/Firefox decoding without OS H.264 libraries.
+  // Synthetic 60s black clip; regenerate with the command in the manual guide.
+  const mediaPath = resolve('tests/e2e/sample.webm');
   const media = await readFile(mediaPath);
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
-    if (url.pathname === '/sample.mp4') {
+    if (url.pathname === '/sample.webm') {
       respondWithMedia(request, response, media);
       return;
     }
@@ -115,7 +117,7 @@ export async function startFixtureServer() {
 
   return {
     baseUrl,
-    mediaUrl: `${baseUrl}/sample.mp4`,
+    mediaUrl: `${baseUrl}/sample.webm`,
     async stop() {
       if (stopped) {
         return;

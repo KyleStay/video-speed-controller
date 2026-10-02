@@ -168,3 +168,17 @@ depend on external hosts. Regenerate it with:
 ```sh
 ffmpeg -f lavfi -i color=c=blue:s=160x90:r=1:d=60 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/e2e/sample.mp4
 ```
+
+### Portable fixture media
+
+The native browser fixtures and benchmarks serve `sample.webm` (VP8), avoiding
+Firefox/Linux's optional OS H.264 decoder dependency. Every native fixture still
+requires real decoded media (`readyState >= 2`); codec errors fail the suite.
+The synthetic black clip has no third-party content. Regenerate it with:
+
+```sh
+ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=160x90:r=1:d=60 -c:v libvpx -b:v 20k -an -fflags +bitexact -flags:v +bitexact tests/e2e/sample.webm
+```
+
+The existing MP4 fixture remains for the basic Chrome suite. Neither fixture is
+included in the extension release ZIP.
