@@ -176,6 +176,13 @@ class VideoMutationObserver {
     if (!this.active || typeof window === 'undefined') {
       return;
     }
+    // Deduplicate overlapping roots within one delivery, not across later DOM
+    // transitions. A previously scanned player may be removed and reinserted
+    // while an unrelated traversal is still yielding.
+    if (mutations.some((mutation) => mutation.type === 'childList')) {
+      this.scannedAdded = new WeakSet();
+      this.scannedRemoved = new WeakSet();
+    }
     for (const mutation of mutations) {
       if (mutation.type === 'attributes') {
         let names = this.pendingAttributeTargets.get(mutation.target);
@@ -315,10 +322,10 @@ class VideoMutationObserver {
       NodeFilter.SHOW_ELEMENT,
       {
         acceptNode: (candidate) =>
-          seen.has(candidate) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+          seen.has(candidate) ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT,
       }
     );
-    return { walker, next: node, parent, added, depth, seen };
+    return { walker, next: node, nextParent: node.parentNode, parent, added, depth, seen };
   }
 
   stepWalk(job) {
@@ -336,19 +343,36 @@ class VideoMutationObserver {
       }
       return true;
     }
-    const node = job.next;
+    let node = job.next;
     if (!node) {
       return false;
     }
+    // TreeWalker keeps a live cursor. Removing/reparenting the saved cursor
+    // between slices strands it outside the remaining subtree. Resume from
+    // the root, skipping visited elements but still entering their children.
+    if (
+      node !== job.walker.root &&
+      (!job.walker.root.contains(node) || node.parentNode !== job.nextParent)
+    ) {
+      job.walker.currentNode = job.walker.root;
+      node = job.next = job.walker.nextNode();
+      if (!node) {
+        return false;
+      }
+    }
+    const advance = () => {
+      job.next = job.walker.nextNode();
+      job.nextParent = job.next?.parentNode;
+    };
     if (job.seen.has(node)) {
       // Another queued subtree may have covered this node while this walker
       // yielded. Continue to its siblings; dropping the walker loses media.
-      job.next = job.walker.nextNode();
+      advance();
       return Boolean(job.next);
     }
     job.seen.add(node);
     // Advance before callbacks can move/remove the current node.
-    job.next = job.walker.nextNode();
+    advance();
     if (!job.added && node.isConnected && node.ownerDocument === document) {
       return Boolean(job.next);
     }
