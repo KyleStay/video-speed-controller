@@ -317,14 +317,9 @@ class VideoMutationObserver {
     if (seen.has(node)) {
       return null;
     }
-    const walker = (node.ownerDocument || document).createTreeWalker(
-      node,
-      NodeFilter.SHOW_ELEMENT,
-      {
-        acceptNode: (candidate) =>
-          seen.has(candidate) ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT,
-      }
-    );
+    // Visit one element per work unit, including seen elements after a restart.
+    // A filter that skips them inside nextNode() can hide unbounded work.
+    const walker = (node.ownerDocument || document).createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
     return { walker, next: node, nextParent: node.parentNode, parent, added, depth, seen };
   }
 
@@ -339,6 +334,19 @@ class VideoMutationObserver {
         return false;
       }
       if (node.nodeType === Node.ELEMENT_NODE) {
+        if (!added) {
+          for (const walk of this.pendingWalks) {
+            if (
+              walk.walker &&
+              walk.next &&
+              node.contains(walk.next) &&
+              !node.contains(walk.walker.root)
+            ) {
+              // Includes same-parent reorders and moves of cursor ancestors.
+              walk.restart = true;
+            }
+          }
+        }
         this.checkForVideoAndShadowRoot(node, node.parentNode || mutation.target, added);
       }
       return true;
@@ -351,14 +359,13 @@ class VideoMutationObserver {
     // between slices strands it outside the remaining subtree. Resume from
     // the root, skipping visited elements but still entering their children.
     if (
-      node !== job.walker.root &&
-      (!job.walker.root.contains(node) || node.parentNode !== job.nextParent)
+      job.restart ||
+      (node !== job.walker.root &&
+        (!job.walker.root.contains(node) || node.parentNode !== job.nextParent))
     ) {
+      job.restart = false;
       job.walker.currentNode = job.walker.root;
-      node = job.next = job.walker.nextNode();
-      if (!node) {
-        return false;
-      }
+      node = job.next = job.walker.root;
     }
     const advance = () => {
       job.next = job.walker.nextNode();

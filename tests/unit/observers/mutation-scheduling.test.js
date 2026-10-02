@@ -112,35 +112,46 @@ describe('bounded mutation work', () => {
     expect(found).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['remove', 'reparent'])('reaches trailing media after a paused cursor %s', (action) => {
-    const root = document.createElement('div');
-    const inner = document.createElement('section');
-    for (let i = 0; i < 1400; i++) {
-      inner.append(document.createElement('span'));
+  it.each(['remove', 'reparent', 'reorder', 'reorder-ancestor'])(
+    'reaches trailing media after a paused cursor %s',
+    (action) => {
+      const root = document.createElement('div');
+      const inner = document.createElement('section');
+      for (let i = 0; i < 1400; i++) {
+        inner.append(document.createElement('span'));
+      }
+      const video = document.createElement('video');
+      inner.append(video);
+      root.append(inner);
+      document.body.append(root);
+      observer.scheduleMutationProcessing([record(root)]);
+      callbacks.shift()();
+      const job = observer.pendingWalks.find((work) => work.walker);
+      expect(job.next.tagName).toBe('SPAN');
+      const cursor = job.next;
+      const destination = document.createElement('div');
+      let moved = cursor;
+      if (action === 'remove') {
+        cursor.remove();
+      } else if (action === 'reparent') {
+        document.body.append(destination);
+        destination.append(cursor);
+      } else if (action === 'reorder') {
+        inner.append(cursor);
+      } else {
+        // Put trailing media outside the moved cursor's containing subtree.
+        root.append(video);
+        moved = inner;
+        root.append(inner);
+      }
+      observer.scheduleMutationProcessing([record(moved, false)]);
+      drain();
+      expect(found).toHaveBeenCalledExactlyOnceWith(video, video.parentNode);
+      expect(observer.getPendingWorkCount()).toBe(0);
+      root.remove();
+      destination.remove();
     }
-    const video = document.createElement('video');
-    inner.append(video);
-    root.append(inner);
-    document.body.append(root);
-    observer.scheduleMutationProcessing([record(root)]);
-    callbacks.shift()();
-    const job = observer.pendingWalks.find((work) => work.walker);
-    expect(job.next.tagName).toBe('SPAN');
-    const cursor = job.next;
-    const destination = document.createElement('div');
-    if (action === 'remove') {
-      cursor.remove();
-    } else {
-      document.body.append(destination);
-      destination.append(cursor);
-    }
-    observer.scheduleMutationProcessing([record(cursor, false)]);
-    drain();
-    expect(found).toHaveBeenCalledExactlyOnceWith(video, inner);
-    expect(observer.getPendingWorkCount()).toBe(0);
-    root.remove();
-    destination.remove();
-  });
+  );
 
   it('rediscovers reinserted media while an unrelated scan remains queued', () => {
     const root = document.createElement('div');
@@ -151,10 +162,14 @@ describe('bounded mutation work', () => {
     document.body.append(root, video);
     let attached = false;
     found.mockImplementation((media) => {
-      if (media === video) attached = true;
+      if (media === video) {
+        attached = true;
+      }
     });
     removed.mockImplementation((media) => {
-      if (media === video) attached = false;
+      if (media === video) {
+        attached = false;
+      }
     });
     observer.scheduleMutationProcessing([record(root), record(video)]);
     callbacks.shift()();
