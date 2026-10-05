@@ -53,7 +53,7 @@ class EventManager {
 
   /**
    * Set up keyboard shortcuts.
-   * Listeners attach to `window` (and the top window from a same-origin iframe),
+   * Listeners attach to the current `window`,
    * not to a document — the `_document` argument is accepted only for symmetry
    * with the sibling `setup*` methods and is intentionally unused.
    */
@@ -111,15 +111,9 @@ class EventManager {
 
     attach(window);
 
-    try {
-      // From a same-origin iframe, also claim keys at the top window so
-      // shortcuts work while focus is in the frame.
-      if (window.VSC.DomUtils.inIframe() && window.top && window.top !== window) {
-        attach(window.top);
-      }
-    } catch {
-      // Cross-origin iframe — window.top is inaccessible; ignore.
-    }
+    // Keyboard events stay in their document; they do not bubble to a parent
+    // window. Each frame has its own controller and capture listener. Listening
+    // on window.top would make child controllers act on parent-document keys.
   }
 
   /**
@@ -183,6 +177,10 @@ class EventManager {
         return false;
       }
 
+      if (this.focusPeekOwnsZoomShortcut(event)) {
+        return false;
+      }
+
       // Don't scan while the user is typing — they're not invoking a shortcut.
       if (this.isTypingContext(event)) {
         return false;
@@ -240,6 +238,11 @@ class EventManager {
     const keyBinding = this.findMatchingBinding(event);
 
     if (keyBinding) {
+      // Focus Peek handles its own zoom/pan key later at document capture.
+      // Yield without consuming the key or running a seek action.
+      if (this.focusPeekOwnsZoomShortcut(event)) {
+        return false;
+      }
       if (this.shouldClaimShortcutEvent()) {
         // X/Twitter may also handle keypress/keyup. Remember the key that VSC
         // actually claimed so those follow-up events can be suppressed without
@@ -271,6 +274,40 @@ class EventManager {
     }
 
     return false;
+  }
+
+  /** Ask a live preview in the event's document whether it owns this chord. */
+  focusPeekOwnsZoomShortcut(event) {
+    if (event.ctrlKey || event.altKey || event.metaKey || !event.key) {
+      return false;
+    }
+    const raw = event.key;
+    const base = raw === ' ' || raw === 'Spacebar' ? 'space' : raw.toLowerCase();
+    // Focus Peek folds Shift into printable punctuation, but keeps it for
+    // letters and named keys. Use the logical key, not VSC's physical code.
+    const chord =
+      event.shiftKey && (/^[a-z]$/.test(base) || base.length > 1) ? `shift+${base}` : base;
+    try {
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const ownerDocument =
+        path.find((target) => target?.ownerDocument)?.ownerDocument ||
+        event.target?.ownerDocument ||
+        document;
+      const preview = ownerDocument.querySelector('focus-peek-overlay');
+      if (!preview) {
+        return false;
+      }
+      // String detail and cancellation work across ISOLATED/MAIN worlds and
+      // Firefox realms; no shared globals or privileged messages are involved.
+      const query = new ownerDocument.defaultView.CustomEvent('focuspeek:claim-zoom-shortcut', {
+        detail: chord,
+        cancelable: true,
+      });
+      return !preview.dispatchEvent(query);
+    } catch {
+      // A missing/inaccessible preview must never break ordinary shortcuts.
+      return false;
+    }
   }
 
   /**
