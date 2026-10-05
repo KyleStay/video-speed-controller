@@ -140,3 +140,11 @@ main-thread work, mutation queue/slice metrics, heap measurements and controller
 retention after teardown. Results describe the measured machine; compare repeated
 runs before setting performance budgets. Live YouTube verification is available
 through `npm run test:e2e:isolated` on macOS with the disposable test runner.
+
+### Focus Peek zoom shortcuts
+
+With the updated Focus Peek extension installed, an open preview takes priority
+for its zoom and pan shortcuts (`Z` and `Shift+Z` by default). StayFast skips
+rewind for those presses, even with exclusive shortcuts enabled. Closing the
+preview returns rewind immediately. Customized and disabled Focus Peek bindings
+are respected; loading/error previews leave StayFast shortcuts available.
