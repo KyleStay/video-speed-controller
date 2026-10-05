@@ -73,8 +73,9 @@ to move out of a shortcut recorder without assigning that key.
 
 ## Install for local development
 
-Requirements: Node.js 22.22.1+ on the 22.x line, or 24+, npm, and a
-Chromium-based browser. `.nvmrc` selects the supported Node.js 22 release line.
+Requirements: Node.js 22.22.2+ on the 22.x line, 24.15.0+ on the 24.x
+line, or 26+, npm, and a Chromium-based browser. `.nvmrc` selects the
+minimum supported Node.js 22 release.
 
 ```sh
 npm install
