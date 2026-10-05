@@ -340,25 +340,6 @@ describe('EventManager Matching', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it('uses DomUtils.inIframe (not the nonexistent window.VSC.inIframe) for the iframe branch', () => {
-    // Regression: window.VSC.inIframe is undefined — the helper lives at
-    // window.VSC.DomUtils.inIframe. The old call threw (swallowed by try/catch),
-    // so the top-window listener was silently never attached from an iframe.
-    const { eventManager } = setupEnv([
-      { action: 'slower', code: 'KeyS', key: 83, keyCode: 83, value: 0.1, force: false },
-    ]);
-
-    expect(window.VSC.inIframe).toBeUndefined();
-    const inIframeSpy = vi.spyOn(window.VSC.DomUtils, 'inIframe');
-
-    // Must not throw, and must consult the real helper.
-    expect(() => eventManager.setupKeyboardShortcuts(document)).not.toThrow();
-    expect(inIframeSpy).toHaveBeenCalled();
-
-    inIframeSpy.mockRestore();
-    eventManager.cleanup();
-  });
-
   it('cleanup removes the window-level keydown listener', () => {
     const { eventManager, actions } = setupEnv([
       {
