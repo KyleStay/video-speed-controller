@@ -1,6 +1,6 @@
 # StayFast Video Privacy Policy
 
-Last updated: August 2, 2026
+Last updated: October 5, 2026
 
 StayFast Video is built to control media playback without collecting information
 about you or your browsing.
@@ -61,5 +61,5 @@ and the relevant browser-store disclosures.
 
 ## Contact
 
-For privacy questions, use the support channel linked from the public source
-repository or visit [staytech.co/stayfast](https://staytech.co/stayfast).
+For privacy questions, contact us through the
+[public support tracker](https://github.com/KyleStay/video-speed-controller/issues).
