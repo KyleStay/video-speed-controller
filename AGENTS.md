@@ -171,6 +171,14 @@ with direct `chrome.*` access.
   listeners suppress only follow-up events associated with a keydown VSC
   actually claimed. They never run the VSC action again, and `cleanup()` removes
   the listeners and clears the remembered keys.
+- **Focus Peek zoom cooperation**: before claiming or rescanning for a bound
+  key, ask the `focus-peek-overlay` host in the keyboard event's own document
+  via cancelable `focuspeek:claim-zoom-shortcut` (string normalized chord detail).
+  Cancellation means the live preview owns zoom/pan: do not run the VSC action,
+  consume the original event, or remember X/Twitter follow-ups. Closed, loading,
+  unavailable, disabled, and native-control-interacting previews do not claim it.
+  Custom bindings are negotiated by the preview; never hard-code a `KeyZ` bypass
+  or let a parent preview steal a child's shortcuts. No polling or observers.
 - **Shift-exclusive frame-step keys**: `rewindFrame` (`,`) and `advanceFrame`
   (`.`) carry an explicit **all-false `modifiers` object** in `DEFAULT_BINDINGS`.
   That routes them through `findMatchingBinding`'s chord tier (exact modifier
