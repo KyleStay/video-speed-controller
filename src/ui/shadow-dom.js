@@ -168,11 +168,13 @@ class ShadowDOMManager {
         box-shadow: 0 0 0 4px rgba(8, 47, 73, 0.92);
       }
       
-      button:hover {
-        opacity: 1;
-        border-color: #22d3ee;
-        background: #0e7490;
-        color: #ffffff;
+      @media (hover: hover) {
+        button:hover {
+          opacity: 1;
+          border-color: #22d3ee;
+          background: #0e7490;
+          color: #ffffff;
+        }
       }
       
       button:active {
@@ -183,6 +185,195 @@ class ShadowDOMManager {
       
       button.rw {
         color: #a8ddea;
+      }
+
+      .touch-only {
+        display: none;
+      }
+
+      :host(.vsc-native-presentation) #controller {
+        display: none !important;
+      }
+
+      :host([data-vsc-touch]) #controller {
+        border-radius: 14px;
+        padding: 0;
+        margin: 8px;
+      }
+
+      :host([data-vsc-touch]:not(.vsc-hidden):not(.vsc-nosource)) #controller {
+        visibility: visible !important;
+        opacity: var(--vsc-controller-active-opacity) !important;
+      }
+
+      :host([data-vsc-touch]) .draggable {
+        min-width: 64px;
+        min-height: 44px;
+        margin: 0;
+        padding: 4px 10px;
+        font-size: var(--vsc-controller-font-size, 16px) !important;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      :host([data-vsc-touch]) .draggable::after {
+        content: '×';
+        margin-left: 2px;
+      }
+
+      :host([data-vsc-touch]) #controls {
+        display: none;
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        width: 280px;
+        max-width: calc(100vw - 16px);
+        padding: 8px;
+        border: 1px solid rgba(103, 232, 249, 0.4);
+        border-radius: 16px;
+        background: #051827;
+        box-shadow: 0 8px 24px rgba(0, 12, 22, 0.3);
+        white-space: normal;
+        font-size: var(--vsc-controller-font-size, 16px) !important;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+
+      :host([data-vsc-touch].vsc-touch-open) #controls {
+        display: grid;
+        grid-template-columns: repeat(var(--vsc-touch-columns, 4), minmax(44px, 1fr));
+        gap: 4px;
+      }
+
+      :host([data-vsc-touch].vsc-touch-open:not(.vsc-hidden):not(.vsc-nosource)) #controller {
+        opacity: var(--vsc-controller-expanded-opacity) !important;
+      }
+
+      :host([data-vsc-touch]) button {
+        min-width: 44px;
+        min-height: 44px;
+        margin: 0;
+        padding: 4px;
+        font-size: var(--vsc-controller-font-size, 16px);
+        touch-action: manipulation;
+      }
+
+      :host([data-vsc-touch]) .touch-only {
+        display: block;
+      }
+
+      :host([data-vsc-touch]) .touch-heading {
+        grid-column: 1 / -2;
+        align-self: center;
+        padding-left: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #b9d7e5;
+      }
+
+      :host([data-vsc-touch]) .touch-preset[aria-pressed='true'] {
+        background: #0e7490;
+        border-color: #67e8f9;
+        color: #fff;
+      }
+
+      .inline-fullscreen { display: none; }
+
+      :host([data-vsc-ios-inline]) #controller {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 44px;
+        padding: 0;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      :host([data-vsc-ios-inline].vsc-show) #controller {
+        display: inline-flex !important;
+      }
+
+      :host([data-vsc-ios-inline]) .draggable {
+        flex: 0 0 var(--vsc-inline-pill-width, 44px);
+        width: var(--vsc-inline-pill-width, 44px);
+        min-width: 44px;
+        height: 44px;
+        min-height: 44px;
+        padding: 4px;
+        margin: 0;
+        overflow: hidden;
+        line-height: 1;
+        font-size: var(--vsc-inline-font-size, 13px) !important;
+        border: 1px solid #94cbdd33;
+        border-radius: 10px;
+        background: rgba(5, 24, 39, 0.76);
+      }
+
+      :host([data-vsc-ios-inline]) .draggable::after {
+        flex-shrink: 0;
+        font-size: 11px;
+        margin-left: 1px;
+      }
+
+      :host([data-vsc-ios-inline]) .draggable::before { display: none; }
+      :host([data-vsc-ios-inline]) #controller:hover > .draggable,
+      :host([data-vsc-ios-inline]) #controller:focus-within > .draggable { margin-right: 0; }
+
+      :host([data-vsc-ios-inline]) .inline-fullscreen {
+        display: inline-flex;
+        flex: 0 0 44px;
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #94cbdd33;
+        border-radius: 10px;
+        background: rgba(5, 24, 39, 0.76);
+        font-size: 18px;
+      }
+
+      :host([data-vsc-ios-inline][data-vsc-inline-tiny]) .draggable { display: none; }
+      :host([data-vsc-ios-inline][data-vsc-inline-tiny]) .inline-fullscreen {
+        border-radius: 10px;
+      }
+
+      :host([data-vsc-ios-inline][data-vsc-inline-unavailable]) #controller,
+      :host([data-vsc-ios-inline].vsc-native-presentation) #controller {
+        display: none !important;
+      }
+
+      :host([data-vsc-ios-inline]) #controls {
+        position: fixed;
+        margin: 0;
+        inset: auto;
+        height: max-content;
+        block-size: max-content;
+        min-height: 0;
+        align-content: start;
+        grid-auto-rows: minmax(44px, max-content);
+        line-height: 1.4;
+        font-size: clamp(13px, var(--vsc-controller-font-size, 14px), 18px) !important;
+      }
+
+      :host([data-vsc-ios-inline]) #controls button {
+        font-size: inherit !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      :host([data-vsc-ios-inline]) #controls [aria-label='Open StayFast player'] {
+        grid-column: 1 / -1;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      :host([data-vsc-ios-inline].vsc-inline-playing:not(.vsc-touch-open):not(.vsc-show):not(:focus-within)) #controller {
+        opacity: var(--vsc-inline-playing-opacity) !important;
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -199,7 +390,7 @@ class ShadowDOMManager {
     // Create controller div
     const controller = document.createElement('div');
     controller.id = 'controller';
-    controller.style.cssText = `top:${top}; left:${left}; --vsc-controller-opacity:${opacity}; --vsc-controller-active-opacity:${activeOpacity};`;
+    controller.style.cssText = `top:${top}; left:${left}; --vsc-controller-font-size:${buttonSize}px; --vsc-inline-playing-opacity:${numericOpacity > 0 ? Math.max(numericOpacity, 0.4) : 0}; --vsc-controller-opacity:${opacity}; --vsc-controller-active-opacity:${activeOpacity}; --vsc-controller-expanded-opacity:${numericOpacity > 0 ? 1 : 0};`;
 
     // Create draggable speed indicator
     const draggable = document.createElement('span');
@@ -214,13 +405,48 @@ class ShadowDOMManager {
     draggable.textContent = speed;
     controller.appendChild(draggable);
 
+    const fullscreen = document.createElement('button');
+    fullscreen.type = 'button';
+    fullscreen.className = 'inline-fullscreen';
+    fullscreen.dataset.action = 'nativeFullscreen';
+    fullscreen.setAttribute('aria-label', 'Open video fullscreen');
+    fullscreen.setAttribute('title', 'Open video fullscreen');
+    fullscreen.textContent = '⛶';
+    controller.appendChild(fullscreen);
+
     // Create controls span
     const controls = document.createElement('span');
     controls.id = 'controls';
     controls.style.cssText = `font-size: ${buttonSize}px; line-height: ${buttonSize}px;`;
 
+    const heading = document.createElement('span');
+    heading.className = 'touch-only touch-heading';
+    heading.textContent = 'Playback speed';
+    controls.appendChild(heading);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'touch-only';
+    close.dataset.action = 'close';
+    close.setAttribute('aria-label', 'Close speed controls');
+    close.textContent = '×';
+    controls.appendChild(close);
+
+    for (const preset of [1, 1.25, 1.5, 2]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = preset === 1 ? 'touch-preset' : 'touch-only touch-preset';
+      button.dataset.action = 'setSpeed';
+      button.dataset.value = String(preset);
+      button.setAttribute('aria-label', `Set playback speed to ${preset} times`);
+      button.setAttribute('title', preset === 1 ? 'Reset speed to 1×' : `Set speed to ${preset}×`);
+      button.setAttribute('aria-pressed', String(Number(speed) === preset));
+      button.textContent = `${preset}×`;
+      controls.appendChild(button);
+    }
+
     // Create buttons
     const buttons = [
+      { action: 'preferredSpeed', text: 'Pref', class: '', label: 'Set preferred speed' },
       { action: 'rewind', text: '«', class: 'rw', label: 'Rewind' },
       { action: 'slower', text: '−', class: '', label: 'Decrease speed' },
       { action: 'faster', text: '+', class: '', label: 'Increase speed' },
@@ -229,6 +455,7 @@ class ShadowDOMManager {
 
     buttons.forEach((btnConfig) => {
       const button = document.createElement('button');
+      button.type = 'button';
       button.setAttribute('data-action', btnConfig.action);
       if (btnConfig.class) {
         button.className = btnConfig.class;
@@ -288,14 +515,41 @@ class ShadowDOMManager {
    * @param {number} speed - New speed value
    */
   static updateSpeedDisplay(shadow, speed) {
+    speed = Number(speed);
+    if (!Number.isFinite(speed)) {
+      return;
+    }
     const speedIndicator = this.getSpeedIndicator(shadow);
     if (speedIndicator) {
       const formattedSpeed = window.VSC.Constants.formatSpeed(speed);
-      const label = `Playback speed ${formattedSpeed}. Press Enter to reset speed.`;
-      speedIndicator.textContent = formattedSpeed;
+      const label = shadow.host.hasAttribute('data-vsc-touch')
+        ? `Playback speed ${formattedSpeed} times. Tap to show speed controls.`
+        : `Playback speed ${formattedSpeed}. Press Enter to reset speed.`;
+      const inline = shadow.host.hasAttribute('data-vsc-ios-inline');
+      const compactSpeed =
+        speed >= 1000
+          ? speed.toExponential(1).replace('.0e', 'e').replace('e+', 'e')
+          : String(Number(speed.toFixed(2)));
+      speedIndicator.textContent = inline ? compactSpeed : formattedSpeed;
+      speedIndicator.dataset.speed = String(speed);
+      if (inline) {
+        const length = compactSpeed.length;
+        const controller = shadow.querySelector('#controller');
+        controller.style.setProperty(
+          '--vsc-inline-pill-width',
+          `${Math.max(44, Math.min(56, (length + 1) * 8 + 10))}px`
+        );
+        controller.style.setProperty(
+          '--vsc-inline-font-size',
+          length > 5 ? '11px' : length > 4 ? '11.5px' : '13px'
+        );
+      }
       speedIndicator.setAttribute('aria-label', label);
       speedIndicator.setAttribute('title', label);
     }
+    shadow.querySelectorAll('.touch-preset').forEach((button) => {
+      button.setAttribute('aria-pressed', String(Number(button.dataset.value) === speed));
+    });
   }
 
   /**

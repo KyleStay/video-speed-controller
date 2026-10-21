@@ -14,3 +14,8 @@ node_modules
 coverage
 plan.md
 test-results
+
+# Native Safari build products and local Xcode state
+/build/
+**/xcuserdata/
+*.xcuserstate

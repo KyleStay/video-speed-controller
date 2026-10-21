@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StayFast Video</title>
     <link rel="stylesheet" href="popup.css" />
     <script src="popup.js"></script>
@@ -133,6 +134,41 @@
           <button id="custom-speed-apply" class="custom-speed-btn" type="submit">Set</button>
         </form>
       </div>
+
+      <section
+        id="video-diagnostics"
+        class="diagnostics-section"
+        aria-labelledby="diagnostics-heading"
+      >
+        <h2 id="diagnostics-heading">Video diagnostics</h2>
+        <p>
+          Capture video layout and scroll changes. Reports contain no page URLs or text and stay on
+          this device until you share them. Capture stops after 10 minutes. Prepare your report
+          before leaving or reloading the page.
+        </p>
+        <div class="diagnostics-actions">
+          <button type="button" data-diagnostic="start">Start new capture</button>
+          <button type="button" data-diagnostic="stop">Stop &amp; prepare report</button>
+          <button type="button" data-diagnostic="clear">Clear capture</button>
+        </div>
+        <p class="diagnostics-status" role="status" aria-live="polite">Loading diagnostics…</p>
+        <div class="diagnostics-actions">
+          <button type="button" data-diagnostic="copy" disabled>Copy report</button>
+          <button type="button" data-diagnostic="share" disabled>Share / save report</button>
+        </div>
+        <label for="diagnostic-report">Prepared diagnostic report</label>
+        <textarea
+          id="diagnostic-report"
+          readonly
+          hidden
+          spellcheck="false"
+          aria-describedby="diagnostic-fallback"
+        ></textarea>
+        <p id="diagnostic-fallback">
+          After preparing a report, copy or share it. If those actions are unavailable, select the
+          report text and use your device’s copy or save controls.
+        </p>
+      </section>
 
       <!-- Footer with controls and status -->
       <div class="footer">

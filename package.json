@@ -1,6 +1,6 @@
 {
   "name": "video-speed-controller",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Speed up, slow down, advance and rewind HTML5 audio/video with shortcuts",
   "type": "module",
   "scripts": {
@@ -36,7 +36,20 @@
     "clean": "node scripts/clean.mjs dist release",
     "prepare": "husky",
     "test:e2e:browsers": "npm run build:release:browsers && node tests/e2e/run-browser-fixtures.js all",
-    "test:performance": "npm run build:release:browsers && node tests/e2e/run-performance-benchmark.js"
+    "test:performance": "npm run build:release:browsers && node tests/e2e/run-performance-benchmark.js",
+    "build:safari:native": "node scripts/safari-native.mjs",
+    "build:safari:ios": "node scripts/safari-native.mjs --platform=ios-simulator",
+    "build:safari:macos": "node scripts/safari-native.mjs --platform=macos",
+    "build:release:safari": "RELEASE=1 node scripts/build.mjs --browser=safari",
+    "test:e2e:mobile": "npm run build:release:chrome && STAYFAST_EXTENSION_DIR=dist/chrome node tests/e2e/run-isolated.js mobile",
+    "test:e2e:safari": "npm run build:release:safari && node tests/e2e/run-safari.js",
+    "testflight:safari": "node scripts/safari-testflight.mjs",
+    "testflight:safari:archive": "node scripts/safari-testflight.mjs archive",
+    "testflight:safari:export": "node scripts/safari-testflight.mjs export",
+    "testflight:safari:upload": "node scripts/safari-testflight.mjs upload",
+    "test:e2e:ios-player": "npm run build:release:chrome && STAYFAST_EXTENSION_DIR=dist/chrome node tests/e2e/run-isolated.js ios-player",
+    "test:e2e:startup": "npm run build:release && node tests/e2e/run-startup-order.js",
+    "test:e2e:resume": "npm run build:release && node tests/e2e/run-isolated.js resume"
   },
   "lint-staged": {
     "*.js": [

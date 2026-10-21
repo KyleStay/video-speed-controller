@@ -39,7 +39,10 @@ class BaseSiteHandler {
    * @param {number} speed - Target speed
    */
   handleSpeedChange(video, speed) {
-    video.playbackRate = speed;
+    // Avoid re-entering the media pipeline when accepting an unchanged rate.
+    if (video.playbackRate !== speed) {
+      video.playbackRate = speed;
+    }
   }
 
   /**

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>StayFast Video</title>
+    <link rel="stylesheet" href="../Style.css" />
+    <script src="../Script.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="../Icon.png" width="80" height="80" alt="" />
+        <p class="eyebrow">YOUR PACE. EVERY VIDEO.</p>
+        <h1>StayFast Video</h1>
+        <p class="intro">Make time for what you want to watch.</p>
+      </header>
+      <section class="card platform-ios" aria-labelledby="ios-title">
+        <h2 id="ios-title">Make Safari your own</h2>
+        <ol>
+          <li>Open <strong>Settings → Apps → Safari → Extensions</strong>.</li>
+          <li>
+            Choose <strong>StayFast Video</strong> and turn on <strong>Allow Extension</strong>.
+          </li>
+          <li>Allow access to the websites where you want video controls.</li>
+        </ol>
+        <button class="open-preferences ios-open-settings" type="button" hidden>
+          Open Safari Settings
+        </button>
+        <p>
+          Return to Safari and reload the video page. Videos play inline. Tap the fullscreen button
+          beside the speed pill to open Apple’s full-screen player directly. For StayFast’s custom
+          controls, tap the speed pill and choose Custom player.
+        </p>
+      </section>
+      <section class="card platform-mac" aria-labelledby="mac-title">
+        <h2 id="mac-title">Ready when you are</h2>
+        <p class="state-unknown">
+          Enable StayFast Video in Safari Settings → Extensions, then allow access to your video
+          websites.
+        </p>
+        <p class="state-on">
+          StayFast Video is enabled. Allow website access in Safari, then reload your video page.
+        </p>
+        <p class="state-off">StayFast Video is off. Turn it on in Safari Settings → Extensions.</p>
+        <button class="open-preferences" type="button">Open Safari Settings</button>
+      </section>
+      <p id="settings-error" role="status" hidden>
+        Open Settings → Apps → Safari → Extensions on iPhone/iPad, or Safari → Settings → Extensions
+        on Mac.
+      </p>
+      <section class="details">
+        <h2>A little more control</h2>
+        <p>
+          Change speed, skip back, or jump forward. Use the extension’s Settings for your preferred
+          speeds, shortcuts, and website rules.
+        </p>
+        <p>
+          The optional custom player offers precise scrubbing, speed, and seek controls. Done
+          returns to the page; More → Use site player restores the site’s controls. Safari may keep
+          its browser bars visible in this mode. Native fullscreen and Picture in Picture use
+          Apple’s controls. Higher playback speeds depend on the video and device.
+        </p>
+        <h2>Private by design</h2>
+        <p>
+          No account, analytics, or server. Preferences stay in this Safari installation and do not
+          sync between devices. Website access lets StayFast find and control video and audio on the
+          sites you allow.
+        </p>
+        <nav class="app-links" aria-label="Privacy and help">
+          <a href="../Privacy.html">Privacy policy</a>
+          <a href="https://github.com/KyleStay/video-speed-controller/issues">Support</a>
+        </nav>
+        <p id="support-error" role="status" hidden>
+          Open github.com/KyleStay/video-speed-controller/issues in Safari for support.
+        </p>
+        <p class="footnote">
+          For iPhone and iPad with iOS/iPadOS 18.4 or later, and Mac with Safari 18.4 or later on
+          macOS 15.4 or later.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

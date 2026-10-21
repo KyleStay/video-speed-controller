@@ -4,7 +4,7 @@ const RELEASE_READY_BROWSERS = Object.freeze(['chrome', 'firefox']);
 const BUILD_TARGETS = Object.freeze({
   chrome: 'chrome114',
   firefox: 'firefox140',
-  safari: 'safari18',
+  safari: 'safari18.4',
 });
 
 function assertBrowser(browser) {
@@ -47,6 +47,13 @@ function createBrowserManifest(baseManifest, browser, version) {
 
   if (browser === 'safari') {
     delete manifest.minimum_chrome_version;
+    // App Store validation limits Safari extension descriptions to 112 characters.
+    manifest.description =
+      'Private video and audio speed controls, custom shortcuts, precise seeking, site rules, and frame stepping.';
+    // Safari opens options in its own tab and does not support this key.
+    if (manifest.options_ui) {
+      delete manifest.options_ui.open_in_tab;
+    }
     manifest.background = {
       service_worker: 'background.js',
     };
@@ -55,9 +62,14 @@ function createBrowserManifest(baseManifest, browser, version) {
   return manifest;
 }
 
+function getBuildDefines(browser) {
+  assertBrowser(browser);
+  return { __VSC_BROWSER__: JSON.stringify(browser) };
+}
+
 function getBuildTarget(browser) {
   assertBrowser(browser);
   return BUILD_TARGETS[browser];
 }
 
-export { BROWSERS, RELEASE_READY_BROWSERS, createBrowserManifest, getBuildTarget };
+export { BROWSERS, RELEASE_READY_BROWSERS, createBrowserManifest, getBuildTarget, getBuildDefines };

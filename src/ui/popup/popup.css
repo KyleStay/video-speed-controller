@@ -71,8 +71,8 @@ body {
 body {
   background-color: var(--md-surface);
   color: var(--md-on-surface);
-  min-width: 304px;
   width: 304px;
+  max-width: 100%;
 }
 
 /* Popup container */
@@ -517,8 +517,7 @@ body {
 /* Responsive adjustments */
 @media (max-width: 320px) {
   body {
-    min-width: 280px;
-    width: 280px;
+    width: 100%;
   }
 
   .popup-container {
@@ -530,6 +529,33 @@ body {
   }
 }
 
+/* Safari presents the action popup as a sheet on touch devices. */
+@media (any-pointer: coarse) {
+  body {
+    width: 100vw;
+    max-width: 420px;
+  }
+
+  button.control-btn,
+  button.preset-btn,
+  button.icon-btn,
+  button.custom-speed-btn,
+  .custom-speed input {
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .custom-speed input {
+    font-size: 16px;
+  }
+
+  .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -538,4 +564,68 @@ body {
     transition: none !important;
     transform: none !important;
   }
+}
+
+.diagnostics-section {
+  padding: 16px 18px;
+  border-top: 1px solid var(--md-outline-variant);
+}
+
+.diagnostics-section h2 {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.diagnostics-section p,
+.diagnostics-section label {
+  display: block;
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+
+.diagnostics-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.diagnostics-actions button {
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 10px;
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diagnostics-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.diagnostics-actions button:focus-visible,
+.diagnostics-section textarea:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+.diagnostics-section textarea {
+  width: 100%;
+  min-height: 120px;
+  max-height: 220px;
+  padding: 8px;
+  border: 1px solid var(--md-outline);
+  border-radius: 8px;
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+  font:
+    11px ui-monospace,
+    monospace;
+  resize: vertical;
 }

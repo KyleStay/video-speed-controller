@@ -1,0 +1,1039 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		27F55DC83082A62E0013E79A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DC73082A62E0013E79A /* AppDelegate.swift */; };
+		27F55DCA3082A62E0013E79A /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DC93082A62E0013E79A /* SceneDelegate.swift */; };
+		27F55DCD3082A62E0013E79A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DCB3082A62E0013E79A /* LaunchScreen.storyboard */; };
+		27F55DD03082A62E0013E79A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DCE3082A62E0013E79A /* Main.storyboard */; };
+		27F55DD93082A62E0013E79A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DD83082A62E0013E79A /* AppDelegate.swift */; };
+		27F55DDC3082A62E0013E79A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DDA3082A62E0013E79A /* Main.storyboard */; };
+		27F55DE33082A62E0013E79A /* StayFast Video Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 27F55DE23082A62E0013E79A /* StayFast Video Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		27F55DED3082A62E0013E79A /* StayFast Video Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 27F55DEC3082A62E0013E79A /* StayFast Video Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		27F55DF23082A62E0013E79A /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DB73082A62B0013E79A /* Main.html */; };
+		27F55DF33082A62E0013E79A /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DB73082A62B0013E79A /* Main.html */; };
+		27F55DF43082A62E0013E79A /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DB93082A62B0013E79A /* Icon.png */; };
+		27F55DF53082A62E0013E79A /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DB93082A62B0013E79A /* Icon.png */; };
+		27F55DF63082A62E0013E79A /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBA3082A62B0013E79A /* Style.css */; };
+		27F55DF73082A62E0013E79A /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBA3082A62B0013E79A /* Style.css */; };
+		27F55DF83082A62E0013E79A /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBB3082A62B0013E79A /* Script.js */; };
+		27F55DF93082A62E0013E79A /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBB3082A62B0013E79A /* Script.js */; };
+		27F55DFA3082A62E0013E79A /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DBC3082A62B0013E79A /* ViewController.swift */; };
+		27F55DFB3082A62E0013E79A /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DBC3082A62B0013E79A /* ViewController.swift */; };
+		27F55DFC3082A62E0013E79A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBD3082A62E0013E79A /* Assets.xcassets */; };
+		27F55DFD3082A62E0013E79A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 27F55DBD3082A62E0013E79A /* Assets.xcassets */; };
+		27F55DFE3082A62E0013E79A /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DBF3082A62E0013E79A /* SafariWebExtensionHandler.swift */; };
+		27F55DFF3082A62E0013E79A /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F55DBF3082A62E0013E79A /* SafariWebExtensionHandler.swift */; };
+		27F55E1C3082A62F0013E79A /* content-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E113082A62F0013E79A /* content-bridge.js */; };
+		27F55E1D3082A62F0013E79A /* ui in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E123082A62F0013E79A /* ui */; };
+		27F55E1E3082A62F0013E79A /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E133082A62F0013E79A /* LICENSE */; };
+		27F55E1F3082A62F0013E79A /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E143082A62F0013E79A /* background.js */; };
+		27F55E203082A62F0013E79A /* PRIVACY.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E153082A62F0013E79A /* PRIVACY.md */; };
+		27F55E213082A62F0013E79A /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E163082A62F0013E79A /* README.md */; };
+		27F55E223082A62F0013E79A /* styles in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E173082A62F0013E79A /* styles */; };
+		27F55E233082A62F0013E79A /* CONTRIBUTING.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E183082A62F0013E79A /* CONTRIBUTING.md */; };
+		27F55E243082A62F0013E79A /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E193082A62F0013E79A /* manifest.json */; };
+		27F55E253082A62F0013E79A /* inject.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E1A3082A62F0013E79A /* inject.js */; };
+		27F55E263082A62F0013E79A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E1B3082A62F0013E79A /* assets */; };
+		27F55E273082A62F0013E79A /* content-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E113082A62F0013E79A /* content-bridge.js */; };
+		27F55E283082A62F0013E79A /* ui in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E123082A62F0013E79A /* ui */; };
+		27F55E293082A62F0013E79A /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E133082A62F0013E79A /* LICENSE */; };
+		27F55E2A3082A62F0013E79A /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E143082A62F0013E79A /* background.js */; };
+		27F55E2B3082A62F0013E79A /* PRIVACY.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E153082A62F0013E79A /* PRIVACY.md */; };
+		27F55E2C3082A62F0013E79A /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E163082A62F0013E79A /* README.md */; };
+		27F55E2D3082A62F0013E79A /* styles in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E173082A62F0013E79A /* styles */; };
+		27F55E2E3082A62F0013E79A /* CONTRIBUTING.md in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E183082A62F0013E79A /* CONTRIBUTING.md */; };
+		27F55E2F3082A62F0013E79A /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E193082A62F0013E79A /* manifest.json */; };
+		27F55E303082A62F0013E79A /* inject.js in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E1A3082A62F0013E79A /* inject.js */; };
+		27F55E313082A62F0013E79A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 27F55E1B3082A62F0013E79A /* assets */; };
+		A10000000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000003 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000005 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		A20000000000000000000002 /* Privacy.html in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* Privacy.html */; };
+		A20000000000000000000003 /* Privacy.html in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* Privacy.html */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		27F55DE43082A62E0013E79A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 27F55DB13082A62B0013E79A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 27F55DE13082A62E0013E79A;
+			remoteInfo = "StayFast Video Extension (iOS)";
+		};
+		27F55DEE3082A62E0013E79A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 27F55DB13082A62B0013E79A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 27F55DEB3082A62E0013E79A;
+			remoteInfo = "StayFast Video Extension (macOS)";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		27F55E053082A62E0013E79A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				27F55DE33082A62E0013E79A /* StayFast Video Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55E0C3082A62E0013E79A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				27F55DED3082A62E0013E79A /* StayFast Video Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		27F55DB83082A62B0013E79A /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		27F55DB93082A62B0013E79A /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		27F55DBA3082A62B0013E79A /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		27F55DBB3082A62B0013E79A /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		27F55DBC3082A62B0013E79A /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		27F55DBD3082A62E0013E79A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		27F55DBF3082A62E0013E79A /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		27F55DC43082A62E0013E79A /* StayFast Video.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "StayFast Video.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		27F55DC73082A62E0013E79A /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		27F55DC93082A62E0013E79A /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		27F55DCC3082A62E0013E79A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		27F55DCF3082A62E0013E79A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		27F55DD13082A62E0013E79A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		27F55DD63082A62E0013E79A /* StayFast Video.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "StayFast Video.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		27F55DD83082A62E0013E79A /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		27F55DDB3082A62E0013E79A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		27F55DDD3082A62E0013E79A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		27F55DE23082A62E0013E79A /* StayFast Video Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "StayFast Video Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		27F55DE73082A62E0013E79A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		27F55DEC3082A62E0013E79A /* StayFast Video Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "StayFast Video Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		27F55DF13082A62E0013E79A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		27F55E113082A62F0013E79A /* content-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "content-bridge.js"; path = "../../../dist/safari/content-bridge.js"; sourceTree = "<group>"; };
+		27F55E123082A62F0013E79A /* ui */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ui; path = ../../../dist/safari/ui; sourceTree = "<group>"; };
+		27F55E133082A62F0013E79A /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; name = LICENSE; path = ../../../dist/safari/LICENSE; sourceTree = "<group>"; };
+		27F55E143082A62F0013E79A /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../../dist/safari/background.js; sourceTree = "<group>"; };
+		27F55E153082A62F0013E79A /* PRIVACY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = PRIVACY.md; path = ../../../dist/safari/PRIVACY.md; sourceTree = "<group>"; };
+		27F55E163082A62F0013E79A /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../../../dist/safari/README.md; sourceTree = "<group>"; };
+		27F55E173082A62F0013E79A /* styles */ = {isa = PBXFileReference; lastKnownFileType = folder; name = styles; path = ../../../dist/safari/styles; sourceTree = "<group>"; };
+		27F55E183082A62F0013E79A /* CONTRIBUTING.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = CONTRIBUTING.md; path = ../../../dist/safari/CONTRIBUTING.md; sourceTree = "<group>"; };
+		27F55E193082A62F0013E79A /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../dist/safari/manifest.json; sourceTree = "<group>"; };
+		27F55E1A3082A62F0013E79A /* inject.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = inject.js; path = ../../../dist/safari/inject.js; sourceTree = "<group>"; };
+		27F55E1B3082A62F0013E79A /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = ../../../dist/safari/assets; sourceTree = "<group>"; };
+		A10000000000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A20000000000000000000001 /* Privacy.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = Privacy.html; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		27F55DC13082A62E0013E79A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DD33082A62E0013E79A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DDF3082A62E0013E79A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DE93082A62E0013E79A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		27F55DB03082A62B0013E79A = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* PrivacyInfo.xcprivacy */,
+				27F55DB53082A62B0013E79A /* Shared (App) */,
+				27F55DBE3082A62E0013E79A /* Shared (Extension) */,
+				27F55DC63082A62E0013E79A /* iOS (App) */,
+				27F55DD73082A62E0013E79A /* macOS (App) */,
+				27F55DE63082A62E0013E79A /* iOS (Extension) */,
+				27F55DF03082A62E0013E79A /* macOS (Extension) */,
+				27F55DC53082A62E0013E79A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		27F55DB53082A62B0013E79A /* Shared (App) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DBC3082A62B0013E79A /* ViewController.swift */,
+				27F55DBD3082A62E0013E79A /* Assets.xcassets */,
+				27F55DB63082A62B0013E79A /* Resources */,
+			);
+			path = "Shared (App)";
+			sourceTree = "<group>";
+		};
+		27F55DB63082A62B0013E79A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DB73082A62B0013E79A /* Main.html */,
+				A20000000000000000000001 /* Privacy.html */,
+				27F55DB93082A62B0013E79A /* Icon.png */,
+				27F55DBA3082A62B0013E79A /* Style.css */,
+				27F55DBB3082A62B0013E79A /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		27F55DBE3082A62E0013E79A /* Shared (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55E103082A62F0013E79A /* Resources */,
+				27F55DBF3082A62E0013E79A /* SafariWebExtensionHandler.swift */,
+			);
+			path = "Shared (Extension)";
+			sourceTree = "<group>";
+		};
+		27F55DC53082A62E0013E79A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DC43082A62E0013E79A /* StayFast Video.app */,
+				27F55DD63082A62E0013E79A /* StayFast Video.app */,
+				27F55DE23082A62E0013E79A /* StayFast Video Extension.appex */,
+				27F55DEC3082A62E0013E79A /* StayFast Video Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		27F55DC63082A62E0013E79A /* iOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DC73082A62E0013E79A /* AppDelegate.swift */,
+				27F55DC93082A62E0013E79A /* SceneDelegate.swift */,
+				27F55DCB3082A62E0013E79A /* LaunchScreen.storyboard */,
+				27F55DCE3082A62E0013E79A /* Main.storyboard */,
+				27F55DD13082A62E0013E79A /* Info.plist */,
+			);
+			path = "iOS (App)";
+			sourceTree = "<group>";
+		};
+		27F55DD73082A62E0013E79A /* macOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DD83082A62E0013E79A /* AppDelegate.swift */,
+				27F55DDA3082A62E0013E79A /* Main.storyboard */,
+				27F55DDD3082A62E0013E79A /* Info.plist */,
+			);
+			path = "macOS (App)";
+			sourceTree = "<group>";
+		};
+		27F55DE63082A62E0013E79A /* iOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DE73082A62E0013E79A /* Info.plist */,
+			);
+			path = "iOS (Extension)";
+			sourceTree = "<group>";
+		};
+		27F55DF03082A62E0013E79A /* macOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				27F55DF13082A62E0013E79A /* Info.plist */,
+			);
+			path = "macOS (Extension)";
+			sourceTree = "<group>";
+		};
+		27F55E103082A62F0013E79A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				27F55E113082A62F0013E79A /* content-bridge.js */,
+				27F55E123082A62F0013E79A /* ui */,
+				27F55E133082A62F0013E79A /* LICENSE */,
+				27F55E143082A62F0013E79A /* background.js */,
+				27F55E153082A62F0013E79A /* PRIVACY.md */,
+				27F55E163082A62F0013E79A /* README.md */,
+				27F55E173082A62F0013E79A /* styles */,
+				27F55E183082A62F0013E79A /* CONTRIBUTING.md */,
+				27F55E193082A62F0013E79A /* manifest.json */,
+				27F55E1A3082A62F0013E79A /* inject.js */,
+				27F55E1B3082A62F0013E79A /* assets */,
+			);
+			name = Resources;
+			path = "Shared (Extension)";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		27F55DC33082A62E0013E79A /* StayFast Video (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 27F55E063082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video (iOS)" */;
+			buildPhases = (
+				27F55DC03082A62E0013E79A /* Sources */,
+				27F55DC13082A62E0013E79A /* Frameworks */,
+				27F55DC23082A62E0013E79A /* Resources */,
+				27F55E053082A62E0013E79A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				27F55DE53082A62E0013E79A /* PBXTargetDependency */,
+			);
+			name = "StayFast Video (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "StayFast Video (iOS)";
+			productReference = 27F55DC43082A62E0013E79A /* StayFast Video.app */;
+			productType = "com.apple.product-type.application";
+		};
+		27F55DD53082A62E0013E79A /* StayFast Video (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 27F55E0D3082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video (macOS)" */;
+			buildPhases = (
+				27F55DD23082A62E0013E79A /* Sources */,
+				27F55DD33082A62E0013E79A /* Frameworks */,
+				27F55DD43082A62E0013E79A /* Resources */,
+				27F55E0C3082A62E0013E79A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				27F55DEF3082A62E0013E79A /* PBXTargetDependency */,
+			);
+			name = "StayFast Video (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "StayFast Video (macOS)";
+			productReference = 27F55DD63082A62E0013E79A /* StayFast Video.app */;
+			productType = "com.apple.product-type.application";
+		};
+		27F55DE13082A62E0013E79A /* StayFast Video Extension (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 27F55E023082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video Extension (iOS)" */;
+			buildPhases = (
+				27F55DDE3082A62E0013E79A /* Sources */,
+				27F55DDF3082A62E0013E79A /* Frameworks */,
+				27F55DE03082A62E0013E79A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "StayFast Video Extension (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "StayFast Video Extension (iOS)";
+			productReference = 27F55DE23082A62E0013E79A /* StayFast Video Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		27F55DEB3082A62E0013E79A /* StayFast Video Extension (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 27F55E093082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video Extension (macOS)" */;
+			buildPhases = (
+				27F55DE83082A62E0013E79A /* Sources */,
+				27F55DE93082A62E0013E79A /* Frameworks */,
+				27F55DEA3082A62E0013E79A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "StayFast Video Extension (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "StayFast Video Extension (macOS)";
+			productReference = 27F55DEC3082A62E0013E79A /* StayFast Video Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		27F55DB13082A62B0013E79A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2630;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					27F55DC33082A62E0013E79A = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					27F55DD53082A62E0013E79A = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					27F55DE13082A62E0013E79A = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					27F55DEB3082A62E0013E79A = {
+						CreatedOnToolsVersion = 26.3;
+					};
+				};
+			};
+			buildConfigurationList = 27F55DB43082A62B0013E79A /* Build configuration list for PBXProject "StayFast Video" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 27F55DB03082A62B0013E79A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 27F55DC53082A62E0013E79A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				27F55DC33082A62E0013E79A /* StayFast Video (iOS) */,
+				27F55DD53082A62E0013E79A /* StayFast Video (macOS) */,
+				27F55DE13082A62E0013E79A /* StayFast Video Extension (iOS) */,
+				27F55DEB3082A62E0013E79A /* StayFast Video Extension (macOS) */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		27F55DC23082A62E0013E79A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000002 /* PrivacyInfo.xcprivacy in Resources */,
+				27F55DF43082A62E0013E79A /* Icon.png in Resources */,
+				27F55DCD3082A62E0013E79A /* LaunchScreen.storyboard in Resources */,
+				27F55DF23082A62E0013E79A /* Main.html in Resources */,
+				A20000000000000000000002 /* Privacy.html in Resources */,
+				27F55DF83082A62E0013E79A /* Script.js in Resources */,
+				27F55DFC3082A62E0013E79A /* Assets.xcassets in Resources */,
+				27F55DD03082A62E0013E79A /* Main.storyboard in Resources */,
+				27F55DF63082A62E0013E79A /* Style.css in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DD43082A62E0013E79A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000003 /* PrivacyInfo.xcprivacy in Resources */,
+				27F55DF53082A62E0013E79A /* Icon.png in Resources */,
+				27F55DF73082A62E0013E79A /* Style.css in Resources */,
+				27F55DDC3082A62E0013E79A /* Main.storyboard in Resources */,
+				27F55DF93082A62E0013E79A /* Script.js in Resources */,
+				27F55DFD3082A62E0013E79A /* Assets.xcassets in Resources */,
+				27F55DF33082A62E0013E79A /* Main.html in Resources */,
+				A20000000000000000000003 /* Privacy.html in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DE03082A62E0013E79A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */,
+				27F55E2C3082A62F0013E79A /* README.md in Resources */,
+				27F55E2D3082A62F0013E79A /* styles in Resources */,
+				27F55E2A3082A62F0013E79A /* background.js in Resources */,
+				27F55E303082A62F0013E79A /* inject.js in Resources */,
+				27F55E2B3082A62F0013E79A /* PRIVACY.md in Resources */,
+				27F55E2F3082A62F0013E79A /* manifest.json in Resources */,
+				27F55E293082A62F0013E79A /* LICENSE in Resources */,
+				27F55E283082A62F0013E79A /* ui in Resources */,
+				27F55E2E3082A62F0013E79A /* CONTRIBUTING.md in Resources */,
+				27F55E273082A62F0013E79A /* content-bridge.js in Resources */,
+				27F55E313082A62F0013E79A /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DEA3082A62E0013E79A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000005 /* PrivacyInfo.xcprivacy in Resources */,
+				27F55E213082A62F0013E79A /* README.md in Resources */,
+				27F55E223082A62F0013E79A /* styles in Resources */,
+				27F55E1F3082A62F0013E79A /* background.js in Resources */,
+				27F55E253082A62F0013E79A /* inject.js in Resources */,
+				27F55E203082A62F0013E79A /* PRIVACY.md in Resources */,
+				27F55E243082A62F0013E79A /* manifest.json in Resources */,
+				27F55E1E3082A62F0013E79A /* LICENSE in Resources */,
+				27F55E1D3082A62F0013E79A /* ui in Resources */,
+				27F55E233082A62F0013E79A /* CONTRIBUTING.md in Resources */,
+				27F55E1C3082A62F0013E79A /* content-bridge.js in Resources */,
+				27F55E263082A62F0013E79A /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		27F55DC03082A62E0013E79A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				27F55DFA3082A62E0013E79A /* ViewController.swift in Sources */,
+				27F55DC83082A62E0013E79A /* AppDelegate.swift in Sources */,
+				27F55DCA3082A62E0013E79A /* SceneDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DD23082A62E0013E79A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				27F55DFB3082A62E0013E79A /* ViewController.swift in Sources */,
+				27F55DD93082A62E0013E79A /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DDE3082A62E0013E79A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				27F55DFE3082A62E0013E79A /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		27F55DE83082A62E0013E79A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				27F55DFF3082A62E0013E79A /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		27F55DE53082A62E0013E79A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 27F55DE13082A62E0013E79A /* StayFast Video Extension (iOS) */;
+			targetProxy = 27F55DE43082A62E0013E79A /* PBXContainerItemProxy */;
+		};
+		27F55DEF3082A62E0013E79A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 27F55DEB3082A62E0013E79A /* StayFast Video Extension (macOS) */;
+			targetProxy = 27F55DEE3082A62E0013E79A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		27F55DB73082A62B0013E79A /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				27F55DB83082A62B0013E79A /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		27F55DCB3082A62E0013E79A /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				27F55DCC3082A62E0013E79A /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+		27F55DCE3082A62E0013E79A /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				27F55DCF3082A62E0013E79A /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		27F55DDA3082A62E0013E79A /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				27F55DDB3082A62E0013E79A /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		27F55E003082A62E0013E79A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		27F55E013082A62E0013E79A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		27F55E033082A62E0013E79A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast.Extension;
+				PRODUCT_NAME = "StayFast Video Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		27F55E043082A62E0013E79A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast.Extension;
+				PRODUCT_NAME = "StayFast Video Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		27F55E073082A62E0013E79A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast;
+				PRODUCT_NAME = "StayFast Video";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		27F55E083082A62E0013E79A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast;
+				PRODUCT_NAME = "StayFast Video";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		27F55E0A3082A62E0013E79A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.4;
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast.Extension;
+				PRODUCT_NAME = "StayFast Video Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		27F55E0B3082A62E0013E79A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.4;
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast.Extension;
+				PRODUCT_NAME = "StayFast Video Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		27F55E0E3082A62E0013E79A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.4;
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast;
+				PRODUCT_NAME = "StayFast Video";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		27F55E0F3082A62E0013E79A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "StayFast Video";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.4;
+				MARKETING_VERSION = 0.11.3;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.staytech.stayfast;
+				PRODUCT_NAME = "StayFast Video";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		27F55DB43082A62B0013E79A /* Build configuration list for PBXProject "StayFast Video" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27F55E003082A62E0013E79A /* Debug */,
+				27F55E013082A62E0013E79A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		27F55E023082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video Extension (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27F55E033082A62E0013E79A /* Debug */,
+				27F55E043082A62E0013E79A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		27F55E063082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27F55E073082A62E0013E79A /* Debug */,
+				27F55E083082A62E0013E79A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		27F55E093082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video Extension (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27F55E0A3082A62E0013E79A /* Debug */,
+				27F55E0B3082A62E0013E79A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		27F55E0D3082A62E0013E79A /* Build configuration list for PBXNativeTarget "StayFast Video (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27F55E0E3082A62E0013E79A /* Debug */,
+				27F55E0F3082A62E0013E79A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 27F55DB13082A62B0013E79A /* Project object */;
+}

@@ -716,6 +716,11 @@ class VideoMutationObserver {
       return; // Already observing
     }
 
+    try {
+      window.VSC_controller?.videoDiagnostics?.observeRoot(shadowRoot);
+    } catch {
+      // Optional diagnostics must not affect media discovery.
+    }
     const shadowObserver = new MutationObserver((mutations) => {
       this.scheduleMutationProcessing(mutations);
     });
@@ -735,6 +740,11 @@ class VideoMutationObserver {
     for (const [shadowRoot, shadowObserver] of this.shadowObservers) {
       const host = shadowRoot.host;
       if (!host || host.isConnected === false) {
+        try {
+          window.VSC_controller?.videoDiagnostics?.unobserveRoot(shadowRoot);
+        } catch {
+          // Discovery cleanup is independent of diagnostics.
+        }
         shadowObserver.disconnect();
         this.unlistenForReadyMedia(shadowRoot);
         this.shadowObservers.delete(shadowRoot);

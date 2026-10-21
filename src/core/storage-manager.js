@@ -49,36 +49,57 @@ if (!window.VSC.StorageManager) {
 
       // No chrome.storage — request settings from bridge via CustomEvent
       return new Promise((resolve) => {
-        const onReady = (e) => {
+        let settled = false;
+
+        const cleanup = () => {
           bridgeEvents.removeEventListener('VSC_SETTINGS_READY', onReady);
+          bridgeEvents.removeEventListener('VSC_BRIDGE_READY', onBridgeReady);
           clearTimeout(timeout);
+        };
+
+        const finish = (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          resolve(value);
+        };
+
+        const onReady = (e) => {
           const detail = e.detail;
 
           // Structured clone failure: detail is null when crossing worlds
           if (!detail) {
             window.VSC.logger?.error?.('StorageManager: bridge response is null (clone failed?)');
-            resolve(null);
+            finish(null);
             return;
           }
 
           // Bridge signals abort for blacklisted/disabled sites
           if (detail.abort) {
             window.VSC.logger?.debug?.('StorageManager: site disabled by bridge');
-            resolve(null);
+            finish(null);
             return;
           }
 
           window.VSC.logger?.debug?.('StorageManager: settings from bridge');
-          resolve({ ...defaults, ...detail.settings });
+          finish({ ...defaults, ...detail.settings });
+        };
+
+        const onBridgeReady = () => {
+          if (!settled) {
+            bridgeEvents.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+          }
         };
 
         const timeout = setTimeout(() => {
-          bridgeEvents.removeEventListener('VSC_SETTINGS_READY', onReady);
           window.VSC.logger?.warn?.('StorageManager: settings timeout, aborting initialization');
-          resolve(null);
+          finish(null);
         }, 2000);
 
         bridgeEvents.addEventListener('VSC_SETTINGS_READY', onReady);
+        bridgeEvents.addEventListener('VSC_BRIDGE_READY', onBridgeReady);
 
         bridgeEvents.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
       });

@@ -9,6 +9,7 @@ import {
   resetMockStorage,
 } from '../../helpers/chrome-mock.js';
 import { createMockVideo, createMockDOM } from '../../helpers/test-utils.js';
+import { bridgeEvents } from '../../../src/utils/bridge-events.js';
 
 // Load all required modules
 
@@ -157,6 +158,36 @@ describe('Inject', () => {
     freshExtension.teardown();
     window.VSC.videoSpeedConfig.load = originalLoad;
   });
+
+  it.each([
+    [false, false, false, 1],
+    [true, false, false, 0],
+    [false, true, false, 0],
+    [false, false, true, 0],
+  ])(
+    'late bridge readiness respects initialized=%s, pending=%s, teardown=%s',
+    (initialized, pending, teardown, expectedCalls) => {
+      const instance = window.VSC_controller;
+      const previous = {
+        initialized: instance.initialized,
+        initializationInProgress: instance.initializationInProgress,
+        teardownRequested: instance.teardownRequested,
+      };
+      const initialize = vi.spyOn(instance, 'initialize').mockResolvedValue(undefined);
+      try {
+        Object.assign(instance, {
+          initialized,
+          initializationInProgress: pending,
+          teardownRequested: teardown,
+        });
+        bridgeEvents.dispatchEvent(new CustomEvent('VSC_BRIDGE_READY'));
+        expect(initialize).toHaveBeenCalledTimes(expectedCalls);
+      } finally {
+        Object.assign(instance, previous);
+        initialize.mockRestore();
+      }
+    }
+  );
 
   it('handleDocumentReplaced tears down then reinitializes (R2)', async () => {
     extension = window.VSC_controller;
@@ -704,12 +735,106 @@ describe('Inject', () => {
     extension.teardown();
 
     expect(docRemove).toHaveBeenCalledWith('yt-navigate-finish', handler);
+    expect(docRemove).toHaveBeenCalledWith('visibilitychange', handler);
     expect(winRemove).toHaveBeenCalledWith('popstate', handler);
+    expect(winRemove).toHaveBeenCalledWith('pageshow', handler);
     expect(extension.spaNavigationHandler).toBeNull();
 
     docRemove.mockRestore();
     winRemove.mockRestore();
     extension.teardownRequested = false;
+  });
+
+  describe('tab restoration recovery', () => {
+    let recoveringExtension;
+    let scan;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      recoveringExtension = new window.VSC_controller.constructor();
+      recoveringExtension.logger = window.VSC.logger;
+      recoveringExtension.initialized = true;
+      recoveringExtension.mediaObserver = {
+        hasMediaIndicators: vi.fn(() => true),
+      };
+      scan = vi.spyOn(recoveringExtension, 'deferredMediaScan').mockImplementation(() => {});
+      recoveringExtension.setupSpaNavigationRecovery();
+    });
+
+    afterEach(() => {
+      recoveringExtension.teardown();
+      delete document.visibilityState;
+      vi.useRealTimers();
+    });
+
+    function showPage(persisted) {
+      const event = new Event('pageshow');
+      Object.defineProperty(event, 'persisted', { value: persisted });
+      window.dispatchEvent(event);
+    }
+
+    it('coalesces bfcache and visible-tab restoration into one deferred scan', () => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      showPage(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('popstate'));
+
+      expect(scan).not.toHaveBeenCalled();
+      expect(recoveringExtension.mediaObserver.hasMediaIndicators).toHaveBeenCalledOnce();
+      vi.runOnlyPendingTimers();
+      expect(scan).toHaveBeenCalledExactlyOnceWith(document);
+    });
+
+    it('recovers a visible tab even when there was no history navigation', () => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.runOnlyPendingTimers();
+      expect(scan).toHaveBeenCalledExactlyOnceWith(document);
+    });
+
+    it('does no media work for initial pageshow or background visibility changes', () => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      showPage(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.runOnlyPendingTimers();
+      expect(recoveringExtension.mediaObserver.hasMediaIndicators).not.toHaveBeenCalled();
+      expect(scan).not.toHaveBeenCalled();
+    });
+
+    it('keeps media-less restored frames cheap', () => {
+      recoveringExtension.mediaObserver.hasMediaIndicators.mockReturnValue(false);
+      showPage(true);
+      vi.runOnlyPendingTimers();
+      expect(scan).not.toHaveBeenCalled();
+      expect(recoveringExtension.scheduledWork.size).toBe(0);
+    });
+
+    it('cancels pending recovery and removes restoration listeners on teardown', () => {
+      showPage(true);
+      recoveringExtension.teardown();
+      showPage(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.runOnlyPendingTimers();
+      expect(scan).not.toHaveBeenCalled();
+      expect(recoveringExtension.scheduledWork.size).toBe(0);
+    });
+
+    it('repairs existing shadow controllers during comprehensive rediscovery', () => {
+      const video = document.createElement('video');
+      const repairDOMPlacement = vi.fn();
+      video.vsc = { repairDOMPlacement };
+      const host = document.createElement('div');
+      host.attachShadow({ mode: 'open' }).append(video);
+      document.body.append(host);
+      recoveringExtension.mediaObserver.scanAll = vi.fn(() => [video]);
+      recoveringExtension.mediaObserver.isValidMediaElement = vi.fn(() => true);
+
+      recoveringExtension.scheduleComprehensiveScan(document);
+      vi.runOnlyPendingTimers();
+
+      expect(repairDOMPlacement).toHaveBeenCalledOnce();
+      host.remove();
+    });
   });
 
   // --- CSS injection: adoptedStyleSheets composition ---

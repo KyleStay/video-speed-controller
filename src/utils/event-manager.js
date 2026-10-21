@@ -667,6 +667,20 @@ class EventManager {
 
     const mediaRateState = this.getMediaRateState(video);
 
+    // The setter may synchronously report a source-specific clamp. Let the
+    // explicit extension write finish and establish its accepted readback before
+    // cooldown fight-back compares it with the provisional requested rate.
+    if (mediaRateState?.applyingSpeed) {
+      event.stopImmediatePropagation();
+      return;
+    }
+
+    const preference = this.config.settings.lastSpeed;
+    const authoritativeSpeed =
+      Number.isFinite(preference) && Number.isFinite(mediaRateState?.acceptedSpeed)
+        ? mediaRateState.acceptedSpeed
+        : preference;
+
     if (mediaRateState?.coolDown) {
       window.VSC.logger.debug('Rate change event blocked by cooldown');
 
@@ -679,14 +693,12 @@ class EventManager {
 
       // RESTORE our authoritative value since external change already happened
       if (video.vsc && this.config.settings.lastSpeed !== null) {
-        const authoritativeSpeed = this.config.settings.lastSpeed;
-
         if (Math.abs(video.playbackRate - authoritativeSpeed) > 0.01) {
           window.VSC.logger.info(
             `Restoring speed during cooldown from external ${video.playbackRate} to authoritative ${authoritativeSpeed}`
           );
 
-          window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
+          this.restoreMediaSpeed(video, authoritativeSpeed);
         }
       }
 
@@ -725,8 +737,6 @@ class EventManager {
     // to fight back or accept. User-initiated changes (detected via gesture window)
     // are accepted immediately — this allows native site controls (e.g. YouTube's
     // speed menu or < > shortcuts) to coexist with our fight-back logic.
-    const authoritativeSpeed = this.config.settings.lastSpeed;
-
     if (authoritativeSpeed && Math.abs(video.playbackRate - authoritativeSpeed) > 0.01) {
       const timeSinceGesture = event.timeStamp - this.lastUserInteractionAt;
 
@@ -798,7 +808,7 @@ class EventManager {
         // ratechange dispatch is synchronous in some players, so doing this
         // afterward can recursively re-enter fight detection.
         this.refreshCoolDown(video, cooldown);
-        window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
+        this.restoreMediaSpeed(video, authoritativeSpeed);
         event.stopImmediatePropagation();
 
         return;
@@ -809,6 +819,27 @@ class EventManager {
       this.actionHandler.adjustSpeed(video, video.playbackRate, {
         source: 'external',
       });
+    }
+  }
+
+  /** Restore once, retaining source-specific readback even when a setter throws. */
+  restoreMediaSpeed(video, speed) {
+    const state = this.getOrCreateMediaRateState(video);
+    state.applyingSpeed = true;
+    try {
+      window.VSC.siteHandlerManager.handleSpeedChange(video, speed);
+    } catch (error) {
+      window.VSC.logger.debug(`Playback speed restoration rejected: ${error?.message ?? error}`);
+    } finally {
+      try {
+        const accepted = video.playbackRate;
+        if (Number.isFinite(accepted) && accepted > 0) {
+          state.acceptedSpeed = accepted;
+        }
+      } catch {
+        // A failing page getter must not strand the synchronous-event guard.
+      }
+      state.applyingSpeed = false;
     }
   }
 

@@ -1,0 +1,290 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pristine local feed</title>
+<style>
+  body {
+    margin: 0;
+    font: 16px system-ui;
+  }
+  #older-slot {
+    position: absolute;
+    top: 0;
+  }
+  .lead {
+    height: 900px;
+  }
+  #nested {
+    height: 360px;
+    width: 360px;
+    overflow: auto;
+  }
+  .content {
+    width: 570px;
+    min-height: 1300px;
+    padding-top: 260px;
+  }
+  #slot {
+    width: 320px;
+    margin-left: 110px;
+    position: relative;
+  }
+  video {
+    display: block;
+    width: 320px;
+    height: 180px;
+  }
+  .tail {
+    height: 1600px;
+  }
+</style>
+<script>
+  // Fixture-only observation begins before media/source creation. There is no user input.
+  const trace = (window.__pristine = {
+    armed: false,
+    done: false,
+    rows: [],
+    calls: [],
+    presentations: [],
+    ownedAdded: 0,
+    errors: [],
+    played: false,
+    playingEvents: 0,
+    rerendered: false,
+    replayed: false,
+    dropped: 0,
+  });
+  let finish;
+  window.__pristineResult = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const restorers = [];
+  window.__pristineCleanup = () => {
+    trace.armed = false;
+    observer.disconnect();
+    restorers
+      .splice(0)
+      .reverse()
+      .forEach((restore) => restore());
+  };
+  const scenario = new URLSearchParams(location.search).get('case') || 'first';
+  const scroll = window.scrollTo;
+  const sample = (event) => {
+    if (!trace.armed) return;
+    if (trace.rows.length >= 2000) {
+      trace.dropped++;
+      return;
+    }
+    const nested = document.querySelector('#nested');
+    trace.rows.push({
+      event,
+      at: performance.now(),
+      pageX: scrollX,
+      pageY: scrollY,
+      nestedX: nested.scrollLeft,
+      nestedY: nested.scrollTop,
+      scrollHeight: nested.scrollHeight,
+      active: document.activeElement?.tagName,
+      activation: navigator.userActivation.hasBeenActive,
+      transientActivation: navigator.userActivation.isActive,
+      owned: document.querySelectorAll('vsc-ios-player').length,
+      native:
+        !!document.fullscreenElement ||
+        !!trace.video?.webkitDisplayingFullscreen ||
+        trace.video?.webkitPresentationMode === 'fullscreen',
+      ready: trace.video?.readyState || 0,
+      paused: trace.video?.paused ?? true,
+      time: trace.video?.currentTime || 0,
+      controlled: !!trace.video?.vsc,
+      olderControlled: !!trace.older?.vsc,
+      decodedFrames: trace.video?.getVideoPlaybackQuality?.().totalVideoFrames || 0,
+      mediaError: trace.video?.error?.code || 0,
+    });
+  };
+  const spy = (object, name, fallback) => {
+    const original = object[name];
+    const own = Object.getOwnPropertyDescriptor(object, name);
+    if (typeof original !== 'function' && !fallback) return;
+    object[name] = function (...args) {
+      if (trace.armed) {
+        trace.calls.push({ name, at: performance.now() });
+        sample('before-' + name);
+      }
+      const result = typeof original === 'function' ? original.apply(this, args) : undefined;
+      sample('after-' + name);
+      return result;
+    };
+    restorers.push(() => {
+      if (own) Object.defineProperty(object, name, own);
+      else delete object[name];
+    });
+  };
+  for (const name of ['scrollTo', 'scrollBy']) spy(window, name);
+  for (const name of ['scrollTo', 'scrollBy']) spy(Element.prototype, name);
+  for (const name of ['focus', 'scrollIntoView', 'requestFullscreen'])
+    spy(HTMLElement.prototype, name);
+  // WebKit has no native AVKit in Chrome. These API sentries complement DOM fullscreen and host observation.
+  for (const name of [
+    'webkitEnterFullscreen',
+    'webkitEnterFullScreen',
+    'webkitSetPresentationMode',
+  ])
+    spy(HTMLVideoElement.prototype, name, true);
+  for (const name of ['scrollTop', 'scrollLeft']) {
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, name);
+    if (descriptor?.configurable && descriptor.set) {
+      Object.defineProperty(Element.prototype, name, {
+        ...descriptor,
+        set(value) {
+          descriptor.set.call(this, value);
+          if (trace.armed) trace.calls.push({ name, at: performance.now() });
+          sample(name + '-set');
+        },
+      });
+      restorers.push(() => Object.defineProperty(Element.prototype, name, descriptor));
+    }
+  }
+  addEventListener('error', (event) => trace.errors.push(event.message));
+  addEventListener('unhandledrejection', (event) => trace.errors.push(String(event.reason)));
+  for (const name of [
+    'scroll',
+    'focusin',
+    'fullscreenchange',
+    'webkitbeginfullscreen',
+    'webkitendfullscreen',
+    'webkitpresentationmodechanged',
+    'loadstart',
+    'loadedmetadata',
+    'loadeddata',
+    'play',
+    'playing',
+    'pause',
+    'emptied',
+  ]) {
+    document.addEventListener(
+      name,
+      (event) => {
+        if (!trace.armed) return;
+        if (
+          ['fullscreenchange', 'webkitbeginfullscreen', 'webkitpresentationmodechanged'].includes(
+            name
+          )
+        )
+          trace.presentations.push({ name, at: performance.now() });
+        if (event.target === trace.video && name === 'playing') {
+          trace.played = true;
+          trace.playingEvents++;
+        }
+        sample(name);
+        if (event.target === trace.video && name === 'loadeddata') {
+          queueMicrotask(() => sample('loadeddata-microtask'));
+          requestAnimationFrame(() => {
+            sample('loadeddata-frame1');
+            requestAnimationFrame(() => sample('loadeddata-frame2'));
+          });
+        }
+      },
+      true
+    );
+  }
+  const observer = new MutationObserver((records) => {
+    if (!trace.armed) return;
+    for (const record of records)
+      for (const node of record.addedNodes) {
+        if (node.nodeType === 1)
+          trace.ownedAdded +=
+            Number(node.localName === 'vsc-ios-player') +
+            node.querySelectorAll('vsc-ios-player').length;
+      }
+    sample('mutation');
+  });
+  addEventListener('DOMContentLoaded', async () => {
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const media = (id) => {
+      const video = document.createElement('video');
+      video.id = id;
+      video.muted = true;
+      video.loop = true;
+      video.controls = true;
+      return video;
+    };
+    if (scenario !== 'first') {
+      trace.older = media('older');
+      trace.older.src = '/__pristine.webm?older';
+      document.querySelector('#older-slot').append(trace.older);
+      await new Promise((resolve) => {
+        if (trace.older.readyState >= 2) resolve();
+        else trace.older.addEventListener('loadeddata', resolve, { once: true });
+      });
+      // Allow the existing controller to attach; this timer grants no user activation.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    scroll.call(window, 0, 720);
+    document.querySelector('#nested').scrollTo(70, 220);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    trace.armed = true;
+    sample('baseline');
+    const start = performance.now();
+    const frame = () => {
+      sample('frame');
+      if (performance.now() - start < 4000) requestAnimationFrame(frame);
+      else {
+        sample('final');
+        trace.done = true;
+        trace.armed = false;
+        observer.disconnect();
+        const { video, original, older, ...serializable } = trace;
+        finish({
+          ...serializable,
+          sameVideo: video === original,
+          connected: video.isConnected,
+          inSlot: document.querySelector('#slot').contains(video),
+        });
+      }
+    };
+    requestAnimationFrame(frame);
+    setTimeout(() => {
+      if (scenario === 'reuse') {
+        trace.video = trace.older;
+        document.querySelector('#slot').append(trace.video);
+        trace.video.removeAttribute('playsinline');
+        trace.video.removeAttribute('webkit-playsinline');
+      } else {
+        trace.video = media('fresh');
+        document.querySelector('#slot').append(trace.video);
+      }
+      trace.original = trace.video;
+      trace.initialDecodedFrames = trace.video.getVideoPlaybackQuality?.().totalVideoFrames || 0;
+      trace.video.src = '/__pristine.webm?' + scenario;
+      trace.video.load();
+      trace.video.play().catch((error) => trace.errors.push('play:' + error.name));
+      if (scenario === 'rerender') {
+        trace.video.addEventListener(
+          'playing',
+          () => {
+            setTimeout(() => {
+              const original = document.querySelector('#slot');
+              const replacement = original.cloneNode(false);
+              replacement.append(trace.video);
+              original.replaceWith(replacement);
+              trace.rerendered = true;
+              trace.video.pause();
+              trace.video
+                .play()
+                .then(() => {
+                  trace.replayed = true;
+                })
+                .catch((error) => trace.errors.push('replay:' + error.name));
+            }, 200);
+          },
+          { once: true }
+        );
+      }
+    }, 80);
+  });
+</script>
+<div id="older-slot"></div>
+<div class="lead"></div>
+<div id="nested">
+  <div class="content"><div id="slot"></div></div>
+</div>
+<div class="tail"></div>

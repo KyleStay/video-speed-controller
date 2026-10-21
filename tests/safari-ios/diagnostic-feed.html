@@ -1,0 +1,177 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Synthetic Safari capture/export check</title>
+<style>
+  body {
+    margin: 0;
+    font: 14px system-ui;
+  }
+  .spacer {
+    height: 900px;
+  }
+  #feed {
+    position: relative;
+    height: 340px;
+    overflow: auto;
+  }
+  #content {
+    position: relative;
+    width: 650px;
+    height: 1600px;
+  }
+  video {
+    width: 320px;
+    height: 180px;
+  }
+  #next {
+    position: absolute;
+    left: 70px;
+    top: 250px;
+  }
+  #diagnostics {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 180px;
+    height: 130px;
+    overflow: auto;
+    background: white;
+    z-index: 999999;
+  }
+  textarea {
+    width: 95%;
+    height: 60px;
+    font-size: 16px;
+  }
+  #actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: white;
+    z-index: 999999;
+  }
+  button {
+    font: 16px system-ui;
+    min-height: 44px;
+  }
+</style>
+<div class="spacer"></div>
+<div id="feed">
+  <div id="content">
+    <video
+      id="older-video"
+      controls
+      playsinline
+      muted
+      preload="auto"
+      src="/sample.mp4?older"
+    ></video>
+    <div id="next"></div>
+  </div>
+</div>
+<div class="spacer"></div>
+<div id="diagnostics">
+  <div role="status" id="status">Diagnostic fixture: starting</div>
+  <textarea aria-label="Diagnostic recorder snapshot" readonly></textarea>
+</div>
+<div id="actions">
+  <button id="baseline">Prepare diagnostic baseline</button>
+  <button id="load">Load next diagnostic video</button>
+  <button id="reuse">Reuse diagnostic source</button>
+  <button id="jump">Jump diagnostic feed to top</button>
+  <button id="inspect">Inspect recorder snapshot</button>
+</div>
+<script>
+  const feed = document.querySelector('#feed');
+  let current = null,
+    generation = 0,
+    errors = 0,
+    nativeBegins = 0,
+    intent = 'initial',
+    requestError = 'none';
+  const recorder = () => window.VSC_controller?.videoDiagnostics;
+  function update() {
+    document.querySelector('#status').textContent =
+      `Diagnostic fixture: recorder: ${!!recorder()}; older controller: ${!!document.querySelector('#older-video').vsc}; generation: ${generation}; intent: ${intent}; page: ${scrollX},${scrollY}; nested: ${feed.scrollLeft},${feed.scrollTop}; ready: ${current?.readyState || 0}; paused: ${current?.paused ?? true}; time: ${(current?.currentTime || 0).toFixed(2)}; inline: ${current?.playsInline ?? false}; controllers: ${document.querySelectorAll('vsc-controller').length}; native begins: ${nativeBegins}; request error: ${requestError}; errors: ${errors}`;
+  }
+  function play() {
+    try {
+      Promise.resolve(current.play()).catch((error) => {
+        requestError = error.name;
+        update();
+      });
+    } catch (error) {
+      requestError = error.name;
+    }
+    update();
+  }
+  document.querySelector('#baseline').onclick = () => {
+    intent = 'prepare';
+    scrollTo(0, 720);
+    feed.scrollTo(70, 220);
+    update();
+  };
+  document.querySelector('#load').onclick = () => {
+    intent = 'load';
+    generation++;
+    current = document.createElement('video');
+    current.id = 'new-video';
+    current.controls = true;
+    current.muted = true;
+    current.loop = true;
+    current.preload = 'auto';
+    for (const name of [
+      'loadedmetadata',
+      'loadeddata',
+      'playing',
+      'pause',
+      'timeupdate',
+      'ratechange',
+    ])
+      current.addEventListener(name, update);
+    current.addEventListener('webkitbeginfullscreen', () => {
+      nativeBegins++;
+      update();
+    });
+    document.querySelector('#next').replaceChildren(current);
+    current.src = '/sample.mp4?feed=' + generation;
+    play();
+  };
+  document.querySelector('#reuse').onclick = () => {
+    if (!current) return;
+    intent = 'reuse';
+    generation++;
+    current.src = '/sample.mp4?feed=' + generation;
+    play();
+  };
+  document.querySelector('#jump').onclick = () => {
+    intent = 'intentional synthetic jump';
+    scrollTo(0, 0);
+    feed.scrollTo(0, 0);
+    update();
+  };
+  document.querySelector('#inspect').onclick = () => {
+    const report = recorder()?.snapshot();
+    document.querySelector('textarea').value = JSON.stringify(
+      report ?? { error: 'Recorder unavailable' }
+    );
+    update();
+  };
+  addEventListener('scroll', update, { passive: true });
+  feed.addEventListener('scroll', update, { passive: true });
+  new MutationObserver(update).observe(document.querySelector('#content'), {
+    childList: true,
+    subtree: true,
+  });
+  addEventListener('error', () => {
+    errors++;
+    update();
+  });
+  addEventListener('unhandledrejection', () => {
+    errors++;
+    update();
+  });
+  setTimeout(update, 3000);
+  update();
+</script>

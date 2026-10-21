@@ -67,8 +67,29 @@ describe('Popup accessibility', () => {
     window.dispatchEvent(new Event('pagehide'));
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     delete chrome.runtime.onMessage.removeListener;
     cleanupChromeMock();
+  });
+
+  it('accepts Safari custom requests above 16 without advertising a universal maximum', async () => {
+    vi.stubGlobal('__VSC_BROWSER__', 'safari');
+    document.getElementById('custom-speed-input').max = '16';
+    await initializePopup();
+    const input = document.getElementById('custom-speed-input');
+    expect(input.hasAttribute('max')).toBe(false);
+    input.value = '32';
+    document
+      .getElementById('custom-speed-form')
+      .dispatchEvent(new Event('submit', { cancelable: true }));
+    await vi.waitFor(() =>
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ type: 'VSC_SET_SPEED', payload: { speed: 32 } }),
+        expect.any(Function)
+      )
+    );
+    expect(input.getAttribute('aria-invalid')).toBe('false');
   });
 
   it('names preset groups and initializes pressed states', async () => {
@@ -100,7 +121,7 @@ describe('Popup accessibility', () => {
 
     expect(customSpeedInput.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById('status').textContent).toBe(
-      'Speed must be between 0.07x and 16x.'
+      'Speed must be between 0.07× and 16×.'
     );
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
 
@@ -308,5 +329,19 @@ describe('Popup accessibility', () => {
     expect(popupCss).toMatch(
       /\.reset-btn\s*\{[^}]*background:\s*var\(--md-primary\);[^}]*color:\s*var\(--md-on-primary\);/s
     );
+  });
+
+  it('uses the device viewport without disabling pinch zoom', () => {
+    const parsed = new DOMParser().parseFromString(popupHtml, 'text/html');
+    const viewport = parsed.querySelector('meta[name="viewport"]').content;
+    expect(viewport).toBe('width=device-width, initial-scale=1');
+    expect(viewport).not.toMatch(/user-scalable|maximum-scale/);
+  });
+
+  it('provides touch-size controls and custom input without iPhone focus zoom', () => {
+    const touchCss = popupCss.split('@media (any-pointer: coarse)')[1];
+    expect(touchCss).toMatch(/button.preset-btn,[\s\S]*?min-width: 44px;[\s\S]*?min-height: 44px;/);
+    expect(touchCss).toMatch(/\.custom-speed input\s*\{\s*font-size: 16px;/);
+    expect(popupCss).not.toMatch(/min-width:\s*(280|304)px/);
   });
 });

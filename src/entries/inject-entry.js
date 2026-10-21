@@ -11,6 +11,7 @@ import '../utils/debug-helper.js';
 import '../utils/dom-utils.js';
 import '../utils/event-manager.js';
 import '../utils/bridge-events.js';
+import '../utils/video-load-diagnostics.js';
 
 // Site pattern matching — side-effect import registers window.VSC.matchSiteRule.
 // Must come before settings.js so load() can call it.
@@ -35,6 +36,12 @@ import '../core/video-controller.js';
 import '../ui/controls.js';
 import '../ui/drag-handler.js';
 import '../ui/shadow-dom.js';
+import '../ui/ios-player-view.js';
+import '../ui/ios-player-scroll.js';
+import '../ui/ios-player-frames.js';
+import '../ui/ios-player-scrubber.js';
+import '../ui/ios-player-gestures.js';
+import '../ui/ios-player.js';
 import '../ui/vsc-controller-element.js';
 
 // Site-specific handlers - depends on core
