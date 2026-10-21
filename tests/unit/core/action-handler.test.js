@@ -1515,6 +1515,60 @@ describe('ActionHandler', () => {
       }
     );
 
+    it.each(['synchronous', 'deferred'])(
+      'keeps different media clamps through sibling commands and site resets (%s)',
+      (timing) => {
+        vi.useFakeTimers();
+        const { video, actionHandler, config } = setup();
+        const other = createTestVideoWithController(config, actionHandler);
+        Object.defineProperty(video, 'readyState', { value: 4, configurable: true });
+        const manager = new window.VSC.EventManager(config, actionHandler);
+        actionHandler.eventManager = manager;
+        const notify = (media) =>
+          manager.handleRateChange({ target: media, stopImmediatePropagation: vi.fn() });
+        let writes = 0;
+        vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(
+          (media, rate) => {
+            if (++writes > 10) {
+              throw new Error('Repeated unsupported rate');
+            }
+            media.playbackRate = media === video ? Math.min(rate, 2) : rate;
+            const dispatch = () => notify(media);
+            if (timing === 'synchronous') {
+              dispatch();
+            } else {
+              setTimeout(dispatch, 0);
+            }
+          }
+        );
+        try {
+          actionHandler.setSpeed(video, 8, 'user');
+          actionHandler.setSpeed(other, 8, 'user');
+          vi.advanceTimersByTime(10);
+          notify(video);
+          expect(writes).toBe(2);
+          expect(config.settings.lastSpeed).toBe(8);
+          // A command on B cannot force A to retry a rejected rate, either
+          // during its cooldown or in the later fight-back path.
+          actionHandler.setSpeed(other, 4, 'user');
+          for (const elapsed of [10, 5000]) {
+            vi.advanceTimersByTime(elapsed);
+            video.playbackRate = 1;
+            notify(video);
+            vi.advanceTimersByTime(10);
+            expect(video.playbackRate).toBe(2);
+            expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2);
+            expect(config.settings.lastSpeed).toBe(4);
+          }
+          expect(writes).toBe(5);
+        } finally {
+          manager.cleanup();
+          other.vsc.remove();
+          vi.useRealTimers();
+        }
+      }
+    );
+
     it('retains local initialization readback when a site mutates the rate and then throws', () => {
       const { video, actionHandler, config, save } = setup();
       config.settings.lastSpeed = 8;
@@ -1546,6 +1600,7 @@ describe('ActionHandler', () => {
       try {
         expect(actionHandler.setSpeed(video, 1.5, 'init')).toBe(true);
         expect(config.settings.lastSpeed).toBeNull();
+        expect(eventManager.getMediaRateState(video).acceptedSpeed).toBeUndefined();
         expect(save).not.toHaveBeenCalled();
       } finally {
         eventManager.cleanup();

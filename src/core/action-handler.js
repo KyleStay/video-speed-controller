@@ -565,11 +565,10 @@ class ActionHandler {
       if (source !== 'external' && source !== 'init') {
         this.config.settings.lastSpeed = numericSpeed;
       }
-      if (mediaRateState) {
-        // A remembered preference can exceed this source's accepted rate.
-        // Keep its local authority without replacing the saved preference.
+      if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
+        // Each source can accept a different rate for the same command.
+        // A sibling's readback must not invalidate this media's authority.
         mediaRateState.acceptedSpeed = numericSpeed;
-        mediaRateState.speedPreference = this.config.settings.lastSpeed;
       }
     } catch (error) {
       let restoredSpeed = previousSpeed;
@@ -581,9 +580,8 @@ class ActionHandler {
           if (source !== 'external' && source !== 'init') {
             restoredSpeed = actual;
           }
-          if (mediaRateState) {
+          if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
             mediaRateState.acceptedSpeed = actual;
-            mediaRateState.speedPreference = restoredSpeed;
           }
         }
       } catch {

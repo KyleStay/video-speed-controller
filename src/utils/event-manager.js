@@ -677,9 +677,7 @@ class EventManager {
 
     const preference = this.config.settings.lastSpeed;
     const authoritativeSpeed =
-      Number.isFinite(preference) &&
-      mediaRateState?.speedPreference === preference &&
-      Number.isFinite(mediaRateState.acceptedSpeed)
+      Number.isFinite(preference) && Number.isFinite(mediaRateState?.acceptedSpeed)
         ? mediaRateState.acceptedSpeed
         : preference;
 
@@ -700,7 +698,7 @@ class EventManager {
             `Restoring speed during cooldown from external ${video.playbackRate} to authoritative ${authoritativeSpeed}`
           );
 
-          window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
+          this.restoreMediaSpeed(video, authoritativeSpeed);
         }
       }
 
@@ -810,7 +808,7 @@ class EventManager {
         // ratechange dispatch is synchronous in some players, so doing this
         // afterward can recursively re-enter fight detection.
         this.refreshCoolDown(video, cooldown);
-        window.VSC.siteHandlerManager.handleSpeedChange(video, authoritativeSpeed);
+        this.restoreMediaSpeed(video, authoritativeSpeed);
         event.stopImmediatePropagation();
 
         return;
@@ -821,6 +819,27 @@ class EventManager {
       this.actionHandler.adjustSpeed(video, video.playbackRate, {
         source: 'external',
       });
+    }
+  }
+
+  /** Restore once, retaining source-specific readback even when a setter throws. */
+  restoreMediaSpeed(video, speed) {
+    const state = this.getOrCreateMediaRateState(video);
+    state.applyingSpeed = true;
+    try {
+      window.VSC.siteHandlerManager.handleSpeedChange(video, speed);
+    } catch (error) {
+      window.VSC.logger.debug(`Playback speed restoration rejected: ${error?.message ?? error}`);
+    } finally {
+      try {
+        const accepted = video.playbackRate;
+        if (Number.isFinite(accepted) && accepted > 0) {
+          state.acceptedSpeed = accepted;
+        }
+      } catch {
+        // A failing page getter must not strand the synchronous-event guard.
+      }
+      state.applyingSpeed = false;
     }
   }
 

@@ -110,7 +110,7 @@ and pitch policy. It avoids reassigning an unchanged native rate and does not
 fight a source-specific initialization clamp.
 
 The native `/rate-probe.html` fixture compares 1×, 2×, 2.5×, 3× and 4× using
-1.5-second samples of actual presented frames and media-time progress. Add
+1.5-second samples of video-frame callbacks and media-time progress. Add
 `?controlled` to measure an extension-controlled video; the default closed-root
 video measures Safari without controller ownership. Higher setter-acceptance
 probes remain separate. Frame counts, cadence gaps, readiness, errors and actual

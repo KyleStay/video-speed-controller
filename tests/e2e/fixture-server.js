@@ -266,22 +266,22 @@ button.addEventListener('click', async () => {
       await video.play();
       const firstFrame = await firstPresentedFrame();
       if (firstFrame === 'timedOut') { results.push({requested,readback:video.playbackRate,firstFrame,duration:video.duration,ended:video.ended,paused:video.paused,time:video.currentTime,error:video.error?.code || 0}); video.pause(); continue; }
-      let presentedFrames = typeof video.requestVideoFrameCallback === 'function' ? 0 : null;
+      let frameCallbacks = typeof video.requestVideoFrameCallback === 'function' ? 0 : null;
       let frameToken, sampling = true, lastFrameClock = null, maxFrameGapMs = 0;
       const countPresented = (clock) => {
-        presentedFrames++;
+        frameCallbacks++;
         if (lastFrameClock !== null) maxFrameGapMs = Math.max(maxFrameGapMs, clock-lastFrameClock);
         lastFrameClock = clock;
         if (sampling) frameToken = video.requestVideoFrameCallback(countPresented);
       };
-      if (presentedFrames !== null) frameToken = video.requestVideoFrameCallback(countPresented);
+      if (frameCallbacks !== null) frameToken = video.requestVideoFrameCallback(countPresented);
       const startTime = video.currentTime, startClock = performance.now(), startFrames = frameCount();
       await delay(requested <= 4 ? 1500 : 400);
       sampling = false;
       if (frameToken !== undefined) video.cancelVideoFrameCallback?.(frameToken);
       const seconds = (performance.now() - startClock) / 1000;
       const endFrames = frameCount();
-      results.push({requested,readback:video.playbackRate,firstFrame,presentedFrames,presentedFps:presentedFrames === null ? null : presentedFrames/seconds,maxFrameGapMs,extensionControlled:!!video.vsc,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
+      results.push({requested,readback:video.playbackRate,firstFrame,frameCallbacks,callbackFps:frameCallbacks === null ? null : frameCallbacks/seconds,maxFrameGapMs,extensionControlled:!!video.vsc,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
       video.pause();
       status.textContent = 'Rate probe results: ' + JSON.stringify({setterAcceptance,results});
     }

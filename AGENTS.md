@@ -328,9 +328,11 @@ with direct `chrome.*` access.
   `EventManager.mediaRateStates`. Arm cooldown before writing `playbackRate`;
   synchronous ratechange must not recurse. `VideoController.remove()` releases
   that media's state; manager cleanup cancels every remaining timer.
-  Accepted rates are scoped to the media and the preference that requested them;
+  Accepted rates are scoped to each media until its next explicit rate change;
   a clamped initialization must not overwrite the saved preference or recursively
-  fight its own accepted readback. Unset (`null`) authority stays unset. Native
+  fight its own accepted readback. Sibling updates cannot invalidate that readback,
+  and fight-back writes guard synchronous events and retain accepted rates.
+  Unset (`null`) authority stays unset. Native
   assignments skip unchanged rates. Initialization never persists a speed.
   `utils/speed-limits.js` selects browser limits at build time. All browsers
   retain the 0.07× minimum. Safari accepts finite requests up to the largest

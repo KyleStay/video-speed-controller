@@ -520,6 +520,40 @@ describe('EventManager', () => {
     expect(eventManager.getMediaRateState(video).coolDown).not.toBe(false);
   });
 
+  it.each([false, true])(
+    'retains a clamped fight-back without recursive writes (cooldown %s)',
+    async (cooldown) => {
+      const config = window.VSC.videoSpeedConfig;
+      await config.load();
+      config.settings.lastSpeed = 8;
+      const manager = new window.VSC.EventManager(config, null);
+      const video = createMockVideo({ playbackRate: 1 });
+      video.vsc = {};
+      Object.defineProperty(video, 'readyState', { value: 4, configurable: true });
+      const notify = () =>
+        manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+      const setter = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media) => {
+          media.playbackRate = 2;
+          notify();
+        });
+      if (cooldown) {
+        manager.refreshCoolDown(video);
+      }
+      try {
+        notify();
+        notify();
+        expect(setter).toHaveBeenCalledTimes(1);
+        expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2);
+        expect(config.settings.lastSpeed).toBe(8);
+      } finally {
+        manager.cleanup();
+        setter.mockRestore();
+      }
+    }
+  );
+
   it('releaseMediaState clears timers and forgets only that media element', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
