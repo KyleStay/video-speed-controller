@@ -143,8 +143,9 @@ with direct `chrome.*` access.
   accessible shadow-DOM dialog; `ios-player-scroll` preserves scroll around
   presentation changes and loads before `ios-player-frames`, which expands permitted
   same-origin iframe ancestors; `ios-player-scrubber` owns precision seeking;
-  `ios-player-gestures` owns touch pinch Fit/Fill. Read `docs/safari.md` before
-  changing these.
+  `ios-player-gestures` owns stage touch gestures. `ios-player-fullscreen` owns
+  optional container DOM fullscreen, scoped to the active UI/session and target.
+  Read `docs/safari.md` before changing these.
   `popup/tab-command.js` aggregates frame replies in the popup extension context
   only; it is not part of the MAIN-world module loader.
 - `utils/` — `constants` (+ `key-maps`), `logger`, `dom-utils`, `event-manager`,
@@ -272,12 +273,16 @@ with direct `chrome.*` access.
   A per-media observer watches only these two attributes; after a bounded eight
   conflicts it hands back to the site. Cleanup/Use site player restores the
   latest site intent; a new source or explicit Custom Player re-enables inline
-  ownership. Custom close and native exit retain inline policy. The primary Full screen
-  action calls the original media's native fullscreen API in the trusted tap,
-  without creating the custom-player portal. Native presentation must not
-  trigger automatic custom-player takeover or fullscreen exit/reentry loops.
-  Custom Player is an explicit secondary choice. `prepareMedia()` owns native
-  controls only for that session; native fullscreen methods remain unchanged.
+  ownership. Custom close and native exit retain inline policy. The primary
+  Full screen action opens the owned player around the original media; Custom
+  Player remains another explicit entry. `ios-player-fullscreen` requests DOM
+  fullscreen only for the owned container where permitted. Guard asynchronous
+  completion by UI/session/source generation; cleanup removes listeners and
+  exits only its owned fullscreen target. More → Apple player explicitly invokes
+  the original media's native presentation API. Native presentation must not
+  trigger automatic takeover or fullscreen exit/reentry loops. `prepareMedia()`
+  owns native controls only for that session; native fullscreen methods remain
+  unchanged. Safari's bars may remain; webpage controls cannot modify Apple's UI.
   Inline-attribute ownership is separate and begins at attachment.
 - **Recycled media sources**: both `emptied` and `loadstart` invalidate the old
   presentation generation, PiP/history resume flags and native/queued scroll
@@ -288,6 +293,10 @@ with direct `chrome.*` access.
   or scroll target. Native-begin events only observe presentation; they never
   create or refresh a post-entry scroll snapshot. Only an explicit native
   fullscreen request captures scrolling before invoking the browser API.
+  A denied explicit owned-to-Apple request may restore only its same-source
+  viewport, with no play/fullscreen call; newer input (including wheel), URL/root,
+  source, presentation or cleanup invalidates recovery. Native fullscreen events
+  never open it.
 - **Presentation scroll**: `IOSPlayerScrollState` captures page and composed
   nested-scroller offsets around native/custom entry and exit. Native transitions
   include accessible same-origin parents; frame expansion uses the validated
@@ -318,10 +327,19 @@ with direct `chrome.*` access.
   during the gesture, clamps to current seek bounds, coalesces decoder writes,
   restores the starting time on cancellation, and resumes only an originally
   playing, still-current visible session. Close/cleanup cancels capture, timers,
-  and gesture listeners without a stale resume. Pinch Fit/Fill owns stage touches
-  separately. Stage touch capture stops site-player handlers while preserving
+  and gesture listeners without a stale resume. Edge touch double taps seek ±10s;
+  center taps do not seek, and touch-derived `dblclick` never runs a second seek.
+  Gesture runtime proof requires two observed DOM touch pairs; an XCTest
+  double-tap invocation that delivers only one pair is incomplete coverage.
+  Pinch Fit/Fill owns stage touches separately. Active sessions own and restore
+  `touch-action` on the light-DOM video and distinct portal container.
+  Stage touch capture stops site-player handlers while preserving
   Safari's default synthesized click; cleanup removes these guards. More/Escape
-  stays inside the dialog; keyboard range input remains usable. Native audio
+  stays inside the dialog; keyboard range input remains usable. Lock hides the
+  HUD and seek feedback, cancels queued scrubbing and blocks playback keys/gestures
+  while preserving Escape, navigation and Unlock activation. Its separate Unlock
+  target remains at least 44px; unlock refreshes controls. Seek feedback is transient, session-scoped, and
+  cleared with its timer on close/cleanup. Native audio
   selection and captions stay separate; volume, PiP and
   AirPlay are capability-gated and honor the media's restriction flags.
 - **Rate state**: cooldown, fight count and timers are per-media in

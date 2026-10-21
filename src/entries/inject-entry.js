@@ -41,6 +41,7 @@ import '../ui/ios-player-scroll.js';
 import '../ui/ios-player-frames.js';
 import '../ui/ios-player-scrubber.js';
 import '../ui/ios-player-gestures.js';
+import '../ui/ios-player-fullscreen.js';
 import '../ui/ios-player.js';
 import '../ui/vsc-controller-element.js';
 

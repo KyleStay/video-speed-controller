@@ -8,7 +8,78 @@ acceptance checks below pass on the intended devices.
 For signed iOS distribution and ready-to-use App Store Connect metadata, see
 [the TestFlight release packet](testflight.md).
 
-## October 21 Safari 16× verification
+## Build 12 presentation policy and source-freeze acceptance
+
+The next candidate is **0.11.4 (12)**. The primary **Full screen** action opens
+StayFast's owned player around the original media. **Custom Player** remains an
+explicit alternate entry. Ordinary Play stays inline; loading or playing media
+does not automatically open the player or move the page.
+
+The owned player includes edge double-tap ±10-second seeking and brief feedback;
+center taps do not seek. **Lock** hides controls/feedback, cancels queued scrubbing
+and blocks playback keys/gestures while preserving Unlock and keyboard navigation.
+Light-DOM video/container `touch-action` ownership lasts only for that session.
+Its optional
+container fullscreen uses the DOM fullscreen API only where Safari and the
+frame's permissions allow it. `ios-player-fullscreen` owns that target's
+listeners and exit lifecycle, guards deferred completion against stale sessions,
+and leaves the media's native APIs unchanged. iPhone Safari browser bars may
+remain visible. **More → Apple player** is the explicit native-fullscreen escape
+where supported; StayFast cannot change Apple's controls or place its own
+controls inside Apple's player or Picture in Picture.
+An explicit Apple-player denial may restore the same-source StayFast viewport
+without play or fullscreen requests. Newer input (including wheel), navigation,
+source/session changes or cleanup cancel recovery; native fullscreen events never open it.
+
+The original media, source/srcObject, MediaSource, MediaKeys and tracks remain
+in use. The 0.07×–16× range, source-generation invalidation and bounded page/nested
+scroll restoration still apply. High-rate numeric acceptance does not establish
+smooth decoding.
+
+The frozen candidate passed native owned-player acceptance (`accept-owned-reveal`),
+primary entry, page and nested scroll checks on the iPhone 17 Pro/iOS 26.2
+simulator. The final containing-app batch passed activation, clean player
+appearance and links. Chrome passed owned-player **36/36**, mobile **11/11** and
+basic **22/22** checks. An instrumented live YouTube rerun passed **12/12** with
+the same assertions; the initial SPA-navigation failure is retained in the evidence.
+Native artifacts and resource identity are under `test-results/owned-fullscreen/`.
+The final frame-boundary check passed in 67 seconds: all three presentation
+phases preserved true pre-entry child/parent positions within 2 CSS pixels,
+source identity and zero page/media errors. The missing-`playsinline` regression
+passed in 90 seconds. Final portrait, locked-player and inline screenshots were
+inspected successfully.
+
+Native touch double-tap remains **unverified**: XCTest delivered only one DOM
+touch pair even on a standalone control without the extension. Chrome touch-pair
+checks and unit tests pass; physical-device follow-up is required. These results do not establish
+physical-device, all-site, audio, DRM
+or AirPlay acceptance. Final archive/upload/Testing status belongs to the local
+build 12 release ledger described in [the release packet](testflight.md).
+The records below describe earlier candidates.
+
+### Final paired rate measurement
+
+Quiet baseline and owned-player runs used the same 180-second 720p H.264/AAC
+moving clip, one-second warmup and six measured seconds at 1×/2×/2.5×/3×/4×/8×/16×.
+Both passed functional validation at all seven rates; every owned sample retained
+the original media, source and ownership. Neither passed every strict cadence target.
+
+| 16× mode     | Measured media-time rate | Frame callbacks/s | p95 gap | Maximum gap |
+| ------------ | -----------------------: | ----------------: | ------: | ----------: |
+| Baseline     |                 16.0004× |              53.1 |    17ms |       131ms |
+| Owned player |                 16.0026× |              53.7 |    18ms |       123ms |
+
+Owned cadence missed at 1× (p95 fractionally above 50ms), 2.5× (175ms maximum)
+and 4× (160ms maximum). Baseline missed at 1× (169ms maximum), 2.5× (184ms)
+and 3× (208ms). Baseline buffered network-`stalled` warnings at 1×/2×/2.5×/3×
+remain recorded; neither run reported `waiting`. Callback cadence is separate
+from decoding every source frame: 16× video-quality counters increased by
+2,368 total/1,625 dropped frames in owned mode and 2,372 total/1,660 dropped in
+baseline. This single simulator pair establishes no universal smoothness or
+improvement claim. See the raw [owned](../test-results/owned-fullscreen/rate-owned-final.json)
+and [baseline](../test-results/owned-fullscreen/rate-baseline-final.json) reports.
+
+## October 21 Safari 16× verification — earlier candidate
 
 The candidate caps requests at 16× and removes repeated lifecycle rate writes
 and unchanged custom-control DOM writes. Four paired native iPhone Safari runs
@@ -143,8 +214,8 @@ speed, site-rule speeds and absolute Reset/Preferred shortcut values. Null
 authority, relative speed increments, seek intervals and frame rates retain
 their meaning. New popup and custom-player entries above 16× are rejected.
 
-The native `/rate-probe.html` fixture compares 1×, 2×, 2.5×, 3× and 4× using
-1.5-second samples of video-frame callbacks and media-time progress. Add
+The native `/rate-probe.html` fixture compares 1×, 2×, 2.5×, 3×, 4×, 8× and 16×
+using one second of warmup and six measured seconds per rate. Add
 `?controlled` to measure an extension-controlled video; the default closed-root
 video measures Safari without controller ownership. Higher setter-acceptance
 probes remain separate. Frame counts, cadence gaps, readiness, errors and actual
@@ -154,7 +225,7 @@ physical-device or streaming-site performance.
 ## Inline control fit
 
 On iPhone/iPad, inline controls use two separate 44px targets for speed and
-direct native fullscreen. The cluster fits the video's visible, clipped bounds
+the StayFast player. The cluster fits the video's visible, clipped bounds
 and avoids overlapping site headers where space permits. Scrolling refreshes
 visible controllers through one shared listener and one coalesced animation
 frame per window; it does not write page scroll offsets.
@@ -171,9 +242,10 @@ the transient overflow found in transformed Twitter/X feed cells. A connected
 iOS controller also refreshes placement immediately when the site reparents its
 video, while desktop controllers retain their manually dragged position.
 
-## Build 6 inline-playback policy
+## Build 6 inline-playback policy — historical
 
-On iPhone/iPad, StayFast adds `playsinline` and `webkit-playsinline` when it
+This section records build 6's presentation behavior; build 12's entry policy
+is described above. On iPhone/iPad, StayFast adds `playsinline` and `webkit-playsinline` when it
 attaches to a video, including sites that omitted both attributes. Ordinary
 Play stays on the page; the site's controls and native fullscreen APIs remain unchanged.
 The primary **Full screen** action is explicit native presentation, while
@@ -686,17 +758,18 @@ Record OS/Safari versions, site/fixture URLs, observed media speed, controller
 state, screenshots, and page errors. Unavailable playback or skipped assertions
 leave the corresponding check incomplete.
 
-| Area            | Required behavior                                                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| Activation      | Enable extension, grant/revoke site access, reload, and verify controls track access.                      |
-| Startup         | Settings load before actions; MAIN/ISOLATED startup order never strands initialization.                    |
-| Inline playback | Plain video and audio, mobile YouTube, and cross-origin/blank-frame players accept speed and seek actions. |
-| Touch           | Pill, presets, buttons, dismissal, portrait/landscape, page zoom, and browser bars keep controls usable.   |
-| Navigation      | New feed media, player replacement, YouTube navigation, and browser back/forward recover controls once.    |
-| Suspension      | Switch apps and return; missed settings and removed controllers reconcile without duplicate listeners.     |
-| Native media    | Enter/exit fullscreen and PiP; record speed retention and confirm controller returns inline.               |
-| Extension UI    | Popup aggregates media across frames; settings, import/export, and enable/disable work.                    |
-| Cleanup         | Repeated toggle, navigation, and removal leave no duplicate overlays, pending callbacks, or page errors.   |
+| Area            | Required behavior                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Activation      | Enable extension, grant/revoke site access, reload, and verify controls track access.                                                            |
+| Startup         | Settings load before actions; MAIN/ISOLATED startup order never strands initialization.                                                          |
+| Inline playback | Plain video and audio, mobile YouTube, and cross-origin/blank-frame players accept speed and seek actions.                                       |
+| Touch           | Pill, presets, buttons, dismissal, portrait/landscape, page zoom, and browser bars keep controls usable.                                         |
+| Navigation      | New feed media, player replacement, YouTube navigation, and browser back/forward recover controls once.                                          |
+| Suspension      | Switch apps and return; missed settings and removed controllers reconcile without duplicate listeners.                                           |
+| Owned player    | Full screen opens the original media in StayFast; check optional container fullscreen, Lock/Unlock, seek feedback, Done, and scroll restoration. |
+| Native media    | More → Apple player and PiP retain speed and return inline; Apple presentation contains no StayFast controls.                                    |
+| Extension UI    | Popup aggregates media across frames; settings, import/export, and enable/disable work.                                                          |
+| Cleanup         | Repeated toggle, navigation, and removal leave no duplicate overlays, pending callbacks, or page errors.                                         |
 
 Physical-device Safari checks are required before describing this edition as
 release-ready. Simulator compilation, Chrome touch checks, and WebKit without

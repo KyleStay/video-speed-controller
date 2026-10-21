@@ -5,6 +5,57 @@ native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 P
 simulator running iOS 26.2. It does not establish compatibility with every OS,
 physical iPhone/iPad, or live video site.
 
+## Build 12 source-freeze acceptance
+
+The next candidate, **0.11.4 (12)**, changes the primary **Full screen** action
+to open StayFast's owned player around the original video. **Custom Player**
+remains an explicit alternate entry. The player may request container DOM
+fullscreen where supported; iPhone Safari bars may remain. Apple's native video
+presentation is a separate **More → Apple player** action, where available.
+StayFast cannot change Apple's controls or add controls inside that interface.
+
+The frozen candidate passed native owned-player acceptance (`accept-owned-reveal`),
+primary entry, page/nested scroll checks, and the final activation, clean
+appearance and containing-app links batch on the dedicated iPhone 17 Pro/iOS 26.2
+simulator. Evidence remains under `test-results/owned-fullscreen/`, including
+earlier failed runs. The final frame-boundary run passed in 67 seconds, preserving
+true pre-entry child/parent offsets within 2 CSS pixels through all three phases,
+source identity and zero page/media errors. Missing-`playsinline` passed in 90
+seconds; final portrait, Lock and inline screenshots were inspected. Quiet paired
+baseline/owned rate runs passed functional validation at all seven rates through
+16×, with original media/source/ownership preserved in every owned sample.
+Strict cadence still failed baseline 1×/2.5×/3× and owned 1×/2.5×/4×. At 16×,
+baseline/owned callback rates were 53.1/53.7Hz, p95 gaps 17/18ms and maximum gaps
+131/123ms. Buffered baseline network-stall warnings remain recorded with no
+`waiting` events. This is not an all-green smoothness result; see the
+[paired measurement and raw reports](../../docs/safari.md#final-paired-rate-measurement).
+
+Native touch double-tap is **unverified**. XCTest delivered one DOM touch pair
+even on a plain standalone no-extension control, so invoking its double-tap API
+cannot establish the gesture works. Chrome touch pairs and unit tests pass;
+physical-device follow-up remains required.
+
+Acceptance must cover primary entry, optional container
+fullscreen and exit, edge double-tap ±10-second skips without center seeking or
+duplicate `dblclick` seeks, Lock/Unlock, brief feedback, Apple-player handoff and
+return, Done, Use site player, source reuse and cleanup. Lock must leave an
+accessible 44px Unlock target, cancel queued seeking, suppress feedback and block
+playback keys/gestures while preserving keyboard navigation/Unlock. Check that
+light-DOM video/container `touch-action` restores at session end. A refused
+explicit Apple request may restore the same-source owned viewport without play
+or fullscreen; fresh input (including wheel), navigation, source/session changes
+and cleanup must cancel this recovery. Native fullscreen events must never open the player.
+Require the same
+original media/source/tracks, accepted rate through 16×, advancing playback,
+stable intentional page/nested scroll positions and zero page/media errors.
+Ordinary Play must stay inline without automatically opening a player.
+
+The commands below identify the harnesses and fixtures. Runs predating build 12
+used the previous primary-native-fullscreen policy and do not verify its changes.
+Record source/build identity, actual assertions and artifacts from each new run;
+unavailable or skipped checks remain incomplete. Neither these functional checks
+nor numeric rate acceptance establish smooth playback on phones or streams.
+
 Use Qorvex as the primary iOS interaction tool when an isolated session is
 available. This background-safe XCTest fallback was needed because the installed
 Qorvex 0.2.14 agent port was occupied by another simulator. It does not change
@@ -81,7 +132,7 @@ xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayF
 ```
 
 The activation phase verifies the containing app, enabled extension, and website
-access. The owned runtime first requires ordinary Play to remain inline, then explicitly opens
+access. The owned runtime requires ordinary Play to remain inline, then explicitly opens
 Custom player from the speed panel. It checks the original decoded video, advancing playback time, one
 controller, and zero page/media errors. It checks play/pause, range and 10-second
 seeking, distance-based fine scrubbing with genuine near/far finger drags, mute,
@@ -93,8 +144,9 @@ and leaves playback in the site player. The flow then verifies native fullscreen
 and explicit custom-player reopening after this handback. Use default key bindings for this test;
 the preferred-speed assertion deliberately expects the default 1.8× binding.
 
-This runtime verifies browser-viewport expansion. Native fullscreen must remain
-false while the owned player is active. It does not establish physical-device,
+This runtime exercises browser-viewport expansion. Apple's native video
+presentation must remain off while StayFast owns the player; container DOM
+fullscreen may be active where supported. It does not establish physical-device,
 DRM, live-site, AirPlay receiver, or Picture in Picture acceptance.
 
 WebKit exposes aria-pressed quick actions as accessibility Switches. Its native
@@ -104,10 +156,11 @@ observed bounds because XCTest's native-slider helper lacks WebKit scrubber
 attributes. Kept attachments remain available with verbose system diagnostics
 disabled, avoiding lengthy collection after a failed exploratory assertion.
 
-For the primary native-system-fullscreen check, open another fresh
-fixture document, then run this mode. It verifies ordinary inline playback,
-the compact 44px fullscreen target, native fullscreen and inline return without
-opening the custom player:
+For the primary-entry harness, open another fresh fixture document, then run
+this mode. Build 12 acceptance requires ordinary inline playback, the compact
+44px Full screen target opening StayFast, and return to the original inline
+video. Older results from this harness checked direct Apple fullscreen and must
+retain their original labels:
 
 ```sh
 xcrun simctl openurl "$STAYFAST_SIMULATOR_UDID" "http://127.0.0.1:62938/mobile.html?mp4&owned&native-direct=$(date +%s)"
@@ -118,9 +171,11 @@ For scroll restoration, run the same test on three fresh fixture documents after
 activation. The test first uses genuine Play/Pause taps to require decoded readiness.
 The trusted fixture buttons prepare and remember nonzero document
 and nested scroll offsets; assertions never scroll the page. The frame case adds
-both parent-document and parent-container offsets. Each mode checks Custom player
-→ Done, direct native fullscreen → return, and Custom player → native fullscreen
-→ return, including the original video's visible position within two CSS pixels.
+both parent-document and parent-container offsets. Build 12 coverage must check
+Full screen → Done, optional container fullscreen → return, and More → Apple
+player → return, including the original video's visible position within two CSS
+pixels. Historical runs used the previous direct-native entry; rerun matching
+updated assertions before claiming coverage of the new policy.
 
 ```sh
 for mode in page nested frame; do
@@ -144,9 +199,10 @@ xcrun simctl openurl "$STAYFAST_SIMULATOR_UDID" "http://127.0.0.1:62938/mobile.h
 xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/inline-playback.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 300 -collect-test-diagnostics never -only-testing:StayFastSafariQATests/InlinePlaybackQATests/testInlineUntilExplicitFullscreen test
 ```
 
-It verifies ordinary Play and genuine native-control Play stay inline, decoded
-time advances without an owned host, explicit native fullscreen still works,
-and native/custom return retains inline flags and the measured scroll position.
+Require ordinary Play and genuine native-control Play to stay inline, with decoded
+time advancing without an owned host. Explicit Full screen must open StayFast;
+More → Apple player must hand off where supported. Both returns must retain
+inline flags and the measured scroll position.
 Explicit Use site player restores the original absent attributes. The response
 omits both attributes before the video is parsed; this is not a script removing
 them after attachment.

@@ -295,10 +295,10 @@ class ControlsManager {
     }
     controller.style.transform = `translate(${placement.x - rect.left}px, ${placement.y - rect.top}px)`;
     const player = video.vsc?.iosPlayer;
-    if (typeof player?.canEnterNativeFullscreen === 'function') {
+    if (player) {
       const button = shadow.querySelector('.inline-fullscreen');
-      button.disabled = !player.canEnterNativeFullscreen();
-      button.title = player.nativeFullscreenError || 'Open video fullscreen';
+      button.disabled = player.disposed || !video.isConnected;
+      button.title = 'Open StayFast fullscreen player';
     }
   }
 
@@ -662,16 +662,13 @@ class ControlsManager {
         'click',
         (e) => {
           const action = button.dataset.action;
-          if (action === 'nativeFullscreen') {
+          if (action === 'ownedFullscreen') {
             this.setTouchExpanded(shadow, false);
             try {
               const player = video?.vsc?.iosPlayer;
-              if (player?.enterNativeFullscreen() === false && player.nativeFullscreenError) {
-                button.title = player.nativeFullscreenError;
-                button.setAttribute('aria-description', player.nativeFullscreenError);
-              }
+              player?.open({ fullscreen: true });
             } catch {
-              /* Native presentation may refuse a request. */
+              /* A site can replace media or presentation APIs. */
             }
             e.stopPropagation();
             return;

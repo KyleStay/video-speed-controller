@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Native touch delivery control</title>
+    <style>
+      body {
+        font: 18px system-ui;
+      }
+      button {
+        position: fixed;
+        left: 80px;
+        top: 280px;
+        width: 220px;
+        height: 80px;
+        touch-action: none;
+        font: 18px system-ui;
+      }
+    </style>
+  </head>
+  <body>
+    <button>Touch delivery probe</button>
+    <p id="count">Touch deliveries: 0</p>
+    <pre id="trace"></pre>
+    <script>
+      const records = [];
+      let count = 0;
+      const probe = document.querySelector('button');
+      probe.addEventListener('click', () => {});
+      for (const type of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click']) {
+        probe.addEventListener(
+          type,
+          (e) => {
+            if (type === 'pointerdown') ++count;
+            records.push([type, e.timeStamp, e.detail, e.defaultPrevented, e.cancelable]);
+            setTimeout(() => {
+              document.querySelector('#count').textContent = 'Touch deliveries: ' + count;
+              document.querySelector('#trace').textContent = JSON.stringify(records);
+            }, 1000);
+          },
+          { passive: false }
+        );
+      }
+    </script>
+  </body>
+</html>

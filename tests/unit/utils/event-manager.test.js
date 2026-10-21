@@ -53,6 +53,7 @@ describe('EventManager', () => {
     window.VSC.stateManager.controllers.clear();
 
     const typingSpy = vi.spyOn(eventManager, 'isTypingContext');
+    const ownedLookup = vi.spyOn(window.VSC.IOSPlayer.activePlayers, 'get');
 
     // KeyK is not a VSC binding — the no-media branch must short-circuit on the
     // cheap findMatchingBinding lookup, before the typing-context walk, the
@@ -70,9 +71,276 @@ describe('EventManager', () => {
     expect(result).toBe(false);
     // Fast path returns before the typing-context walk and signature assignment.
     expect(typingSpy).not.toHaveBeenCalled();
+    expect(ownedLookup).not.toHaveBeenCalled();
     expect(eventManager.lastKeyEventSignature).toBeNull();
 
     typingSpy.mockRestore();
+    ownedLookup.mockRestore();
+  });
+
+  describe('owned-player keyboard lock', () => {
+    let manager;
+    let owner;
+    let target;
+    let runAction;
+    let siteKeydown;
+    let controlledMedia;
+
+    function press(key, code, type = 'keydown', options = {}) {
+      const event = new KeyboardEvent(type, {
+        key,
+        code,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        ...options,
+      });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    beforeEach(() => {
+      // The module loader starts an extension instance; isolate this real
+      // window-capture manager from that instance's keyboard listeners.
+      window.VSC_controller.teardown();
+      target = document.createElement('button');
+      document.body.append(target);
+      target.focus();
+      controlledMedia = vi
+        .spyOn(window.VSC.stateManager, 'getControlledElements')
+        .mockReturnValue([createMockVideo()]);
+      owner = { active: true, controlsLocked: true };
+      window.VSC.IOSPlayer.activePlayers.set(document, owner);
+      runAction = vi.fn();
+      manager = new window.VSC.EventManager(
+        {
+          settings: {
+            exclusiveKeys: false,
+            keyBindings: [
+              { code: 'KeyD', action: 'advance', value: 10 },
+              { code: 'KeyS', action: 'slower', value: 0.1 },
+              { code: 'Escape', action: 'reset', value: 1 },
+            ],
+          },
+        },
+        { runAction }
+      );
+      manager.setupKeyboardShortcuts(document);
+      siteKeydown = vi.fn();
+      window.addEventListener('keydown', siteKeydown, true);
+    });
+
+    afterEach(() => {
+      manager.cleanup();
+      window.removeEventListener('keydown', siteKeydown, true);
+      window.VSC.IOSPlayer.activePlayers.delete(document);
+      target.remove();
+      controlledMedia.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it('keeps unlocked playback shortcuts and the nonexclusive site preference working', () => {
+      owner.controlsLocked = false;
+      const event = press('d', 'KeyD');
+      expect(runAction).toHaveBeenCalledExactlyOnceWith('advance', 10, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(siteKeydown).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ['d', 'KeyD'],
+      ['s', 'KeyS'],
+      ['k', 'KeyK'],
+      ['ArrowLeft', 'ArrowLeft'],
+      ['ArrowRight', 'ArrowRight'],
+      ['ArrowUp', 'ArrowUp'],
+      ['ArrowDown', 'ArrowDown'],
+      ['<', 'Comma', { shiftKey: true }],
+      ['>', 'Period', { shiftKey: true }],
+    ])(
+      'claims locked %s playback keys without an extension or site action',
+      (key, code, options) => {
+        const event = press(key, code, 'keydown', options);
+        expect(runAction).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
+        expect(siteKeydown).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['Enter', 'Enter'],
+      [' ', 'Space'],
+    ])('keeps custom-bound %s blocked away from this owned Unlock target', (key, code) => {
+      manager.config.settings.keyBindings.push({ code, action: 'reset', value: 1 });
+      const otherUnlock = document.createElement('button');
+      owner.ui = { refs: { unlock: otherUnlock } };
+      const event = press(key, code);
+      expect(event.defaultPrevented).toBe(true);
+      expect(siteKeydown).not.toHaveBeenCalled();
+      expect(runAction).not.toHaveBeenCalled();
+    });
+
+    it('lets a custom-bound Escape reach the owned unlock handler', () => {
+      const unlock = vi.fn(() => {
+        owner.controlsLocked = false;
+      });
+      target.addEventListener('keydown', unlock);
+      const event = press('Escape', 'Escape');
+      expect(unlock).toHaveBeenCalledOnce();
+      expect(owner.controlsLocked).toBe(false);
+      expect(runAction).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('keeps Tab navigation usable even when custom-bound away from Unlock', () => {
+      manager.config.settings.keyBindings.push({ code: 'Tab', action: 'reset', value: 1 });
+      const event = press('Tab', 'Tab');
+      expect(event.defaultPrevented).toBe(false);
+      expect(siteKeydown).toHaveBeenCalledOnce();
+      expect(runAction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['Enter', 'Enter'],
+      [' ', 'Space'],
+    ])(
+      'keeps focused owned Unlock activation for custom %s usable through shadow retargeting',
+      (key, code) => {
+        const host = document.createElement('div');
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.append(target);
+        document.body.append(host);
+        owner.ui = { host, refs: { unlock: target } };
+        manager.config.settings.keyBindings.push({ code, action: 'reset', value: 1 });
+        target.focus();
+        const activation = vi.fn(() => {
+          owner.controlsLocked = false;
+        });
+        target.addEventListener('click', activation);
+        try {
+          const event = press(key, code);
+          expect(event.defaultPrevented).toBe(false);
+          expect(siteKeydown).toHaveBeenCalledOnce();
+          expect(siteKeydown.mock.calls[0][0].target).toBe(host);
+          expect(runAction).not.toHaveBeenCalled();
+          target.click();
+          expect(activation).toHaveBeenCalledOnce();
+          expect(owner.controlsLocked).toBe(false);
+        } finally {
+          host.remove();
+        }
+      }
+    );
+
+    it.each(['ctrlKey', 'metaKey', 'altKey'])(
+      'preserves browser %s shortcuts even if custom-bound',
+      (modifier) => {
+        manager.config.settings.exclusiveKeys = true;
+        manager.config.settings.keyBindings.unshift({
+          code: 'KeyD',
+          action: 'advance',
+          value: 10,
+          modifiers: {
+            ctrl: modifier === 'ctrlKey',
+            meta: modifier === 'metaKey',
+            alt: modifier === 'altKey',
+            shift: false,
+          },
+        });
+        const event = press('d', 'KeyD', 'keydown', { [modifier]: true });
+        expect(event.defaultPrevented).toBe(false);
+        expect(siteKeydown).toHaveBeenCalledOnce();
+        expect(runAction).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['d', 'KeyD'],
+      ['k', 'KeyK'],
+    ])('does not let an inert owned input bypass the lock for %s', (key, code) => {
+      const host = document.createElement('div');
+      const shadow = host.attachShadow({ mode: 'open' });
+      target.remove();
+      target = document.createElement('input');
+      shadow.append(target);
+      document.body.append(host);
+      owner.ui = { host, refs: { unlock: document.createElement('button') } };
+      target.focus();
+      const typing = vi.spyOn(manager, 'isTypingContext');
+      try {
+        const event = press(key, code);
+        expect(typing).toHaveReturnedWith(true);
+        expect(event.defaultPrevented).toBe(true);
+        expect(siteKeydown).not.toHaveBeenCalled();
+        expect(runAction).not.toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('preserves text entry outside the owned dialog', () => {
+      target.remove();
+      target = document.createElement('input');
+      document.body.append(target);
+      owner.ui = { host: document.createElement('div') };
+      target.focus();
+      const event = press('k', 'KeyK');
+      expect(event.defaultPrevented).toBe(false);
+      expect(siteKeydown).toHaveBeenCalledOnce();
+      expect(runAction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['d', 'KeyD'],
+      ['k', 'KeyK'],
+      ['ArrowLeft', 'ArrowLeft'],
+    ])('still yields locked %s to Focus Peek before claiming it', (key, code) => {
+      const preview = document.createElement('focus-peek-overlay');
+      const claim = vi.fn((event) => event.preventDefault());
+      preview.addEventListener('focuspeek:claim-zoom-shortcut', claim);
+      document.body.append(preview);
+      try {
+        const event = press(key, code);
+        expect(claim).toHaveBeenCalledOnce();
+        expect(claim.mock.calls[0][0].detail).toBe(key.toLowerCase());
+        expect(event.defaultPrevented).toBe(false);
+        expect(siteKeydown).toHaveBeenCalledOnce();
+        expect(runAction).not.toHaveBeenCalled();
+      } finally {
+        preview.remove();
+      }
+    });
+
+    it.each([
+      ['d', 'KeyD'],
+      ['k', 'KeyK'],
+      ['ArrowRight', 'ArrowRight'],
+      ['<', 'Comma', { shiftKey: true }],
+    ])('suppresses X followups for locked %s without executing it', (key, code, options) => {
+      manager.cleanup();
+      vi.spyOn(window.VSC.EventManager, 'isTwitterHost').mockReturnValue(true);
+      manager.setupKeyboardShortcuts(document);
+      // Register the page after the extension, as on the live capture chain.
+      window.removeEventListener('keydown', siteKeydown, true);
+      window.addEventListener('keydown', siteKeydown, true);
+      const siteFollowup = vi.fn();
+      window.addEventListener('keypress', siteFollowup, true);
+      window.addEventListener('keyup', siteFollowup, true);
+      try {
+        expect(press(key, code, 'keydown', options).defaultPrevented).toBe(true);
+        expect(press(key, code, 'keypress', options).defaultPrevented).toBe(true);
+        expect(press(key, code, 'keyup', options).defaultPrevented).toBe(true);
+        expect(siteKeydown).not.toHaveBeenCalled();
+        expect(siteFollowup).not.toHaveBeenCalled();
+        expect(runAction).not.toHaveBeenCalled();
+        expect(manager.claimedShortcutFollowups.size).toBe(0);
+        expect(press('Enter', 'Enter', 'keyup').defaultPrevented).toBe(false);
+        expect(siteFollowup).toHaveBeenCalledOnce();
+      } finally {
+        window.removeEventListener('keypress', siteFollowup, true);
+        window.removeEventListener('keyup', siteFollowup, true);
+      }
+    });
   });
 
   it('refreshCoolDown should activate cooldown period', async () => {

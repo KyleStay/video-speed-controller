@@ -604,6 +604,73 @@ describe('buffered network-stalled notices', () => {
   });
 });
 
+describe('owned player probe presentation', () => {
+  function ownedReport() {
+    const report = goodReport('extension');
+    report.presentation = 'owned';
+    for (const sample of report.results) {
+      Object.assign(sample, {
+        ownedPresentation: true,
+        originalIdentityAtStart: true,
+        originalIdentityAtEnd: true,
+        originalSourceAtStart: true,
+        originalSourceAtEnd: true,
+      });
+    }
+    return report;
+  }
+
+  it('accepts complete owned sessions while preserving old inline reports', () => {
+    expect(validateRateProbeReport(ownedReport()).cadence.passed).toBe(true);
+    for (const mode of ['native-baseline', 'extension']) {
+      const report = goodReport(mode);
+      expect(report).not.toHaveProperty('presentation');
+      expect(validateRateProbeReport(report).passed).toBe(true);
+      report.presentation = 'inline';
+      expect(validateRateProbeReport(report).passed).toBe(true);
+    }
+  });
+
+  it.each([
+    'ownedPresentation',
+    'originalIdentityAtStart',
+    'originalIdentityAtEnd',
+    'originalSourceAtStart',
+    'originalSourceAtEnd',
+  ])('fails closed when owned evidence %s is absent or false', (key) => {
+    for (const value of [undefined, false, 'true']) {
+      const report = ownedReport();
+      report.results[3][key] = value;
+      const validation = validateRateProbeReport(report);
+      expect(validation.passed).toBe(false);
+      expect(validation.cadence.passed).toBe(false);
+    }
+  });
+
+  it('rejects a transiently closed or replaced owned session', () => {
+    const report = ownedReport();
+    report.results[0].ownershipChanged = true;
+    expect(validateRateProbeReport(report).passed).toBe(false);
+  });
+
+  it.each([null, '', 'native', {}])(
+    'rejects an explicit invalid presentation %j',
+    (presentation) => {
+      const report = goodReport();
+      report.presentation = presentation;
+      expect(validateRateProbeReport(report).passed).toBe(false);
+    }
+  );
+
+  it('does not report baseline video as an owned extension presentation', () => {
+    const report = ownedReport();
+    report.mode = 'native-baseline';
+    expect(validateRateProbeReport(report).passed).toBe(false);
+    report.presentation = 'native';
+    expect(validateRateProbeReport(report).passed).toBe(false);
+  });
+});
+
 describe('HTTP fixture integration', () => {
   it('embeds the shared validator and complete browser script with compatible output fields', () => {
     const script = rateProbeHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
@@ -613,7 +680,17 @@ describe('HTTP fixture integration', () => {
     expect(script).toContain(summarizeFrameCadence.toString());
     expect(script).toContain(JSON.stringify(RATE_PROBE_RATES));
     expect(script).toContain("mode:controlled ? 'extension' : 'native-baseline'");
-    expect(script).toContain('setterAcceptance,results,pageErrors');
+    expect(script).toContain('presentation,setterAcceptance,results,pageErrors');
+    expect(script.indexOf('const activation = video.play()')).toBeLessThan(
+      script.indexOf('ownedPlayer.open({fullscreen:true})')
+    );
+    expect(script.indexOf('ownedPlayer.open({fullscreen:true})')).toBeLessThan(
+      script.indexOf('await activation')
+    );
+    expect(script.indexOf('ownedPlayer?.close()')).toBeLessThan(
+      script.indexOf("status.textContent = 'Rate probe complete:")
+    );
+    expect(script).toContain('ownedPresentation:ownedAtStart && ownedActive()');
     expect(script).toContain('validateRateProbeReport(window.__nativeRateResults)');
     // Evaluate only the pure browser preamble: neither a server nor media runs.
     const preamble = script.slice(0, script.indexOf('const controlled ='));

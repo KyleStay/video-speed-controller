@@ -88,6 +88,36 @@
           dialog[data-controls-hidden] .hud { visibility: hidden; opacity: 0; }
           :host([data-controls-hidden]) .hud:focus-within,
           dialog[data-controls-hidden] .hud:focus-within { visibility: visible; opacity: 1; }
+          :host([data-controls-locked]) .hud,
+          :host([data-controls-locked]) .seek-feedback { display: none !important; }
+          .unlock {
+            position: absolute;
+            z-index: 5;
+            top: max(12px, env(safe-area-inset-top));
+            right: max(16px, env(safe-area-inset-right));
+            min-width: 44px;
+            min-height: 44px;
+          }
+          .seek-feedback {
+            position: absolute;
+            z-index: 2;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: calc(50% - 16px);
+            padding: 12px 16px;
+            border-radius: 999px;
+            background: #000b;
+            color: #fff;
+            font-size: clamp(24px, 6vw, 40px);
+            font-weight: 700;
+            line-height: 1.2;
+            text-align: center;
+            white-space: nowrap;
+            pointer-events: none;
+          }
+          .seek-feedback[data-side='left'] { left: 25%; }
+          .seek-feedback[data-side='right'] { left: 75%; }
           header {
             display: flex;
             align-items: center;
@@ -214,6 +244,7 @@
               <header>
                 <button type="button" data-ref="done" aria-label="Close StayFast video player">Done</button>
                 <span class="identity">StayFast</span>
+                <button type="button" data-ref="lock" aria-label="Lock playback controls" aria-pressed="false">Lock</button>
                 <button type="button" data-ref="fullscreen" aria-label="Enter full screen">Full screen</button>
               </header>
               <div class="transport" role="group" aria-label="Playback controls">
@@ -258,11 +289,14 @@
                   <input type="range" class="volume" data-ref="volume" aria-label="Volume" min="0" max="1" step="0.05" value="1" hidden />
                   <button type="button" data-ref="pip" aria-label="Picture in Picture">PiP</button>
                   <button type="button" data-ref="airplay" aria-label="Choose AirPlay device">AirPlay</button>
+                  <button type="button" data-ref="native" aria-label="Open Apple fullscreen player" hidden>Apple player</button>
                   <button type="button" class="escape" data-ref="site">Use site player</button>
                 </div>
                 <p class="status" data-ref="status" role="status" aria-live="polite" aria-atomic="true"></p>
               </footer>
             </div>
+            <button type="button" class="unlock" data-ref="unlock" aria-label="Unlock playback controls" hidden>Unlock</button>
+            <div class="seek-feedback" data-ref="seekFeedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
           </div>
         </dialog>
       `;

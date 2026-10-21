@@ -9,6 +9,7 @@ import XCTest
         let parentPage: [Double]?
         let parentNested: [Double]?
         let frameTop: Double?
+        let entry: Int
     }
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -61,32 +62,60 @@ import XCTest
         safari.buttons["Remember scroll position"].tap()
         if parent.exists { safari.buttons["Remember parent scroll position"].tap() }
         wait(safari, ["ready: 4", "errors: 0", "saved scroll:", "owner active: false"])
+        let baseline = savedBaseline(safari, requiresParent: parent.exists)
+        XCTAssertGreaterThan(baseline.page[1], 500)
+        if field(status(safari).label, "nested scroll") != "none" {
+            XCTAssertGreaterThan(baseline.nested[0], 0)
+            XCTAssertGreaterThan(baseline.nested[1], 0)
+        }
+        if parent.exists {
+            XCTAssertGreaterThan(baseline.parentPage?[1] ?? 0, 500)
+            XCTAssertGreaterThan(baseline.parentNested?[0] ?? 0, 0)
+            XCTAssertGreaterThan(baseline.parentNested?[1] ?? 0, 0)
+        }
+        return baseline
+    }
+    // Saved fields are written at the trusted click boundary, before portal/frame expansion.
+    private func savedBaseline(_ safari: XCUIApplication, requiresParent: Bool) -> Baseline {
         let text = status(safari).label
         guard let page = point(text, "saved scroll"),
               let nested = point(text, "saved nested"),
               let topText = field(text, "saved video top"), let videoTop = Double(topText) else {
             XCTFail("Missing measured scroll checkpoint: " + text)
-            return Baseline(page: [0, 0], nested: [0, 0], videoTop: 0, parentPage: nil, parentNested: nil, frameTop: nil)
+            return Baseline(page: [0, 0], nested: [0, 0], videoTop: 0, parentPage: nil, parentNested: nil, frameTop: nil, entry: 0)
         }
-        XCTAssertGreaterThan(page[1], 500)
-        if field(text, "nested scroll") != "none" {
-            XCTAssertGreaterThan(nested[0], 0)
-            XCTAssertGreaterThan(nested[1], 0)
-        }
+        let parent = parentStatus(safari)
         let parentText = parent.exists ? parent.label : ""
+        let entry = Int(field(text, "saved entry") ?? "") ?? 0
         let parentPage = point(parentText, "saved page")
         let parentNested = point(parentText, "saved nested")
         let frameTop = Double(field(parentText, "saved frame top") ?? "")
-        if parent.exists {
+        if requiresParent {
+            XCTAssertTrue(parent.exists)
+        }
+        if parent.exists || requiresParent {
             XCTAssertNotNil(parentPage)
             XCTAssertNotNil(parentNested)
             XCTAssertNotNil(frameTop)
-            XCTAssertGreaterThan(parentPage?[1] ?? 0, 500)
-            XCTAssertGreaterThan(parentNested?[0] ?? 0, 0)
-            XCTAssertGreaterThan(parentNested?[1] ?? 0, 0)
+            XCTAssertEqual(Int(field(parentText, "saved entry") ?? ""), entry)
+            XCTAssertEqual(field(parentText, "saved entry kind"), field(text, "saved entry kind"))
         }
         return Baseline(page: page, nested: nested, videoTop: videoTop, parentPage: parentPage,
-                        parentNested: parentNested, frameTop: frameTop)
+                        parentNested: parentNested, frameTop: frameTop, entry: entry)
+    }
+    private func entryBaseline(_ safari: XCUIApplication, after previous: Int, kind: String,
+                               requiresParent: Bool) -> Baseline {
+        let item = status(safari)
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let text = item.label
+            return (Int(self.field(text, "saved entry") ?? "") ?? 0) > previous &&
+                self.field(text, "saved entry kind") == kind
+        }, object: item)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 15), .completed)
+        let baseline = savedBaseline(safari, requiresParent: requiresParent)
+        print("TRUSTED ENTRY CHECKPOINT " + kind + " CHILD " + status(safari).label)
+        if requiresParent { print("TRUSTED ENTRY CHECKPOINT " + kind + " PARENT " + parentStatus(safari).label) }
+        return baseline
     }
     private func assertRestored(_ safari: XCUIApplication, _ baseline: Baseline, _ name: String) {
         wait(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "controllers: 1", "errors: 0", "native fullscreen: false"])
@@ -141,15 +170,29 @@ import XCTest
         capture(safari, "scroll-checkpoint")
         assertRestored(safari, baseline, "scroll-before-presentation")
         openCustomPaused(safari)
+        let customBaseline = entryBaseline(safari, after: baseline.entry, kind: "custom", requiresParent: requiresParent)
         safari.buttons["Close StayFast video player"].tap()
-        assertRestored(safari, baseline, "scroll-after-custom-done")
+        assertRestored(safari, customBaseline, "scroll-after-custom-done")
         safari.buttons["Open video fullscreen"].tap()
-        closeNative(safari)
-        assertRestored(safari, baseline, "scroll-after-direct-native")
+        // Primary presentation preserves the already-paused original media.
+        XCTAssertTrue(safari.buttons["Play video"].waitForExistence(timeout: 10))
+        wait(safari, ["paused: true", "owner active: true", "owned hosts: 1", "native fullscreen: false", "original identity: true", "source preserved: true", "errors: 0"])
+        let primaryBaseline = entryBaseline(safari, after: customBaseline.entry, kind: "primary", requiresParent: requiresParent)
+        safari.buttons["Close StayFast video player"].tap()
+        assertRestored(safari, primaryBaseline, "scroll-after-primary-owned-done")
         openCustomPaused(safari)
-        safari.buttons["Enter full screen"].tap()
+        let nativeBaseline = entryBaseline(safari, after: primaryBaseline.entry, kind: "custom", requiresParent: requiresParent)
+        safari.buttons["More video options"].tap()
+        safari.buttons["Open Apple fullscreen player"].tap()
         closeNative(safari)
-        assertRestored(safari, baseline, "scroll-after-custom-to-native")
+        assertRestored(safari, nativeBaseline, "scroll-after-custom-to-native")
+    }
+    func testInspectScrollState() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        print("FINAL CHILD SCROLL " + status(safari).label)
+        print("FINAL PARENT SCROLL " + parentStatus(safari).label)
+        capture(safari, "inspected-final-scroll-state")
     }
     func testPreservesScroll() { runPreservesScroll(requiresParent: false) }
     func testFramePreservesScroll() { runPreservesScroll(requiresParent: true) }

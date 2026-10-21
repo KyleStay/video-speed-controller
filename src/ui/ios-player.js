@@ -18,6 +18,7 @@ class IOSPlayer {
   static activePlayers = new WeakMap();
   static siteRelinquished = new WeakSet();
   static sequence = 0;
+  static presentationRevision = 0;
 
   static isSupported(video) {
     const nav = video?.ownerDocument?.defaultView?.navigator;
@@ -131,6 +132,7 @@ class IOSPlayer {
     this.listen(this.video, 'emptied', sourceReset);
     this.listen(this.video, 'loadstart', sourceReset);
     const nativeBegan = () => {
+      this.nativeGeneration++;
       // Safari may already have moved the page when this event arrives. Only
       // enterNativeFullscreen can capture a reliable pre-entry scroll snapshot.
       this.nativeSession = true;
@@ -358,19 +360,52 @@ class IOSPlayer {
     }
   }
 
-  nativeFullscreenFailed(generation) {
+  nativeFullscreenFailed(generation, recovery = null) {
     if (this.disposed || generation !== this.nativeGeneration) {
       return;
     }
+    if (recovery) {
+      let current = false;
+      try {
+        // Only this explicit request may recover its former owned viewport.
+        // Even a newer player which has since closed supersedes that intent.
+        current = !(
+          recovery.cancelled ||
+          recovery.revision !== IOSPlayer.presentationRevision ||
+          recovery.session !== this.session ||
+          this.active ||
+          IOSPlayer.activePlayers.has(this.doc) ||
+          !this.video.isConnected ||
+          this.video.ownerDocument !== this.doc ||
+          this.doc.documentElement !== recovery.root ||
+          this.doc.URL !== recovery.url ||
+          this.video.getAttribute('src') !== recovery.src ||
+          this.video.currentSrc !== recovery.currentSrc ||
+          this.video.srcObject !== recovery.srcObject
+        );
+      } catch {
+        // Unavailable source access cannot grant authority to reopen a player.
+      }
+      if (!current) {
+        this.nativeSession = false;
+        this.nativeScroll?.cancel();
+        this.nativeScroll = null;
+        return;
+      }
+    }
+    recovery?.cancel?.();
     this.nativeSession = false;
     this.restoreNativeScroll();
-    this.nativeFullscreenError =
-      'Fullscreen is unavailable. Inline playback and the custom player remain available.';
-    this.button.title = this.nativeFullscreenError;
-    const inlineButton = this.controller.div?.shadowRoot?.querySelector('.inline-fullscreen');
-    if (inlineButton) {
-      inlineButton.title = this.nativeFullscreenError;
-      inlineButton.setAttribute('aria-description', this.nativeFullscreenError);
+    if (recovery) {
+      // Reopen only the owned viewport: no fullscreen request and no play call.
+      this.open();
+    }
+    this.nativeFullscreenError = this.active
+      ? 'Apple fullscreen is unavailable. Continue in this player.'
+      : 'Apple fullscreen is unavailable. Open the StayFast player to continue.';
+    if (this.active && this.ui?.refs.native) {
+      this.ui.refs.native.title = this.nativeFullscreenError;
+      this.ui.refs.status.textContent = this.nativeFullscreenError;
     }
     this.video.dispatchEvent(
       new this.view.CustomEvent('vsc-native-fullscreen-error', {
@@ -383,6 +418,8 @@ class IOSPlayer {
     if (this.disposed || !this.attached || !this.video.isConnected) {
       return false;
     }
+    this.nativeRecovery?.cancel();
+    IOSPlayer.presentationRevision++;
     const generation = ++this.nativeGeneration;
     if (!this.canEnterNativeFullscreen()) {
       this.nativeFullscreenFailed(generation);
@@ -395,9 +432,59 @@ class IOSPlayer {
     this.controller.div?.shadowRoot
       ?.querySelector('.inline-fullscreen')
       ?.removeAttribute('aria-description');
+    let recovery = null;
+    if (this.active) {
+      try {
+        recovery = {
+          session: this.session,
+          root: this.doc.documentElement,
+          url: this.doc.URL,
+          revision: IOSPlayer.presentationRevision + 1,
+          src: this.video.getAttribute('src'),
+          currentSrc: this.video.currentSrc,
+          srcObject: this.video.srcObject,
+        };
+      } catch {
+        // Keep native entry available, but do not infer authority to recover.
+        recovery = { cancelled: true };
+      }
+    }
     // Restore the original node and native attributes before calling the browser.
     // No await or modal opening may consume the caller's user activation.
     this.close();
+    if (recovery && !recovery.cancelled) {
+      const removers = [];
+      recovery.cancel = (event) => {
+        if (event && !event.isTrusted) {
+          return;
+        }
+        recovery.cancelled = true;
+        for (const remove of removers.splice(0)) {
+          try {
+            remove();
+          } catch {
+            // Continue releasing guards after a browsing context disappears.
+          }
+        }
+        if (this.nativeRecovery === recovery) {
+          this.nativeRecovery = null;
+        }
+      };
+      this.nativeRecovery = recovery;
+      const cancelLifecycle = () => recovery.cancel();
+      for (const [type, listener] of [
+        ...['pointerdown', 'touchstart', 'keydown', 'wheel'].map((type) => [type, recovery.cancel]),
+        ...['pagehide', 'popstate'].map((type) => [type, cancelLifecycle]),
+      ]) {
+        try {
+          this.view.addEventListener(type, listener, true);
+          removers.push(() => this.view.removeEventListener(type, listener, true));
+        } catch {
+          recovery.cancel();
+          break;
+        }
+      }
+    }
     this.scrollRestore?.cancel();
     this.nativeScroll?.cancel();
     this.nativeScroll = new window.VSC.IOSPlayerScrollState(this.video, true);
@@ -409,13 +496,28 @@ class IOSPlayer {
           this.video,
           name === 'webkitSetPresentationMode' ? ['fullscreen'] : []
         );
-        result?.catch?.(() => this.nativeFullscreenFailed(generation));
+        Promise.resolve(result)
+          .then(
+            () => recovery?.cancel?.(),
+            () => {
+              try {
+                this.nativeFullscreenFailed(generation, recovery);
+              } finally {
+                recovery?.cancel?.();
+              }
+            }
+          )
+          .catch(() => {});
         return true;
       } catch {
         // Try another saved native entry while the trusted gesture is still active.
       }
     }
-    this.nativeFullscreenFailed(generation);
+    try {
+      this.nativeFullscreenFailed(generation, recovery);
+    } finally {
+      recovery?.cancel?.();
+    }
     return false;
   }
 
@@ -443,11 +545,19 @@ class IOSPlayer {
   }
 
   open(options = {}) {
+    this.nativeRecovery?.cancel();
+    IOSPlayer.presentationRevision++;
     try {
-      if (options.fullscreen) {
-        return this.enterNativeFullscreen();
+      const scroll = options.fullscreen
+        ? new window.VSC.IOSPlayerScrollState(this.video, true)
+        : null;
+      const opened = this.openPresentation(options);
+      if (opened && options.fullscreen) {
+        this.ownedFullscreen.enter(scroll);
+      } else {
+        scroll?.cancel();
       }
-      return this.openPresentation(options);
+      return opened;
     } catch (error) {
       // A site can replace DOM/media APIs. Roll back rather than strand playback.
       try {
@@ -528,6 +638,8 @@ class IOSPlayer {
     this.doc.documentElement.append(this.ui.host);
     this.portalNode.setAttribute('slot', 'media');
     this.ui.host.append(this.portalNode); // Synchronous same-document move; retain src/MSE/DRM.
+    this.controlsLocked = false;
+    this.ownedFullscreen = new window.VSC.IOSPlayerFullscreen(this);
 
     for (const [key, value] of Object.entries({
       display: 'block',
@@ -581,6 +693,12 @@ class IOSPlayer {
         this.ownStyle(this.video, key, value);
       }
     }
+    // WebKit evaluates native touch gestures on the light-DOM media surface;
+    // the shadow stage's touch-action does not reliably cover slotted video.
+    this.ownStyle(this.video, 'touch-action', 'none');
+    if (this.portalNode !== this.video) {
+      this.ownStyle(this.portalNode, 'touch-action', 'none');
+    }
     if (this.controller.div) {
       this.ownStyle(this.controller.div, 'display', 'none');
     }
@@ -625,7 +743,9 @@ class IOSPlayer {
         (event) => {
           event.preventDefault();
           event.stopPropagation();
-          callback(event);
+          if (!this.controlsLocked || node === refs.unlock) {
+            callback(event);
+          }
           this.showControls();
         },
         true
@@ -668,6 +788,9 @@ class IOSPlayer {
       this.controller.actionHandler.setSpeed(this.video, this.preferredSpeed(), 'user')
     );
     click(refs.fullscreen, () => this.requestFullscreen());
+    click(refs.native, () => this.enterNativeFullscreen());
+    click(refs.lock, () => this.setControlsLocked(true));
+    click(refs.unlock, () => this.setControlsLocked(false));
     click(refs.pip, () => {
       if (
         this.video.disablePictureInPicture ||
@@ -817,6 +940,9 @@ class IOSPlayer {
       (event) => {
         event.preventDefault();
         event.stopImmediatePropagation();
+        if (this.controlsLocked) {
+          return;
+        }
         if (this.gestures?.active || this.gestures?.suppressClick) {
           if (this.gestures) {
             this.gestures.suppressClick = false;
@@ -844,7 +970,12 @@ class IOSPlayer {
       (event) => {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (this.gestures?.active || this.gestures?.suppressClick) {
+        if (
+          this.controlsLocked ||
+          this.gestures?.active ||
+          this.gestures?.suppressClick ||
+          this.gestures?.consumeDoubleClick(event)
+        ) {
           return;
         }
         const rect = this.ui.stage.getBoundingClientRect();
@@ -869,7 +1000,11 @@ class IOSPlayer {
       'keydown',
       (event) => {
         this.pointerInteraction = false;
-        if (event.key === 'Escape' && !refs.customSpeedGroup.hidden) {
+        if (event.key === 'Escape' && this.controlsLocked) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.setControlsLocked(false);
+        } else if (event.key === 'Escape' && !refs.customSpeedGroup.hidden) {
           event.preventDefault();
           event.stopPropagation();
           refs.customSpeedGroup.hidden = true;
@@ -899,7 +1034,11 @@ class IOSPlayer {
       'cancel',
       (event) => {
         event.preventDefault();
-        this.close();
+        if (this.controlsLocked) {
+          this.setControlsLocked(false);
+        } else {
+          this.close();
+        }
       },
       true
     );
@@ -918,7 +1057,7 @@ class IOSPlayer {
       this.listen(this.view.visualViewport, 'resize', () => this.position(), true);
       this.listen(this.view.visualViewport, 'scroll', () => this.position(), true);
     }
-    refs.fullscreen.hidden = !this.canEnterNativeFullscreen();
+    this.ownedFullscreen.updateButton();
     refs.airplay.hidden =
       this.video.disableRemotePlayback ||
       this.video.hasAttribute('disableremoteplayback') ||
@@ -1015,7 +1154,64 @@ class IOSPlayer {
   }
 
   requestFullscreen() {
-    return this.enterNativeFullscreen();
+    return this.ownedFullscreen?.toggle() ?? false;
+  }
+
+  setControlsLocked(locked) {
+    if (!this.active) {
+      return false;
+    }
+    this.controlsLocked = Boolean(locked);
+    const { refs } = this.ui;
+    this.ui.host.toggleAttribute('data-controls-locked', this.controlsLocked);
+    this.ui.shadow.querySelector('.hud').inert = this.controlsLocked;
+    refs.lock.setAttribute('aria-pressed', String(this.controlsLocked));
+    refs.unlock.hidden = !this.controlsLocked;
+    if (this.controlsLocked) {
+      this.view.clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+      this.clearSeekFeedback();
+      this.scrubber?.cleanup();
+      this.gestures?.cleanup();
+      this.ui.host.setAttribute('data-controls-hidden', '');
+      refs.unlock.focus({ preventScroll: true });
+    } else {
+      this.scrubber?.attach();
+      this.gestures?.attach();
+      this.update();
+      this.showControls();
+      refs.lock.focus({ preventScroll: true });
+    }
+    return true;
+  }
+
+  clearSeekFeedback() {
+    this.view.clearTimeout(this.seekFeedbackTimer);
+    this.seekFeedbackTimer = null;
+    this.seekFeedbackTotal = 0;
+    if (this.ui?.refs.seekFeedback) {
+      this.ui.refs.seekFeedback.hidden = true;
+    }
+  }
+
+  showSeekFeedback(delta) {
+    if (!this.active || this.controlsLocked || !Number.isFinite(delta) || delta === 0) {
+      return;
+    }
+    const direction = Math.sign(delta);
+    this.seekFeedbackTotal =
+      Math.sign(this.seekFeedbackTotal) === direction ? this.seekFeedbackTotal + delta : delta;
+    const feedback = this.ui.refs.seekFeedback;
+    feedback.dataset.side = direction < 0 ? 'left' : 'right';
+    feedback.textContent = `${this.seekFeedbackTotal < 0 ? '−' : '+'}${Number(Math.abs(this.seekFeedbackTotal).toFixed(1))}s`;
+    feedback.hidden = false;
+    this.view.clearTimeout(this.seekFeedbackTimer);
+    const session = this.session;
+    this.seekFeedbackTimer = this.view.setTimeout(() => {
+      if (this.active && this.session === session) {
+        this.clearSeekFeedback();
+      }
+    }, 800);
   }
 
   seekBounds() {
@@ -1034,6 +1230,9 @@ class IOSPlayer {
   }
 
   seekTo(value) {
+    if (this.controlsLocked) {
+      return;
+    }
     const bounds = this.seekBounds();
     if (!bounds || !Number.isFinite(value)) {
       return;
@@ -1044,7 +1243,9 @@ class IOSPlayer {
   }
 
   seekBy(delta) {
-    this.seekTo(this.video.currentTime + delta);
+    const before = this.video.currentTime;
+    this.seekTo(before + delta);
+    this.showSeekFeedback(this.video.currentTime - before);
   }
 
   formatTime(value) {
@@ -1154,10 +1355,11 @@ class IOSPlayer {
   }
 
   update() {
-    if (!this.active) {
+    if (!this.active || this.controlsLocked) {
       return;
     }
     const { refs } = this.ui;
+    setControlProperty(refs.native, 'hidden', !this.canEnterNativeFullscreen());
     const position =
       this.scrubber?.active && Number.isFinite(this.scrubber.value)
         ? this.scrubber.value
@@ -1271,7 +1473,7 @@ class IOSPlayer {
   showControls() {
     this.view.clearTimeout(this.hideTimer);
     this.hideTimer = null;
-    if (!this.active) {
+    if (!this.active || this.controlsLocked) {
       return;
     }
     this.ui.host.removeAttribute('data-controls-hidden');
@@ -1297,6 +1499,8 @@ class IOSPlayer {
   }
 
   close({ settle = true } = {}) {
+    this.nativeRecovery?.cancel();
+    IOSPlayer.presentationRevision++;
     if (!this.active) {
       return;
     }
@@ -1305,6 +1509,10 @@ class IOSPlayer {
     const scroll = this.pageScroll?.refresh();
     this.pageScroll = null;
     this.scrollRestore?.cancel();
+    this.ownedFullscreen?.cleanup();
+    this.ownedFullscreen = null;
+    this.controlsLocked = false;
+    this.clearSeekFeedback();
     this.scrubber?.cleanup();
     this.scrubber = null;
     this.gestures?.cleanup();
@@ -1321,17 +1529,6 @@ class IOSPlayer {
     window.VSC.iosPlayerFrames?.deactivate(this.token);
     if (IOSPlayer.activePlayers.get(this.doc) === this) {
       IOSPlayer.activePlayers.delete(this.doc);
-    }
-    try {
-      if (
-        !this.nativeSession &&
-        this.doc.fullscreenElement &&
-        this.ui.host.contains(this.doc.fullscreenElement)
-      ) {
-        this.doc.exitFullscreen?.()?.catch?.(() => {});
-      }
-    } catch {
-      /* Already leaving browser fullscreen. */
     }
     this.siteStyle?.remove();
     this.siteStyle = null;

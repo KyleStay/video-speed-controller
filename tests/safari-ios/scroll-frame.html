@@ -108,18 +108,44 @@
           (saved ? saved.nestedX + ',' + saved.nestedY : 'none') +
           '; saved frame top: ' +
           (saved ? saved.frameTop.toFixed(1) : 'none') +
+          '; saved entry: ' +
+          (saved?.entry?.sequence || 0) +
+          '; saved entry kind: ' +
+          (saved?.entry?.kind || 'none') +
           '; errors: ' +
           errors.length;
       };
-      const remember = () => {
+      const remember = (entry = null) => {
         window.__stayfastParentScrollBaseline = {
           pageX: scrollX,
           pageY: scrollY,
           nestedX: nested.scrollLeft,
           nestedY: nested.scrollTop,
           frameTop: frame.getBoundingClientRect().top,
+          entry,
         };
         update();
+      };
+      // Only the known direct same-origin child can checkpoint this QA fixture.
+      window.__stayfastRememberParentScroll = (source, entry) => {
+        try {
+          if (
+            source !== frame.contentWindow ||
+            frame.ownerDocument !== document ||
+            frame.contentDocument !== source.document ||
+            source.parent !== window ||
+            location.origin === 'null' ||
+            source.location.origin !== location.origin ||
+            !Number.isSafeInteger(entry?.sequence) ||
+            entry.sequence < 1 ||
+            !['custom', 'primary'].includes(entry.kind)
+          )
+            return false;
+          remember(entry);
+          return true;
+        } catch {
+          return false;
+        }
       };
       document.querySelector('#prepare-parent').addEventListener('click', (event) => {
         if (!event.isTrusted) return;

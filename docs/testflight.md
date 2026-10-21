@@ -6,7 +6,37 @@ tester availability; a successful build alone does not complete the latter two.
 
 ## Current release preparation — October 21, 2026
 
-**0.11.4 (11)** contains the Safari playback refinements. Safari's supported request range is
+**0.11.4 (12)** is the next candidate. The primary Full screen action opens
+StayFast's owned player, with optional container DOM fullscreen where supported.
+Edge double-tap ±10-second seeking, Lock/Unlock and brief seek feedback are
+available in that player; center taps do not seek. More → Apple
+player explicitly opens Apple's native interface where available; StayFast
+cannot add controls to Apple's UI. Ordinary Play stays inline. Safari's browser
+bars may remain visible, especially on iPhone. A refused explicit Apple-player
+request may restore the same-video StayFast viewport unless newer input,
+navigation or a source/session change intervenes. Native fullscreen events never open it.
+Source-freeze checks passed native owned-player acceptance, primary entry,
+page/nested scrolling, activation, clean appearance and containing-app links.
+Chrome passed owned **36/36**, mobile **11/11**, basic **22/22**, and an
+instrumented live YouTube rerun **12/12** with unchanged assertions; the initial
+YouTube SPA failure remains recorded. Native double-tap is unverified because
+XCTest delivered one DOM touch pair even in the no-extension control.
+Final frame-boundary (67s) and missing-inline-attribute (90s) checks passed;
+portrait, Lock and inline appearance were inspected. Quiet baseline/owned rate
+runs passed functional checks at all seven rates through 16×; both retained
+strict cadence misses. At 16×, baseline/owned measured 53.1/53.7 callbacks/s,
+17/18ms p95 and 131/123ms maximum gaps. Buffered baseline network-stall warnings
+remain recorded; no all-green or universal smoothness result is claimed.
+App Store Connect's beta description now reflects the owned
+primary player, Lock, 16× cap, Apple-player escape and browser-bar limits.
+See [the Safari acceptance record](safari.md#build-12-presentation-policy-and-source-freeze-acceptance)
+for scope and limits. Final archive, upload, processing and Testing status are
+recorded in the local ledger under `build/safari/testflight/0.11.4-build12/`;
+this source acceptance record does not establish distribution.
+
+**0.11.4 (11)** is confirmed **Testing** in **Personal Auto**. Its release ledger
+and archive are retained under `build/safari/testflight/0.11.4-build11/`.
+It contains the Safari playback refinements. Safari's supported request range is
 0.07×–16×. Legacy larger absolute preferences are bounded to 16×. Play/seek
 restoration retains each source's accepted rate without retrying refused requests;
 external preference replacement invalidates this cache. Unchanged custom-player
@@ -24,11 +54,46 @@ original Personal group and its history remain. Future eligible Xcode uploads
 are assigned automatically after processing; Xcode Cloud builds still need manual
 assignment. Apple locks this choice when a group is created.
 
-Build 11 must be archived from the reviewed source. Record its source SHA,
+Build 12 must be archived from the reviewed source. Record its source SHA,
 resource hashes, signing/export checks, upload outcome and actual Testing status
-in the local release ledger under `build/safari/testflight/0.11.4-build11/`.
+in the local release ledger under `build/safari/testflight/0.11.4-build12/`.
 An accepted upload alone does not prove tester availability. Never re-upload
-accepted builds 1–10. Earlier evidence below is historical.
+accepted builds 1–11. Earlier evidence below is historical.
+
+### Build 12 TestFlight draft copy
+
+**Beta App Description**
+
+StayFast Video adds playback-speed and seek controls to HTML5 video and audio
+in Safari. Enable the extension in Safari settings and allow access to your
+video websites. Ordinary Play stays inline. Full screen opens StayFast's player
+with speed, precision seeking, Fit/Fill and Lock/Unlock around the original
+video. Optional container fullscreen depends on Safari support; browser bars
+may remain. More → Apple player opens Apple's native interface where available.
+Done returns to the page, and Use site player restores the site's controls.
+Settings stay on this device; no account is required.
+
+**What to Test**
+
+On iPhone and iPad Safari, confirm ordinary Play stays inline. Tap StayFast's
+Full screen control and check play/pause, speed through 16×, precision seeking,
+brief seek feedback, edge double-tap ±10-second skips, unchanged center-tap
+behavior, Fit/Fill and Lock/Unlock. While locked, check that playback gestures
+and keys cannot act and Unlock remains usable. Check the player's fullscreen
+button where available; Safari bars may remain visible. Try More → Apple player,
+return to the page, reopen StayFast, then use Done and Use site player. Check that
+the original video and speed survive each transition and that the page keeps
+its intended scroll position. Report the device, iOS version, site and installed
+build for any failure. Numeric speed acceptance alone does not establish smooth
+playback; note visible or audible problems separately.
+
+**Beta App Review Notes**
+
+Enable StayFast Video in Safari's extension settings, allow access to the test
+website and reload the page. The primary Full screen action opens StayFast's
+controls around the original video. Optional container fullscreen depends on
+Safari support and webpage permissions. More → Apple player is an explicit
+handoff to Apple's native interface. No account or backend is required.
 
 ## Delivery status — October 19, 2026
 
@@ -586,14 +651,14 @@ Xcode credentials/provisioning; sandbox account errors alone do not establish
 that the account needs repair.
 
 ```sh
-npm run testflight:safari -- --build=7          # Next build: resources, archive, export locally
-npm run testflight:safari:archive -- --build=7  # Archive only
-npm run testflight:safari:export -- --build=7   # Export an existing archive
-npm run testflight:safari:upload -- --build=7   # Explicit Apple upload
+npm run testflight:safari -- --build=12          # Resources, archive, export locally
+npm run testflight:safari:archive -- --build=12  # Archive only
+npm run testflight:safari:export -- --build=12   # Export an existing archive
+npm run testflight:safari:upload -- --build=12   # Explicit Apple upload
 ```
 
-These examples use the next unused build number; build 6 is already submitted.
-Artifacts are under `build/safari/testflight/0.11.3-build7/`:
+These examples target the next candidate; builds 1–11 have already been accepted.
+Artifacts are under `build/safari/testflight/0.11.4-build12/`:
 `StayFast Video.xcarchive`, `Export/` for the `.ipa`, and `Upload/` for upload
 output. Change the directory's version/build to match the command. The archive
 must embed the extension, complete minified Safari resources, `Privacy.html`,
@@ -605,7 +670,7 @@ prevents automatic duplicate submissions. After an uncertain attempt, inspect
 App Store Connect processing before retrying; never upload an already accepted
 version/build again.
 
-## Build 6 TestFlight draft copy
+## Build 6 TestFlight draft copy — historical
 
 **Beta App Description**
 

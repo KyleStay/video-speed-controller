@@ -408,7 +408,7 @@ class ShadowDOMManager {
     const fullscreen = document.createElement('button');
     fullscreen.type = 'button';
     fullscreen.className = 'inline-fullscreen';
-    fullscreen.dataset.action = 'nativeFullscreen';
+    fullscreen.dataset.action = 'ownedFullscreen';
     fullscreen.setAttribute('aria-label', 'Open video fullscreen');
     fullscreen.setAttribute('title', 'Open video fullscreen');
     fullscreen.textContent = '⛶';
