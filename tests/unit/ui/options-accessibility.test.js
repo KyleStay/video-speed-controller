@@ -23,22 +23,48 @@ describe('Options accessibility and CSS safety', () => {
     vi.resetModules();
   });
 
-  it('accepts Safari speeds above 16 consistently in imported settings and site rules', async () => {
+  it('bounds Safari imported speeds while retaining invalid-value validation', async () => {
     const previousConstants = window.VSC.Constants;
     vi.stubGlobal('__VSC_BROWSER__', 'safari');
     vi.resetModules();
     try {
       const { validateImportedSettings } = await import('../../../src/ui/options/options.js');
       const settings = {
-        keyBindings: [],
+        keyBindings: [
+          { action: 'fast', value: 64 },
+          { action: 'reset', value: 32 },
+          { action: 'rewind', value: 64 },
+          { action: 'faster', value: 32 },
+          { action: 'advanceFrame', value: 120 },
+        ],
         lastSpeed: 64,
         siteRules: [{ pattern: 'example.com', enabled: true, speed: 32 }],
       };
-      expect(validateImportedSettings(settings)).toBe('');
-      expect(validateImportedSettings({ ...settings, lastSpeed: Infinity })).toContain('lastSpeed');
+      const { normalizeSpeedSetting } = await import('../../../src/utils/speed-limits.js');
+      const normalized = Object.fromEntries(
+        Object.entries(settings).map(([key, value]) => [key, normalizeSpeedSetting(key, value)])
+      );
+      expect(normalized.keyBindings.map((binding) => binding.value)).toEqual([16, 16, 64, 32, 120]);
+      expect(normalized.lastSpeed).toBe(16);
+      expect(normalized.siteRules[0].speed).toBe(16);
+      expect(settings.lastSpeed).toBe(64);
+      expect(settings.siteRules[0].speed).toBe(32);
+      expect(validateImportedSettings(normalized)).toBe('');
+      expect(validateImportedSettings(settings)).toContain('shortcut');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: 64 })).toContain('lastSpeed');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: 16.01 })).toContain('lastSpeed');
       expect(
         validateImportedSettings({
-          ...settings,
+          ...normalized,
+          siteRules: [{ pattern: 'example.com', enabled: true, speed: 16.01 }],
+        })
+      ).toContain('site rule');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: Infinity })).toContain(
+        'lastSpeed'
+      );
+      expect(
+        validateImportedSettings({
+          ...normalized,
           siteRules: [{ pattern: 'example.com', enabled: true, speed: Infinity }],
         })
       ).toContain('site rule');

@@ -677,7 +677,9 @@ class EventManager {
 
     const preference = this.config.settings.lastSpeed;
     const authoritativeSpeed =
-      Number.isFinite(preference) && Number.isFinite(mediaRateState?.acceptedSpeed)
+      Number.isFinite(preference) &&
+      Number.isFinite(mediaRateState?.acceptedSpeed) &&
+      (mediaRateState.acceptedSpeedRevision ?? 0) === (this.config.speedPreferenceRevision ?? 0)
         ? mediaRateState.acceptedSpeed
         : preference;
 
@@ -825,9 +827,11 @@ class EventManager {
   /** Restore once, retaining source-specific readback even when a setter throws. */
   restoreMediaSpeed(video, speed) {
     const state = this.getOrCreateMediaRateState(video);
+    const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
     state.applyingSpeed = true;
     try {
-      window.VSC.siteHandlerManager.handleSpeedChange(video, speed);
+      const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
+      window.VSC.siteHandlerManager.handleSpeedChange(video, Math.min(MAX, Math.max(MIN, speed)));
     } catch (error) {
       window.VSC.logger.debug(`Playback speed restoration rejected: ${error?.message ?? error}`);
     } finally {
@@ -835,6 +839,9 @@ class EventManager {
         const accepted = video.playbackRate;
         if (Number.isFinite(accepted) && accepted > 0) {
           state.acceptedSpeed = accepted;
+          state.acceptedSpeedRevision = speedPreferenceRevision;
+          state.lifecycleSpeed = accepted;
+          state.lifecycleSpeedRevision = speedPreferenceRevision;
         }
       } catch {
         // A failing page getter must not strand the synchronous-event guard.

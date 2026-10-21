@@ -72,22 +72,30 @@ describe('Popup accessibility', () => {
     cleanupChromeMock();
   });
 
-  it('accepts Safari custom requests above 16 without advertising a universal maximum', async () => {
+  it('advertises and accepts the Safari 16× maximum while rejecting larger requests', async () => {
     vi.stubGlobal('__VSC_BROWSER__', 'safari');
-    document.getElementById('custom-speed-input').max = '16';
     await initializePopup();
     const input = document.getElementById('custom-speed-input');
-    expect(input.hasAttribute('max')).toBe(false);
+    expect(input.max).toBe('16');
+    chrome.tabs.sendMessage.mockClear();
     input.value = '32';
     document
       .getElementById('custom-speed-form')
       .dispatchEvent(new Event('submit', { cancelable: true }));
-    await vi.waitFor(() =>
-      expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ type: 'VSC_SET_SPEED', payload: { speed: 32 } }),
-        expect.any(Function)
-      )
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById('status').textContent).toBe(
+      'Speed must be between 0.07× and 16×.'
+    );
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+
+    input.value = '16';
+    document
+      .getElementById('custom-speed-form')
+      .dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'VSC_SET_SPEED', payload: { speed: 16 } }),
+      expect.any(Function)
     );
     expect(input.getAttribute('aria-invalid')).toBe('false');
   });

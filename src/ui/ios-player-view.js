@@ -235,7 +235,7 @@
                     <option value="1.5">1.5×</option><option value="1.75">1.75×</option>
                     <option value="2">2×</option><option value="2.5">2.5×</option>
                     <option value="3">3×</option><option value="4">4×</option>
-                    ${[6, 8, 12, 16, 32]
+                    ${[6, 8, 12, 16]
                       .filter((speed) => speed <= window.VSC.Constants.SPEED_LIMITS.MAX)
                       .map((speed) => `<option value="${speed}">${speed}×</option>`)
                       .join('')}
@@ -247,7 +247,7 @@
                   <button type="button" data-ref="mute" aria-label="Mute audio">Mute</button>
                   <button type="button" data-ref="more" aria-label="More video options" aria-expanded="false" aria-controls="extra-options">More</button>
                   <div class="custom-speed" data-ref="customSpeedGroup" role="group" aria-label="Custom playback speed" hidden>
-                    <input type="number" data-ref="customSpeed" aria-label="Custom playback speed" inputmode="decimal" min="0.07" step="any" />
+                    <input type="number" data-ref="customSpeed" aria-label="Custom playback speed" inputmode="decimal" min="0.07" max="${window.VSC.Constants.SPEED_LIMITS.MAX}" step="any" />
                     <button type="button" data-ref="customSpeedApply">Set speed</button>
                   </div>
                 </div>

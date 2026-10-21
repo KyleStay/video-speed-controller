@@ -1,6 +1,11 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import {
+  RATE_PROBE_RATES,
+  summarizeFrameCadence,
+  validateRateProbeReport,
+} from './rate-probe-validation.js';
 
 const fixtureHtml = `<!doctype html>
 <html>
@@ -217,10 +222,16 @@ const mobileHtml = `<!doctype html>
 </html>`;
 
 // Compare a closed-root native baseline with an explicitly controlled visible video.
-const rateProbeHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Native rate probe</title></head><body style="font:16px system-ui;margin:16px">
+export const rateProbeHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Native rate probe</title></head><body style="font:16px system-ui;margin:16px">
 <h1>Native playback rate probe</h1><div id="native-player"></div><button id="start-probe" style="min-height:44px;font:inherit">Start rate probe</button><p id="rate-results" role="status" aria-live="polite">Rate probe ready</p>
 <script>
+const rates = ${JSON.stringify(RATE_PROBE_RATES)};
+const summarizeFrameCadence = ${summarizeFrameCadence.toString()};
+const validateRateProbeReport = ${validateRateProbeReport.toString()};
 const controlled = new URLSearchParams(location.search).has('controlled');
+const pageErrors = [];
+addEventListener('error', event => pageErrors.push(String(event.message)));
+addEventListener('unhandledrejection', event => pageErrors.push(String(event.reason)));
 const host = document.querySelector('#native-player');
 const root = controlled ? host : host.attachShadow({mode:'closed'});
 const video = document.createElement('video');
@@ -228,7 +239,18 @@ video.src = '/probe.mp4'; video.muted = true; video.playsInline = true; video.co
 const status = document.querySelector('#rate-results');
 const button = document.querySelector('#start-probe');
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-const frameCount = () => { try { const count = video.getVideoPlaybackQuality?.().totalVideoFrames ?? video.webkitDecodedFrameCount; return Number.isFinite(count) ? count : null; } catch { return null; } };
+const frameCounters = () => {
+  let quality;
+  try { quality = video.getVideoPlaybackQuality?.(); } catch {}
+  const read = getter => { try { const value = getter(); return Number.isFinite(value) ? value : null; } catch { return null; } };
+  return {
+    totalVideoFrames: read(() => quality?.totalVideoFrames),
+    droppedVideoFrames: read(() => quality?.droppedVideoFrames),
+    corruptedVideoFrames: read(() => quality?.corruptedVideoFrames),
+    webkitDecodedFrameCount: read(() => video.webkitDecodedFrameCount),
+    webkitDroppedFrameCount: read(() => video.webkitDroppedFrameCount),
+  };
+};
 const firstPresentedFrame = () => new Promise(resolve => {
   if (typeof video.requestVideoFrameCallback !== 'function') { resolve('unavailable'); return; }
   let token;
@@ -254,40 +276,97 @@ button.addEventListener('click', async () => {
     // Establish media activation synchronously in this real user gesture.
     const activation = video.play();
     await activation;
-    for (const requested of [1,2,2.5,3,4,16,32,64]) {
+    for (const requested of rates) {
       video.pause(); video.loop = false;
-      await seek(2);
+      let frameToken;
+      const removeListeners = [];
       try {
+        await seek(5);
+        // One second of warmup plus six measured seconds, with an end margin.
+        if (!Number.isFinite(video.duration) || video.duration < 5 + requested * 7 + 1) throw new Error('Insufficient media duration for the complete sample');
+        let setterAccepted = true;
         if (controlled) {
           if (!video.vsc?.actionHandler) throw new Error('Extension controller unavailable');
-          video.vsc.actionHandler.setSpeed(video, requested, 'user');
+          setterAccepted = video.vsc.actionHandler.setSpeed(video, requested, 'user') === true;
         } else video.playbackRate = requested;
-      } catch(error) { results.push({requested,error:String(error)}); continue; }
-      await video.play();
-      const firstFrame = await firstPresentedFrame();
-      if (firstFrame === 'timedOut') { results.push({requested,readback:video.playbackRate,firstFrame,duration:video.duration,ended:video.ended,paused:video.paused,time:video.currentTime,error:video.error?.code || 0}); video.pause(); continue; }
-      let frameCallbacks = typeof video.requestVideoFrameCallback === 'function' ? 0 : null;
-      let frameToken, sampling = true, lastFrameClock = null, maxFrameGapMs = 0;
-      const countPresented = (clock) => {
-        frameCallbacks++;
-        if (lastFrameClock !== null) maxFrameGapMs = Math.max(maxFrameGapMs, clock-lastFrameClock);
-        lastFrameClock = clock;
-        if (sampling) frameToken = video.requestVideoFrameCallback(countPresented);
-      };
-      if (frameCallbacks !== null) frameToken = video.requestVideoFrameCallback(countPresented);
-      const startTime = video.currentTime, startClock = performance.now(), startFrames = frameCount();
-      await delay(requested <= 4 ? 1500 : 400);
-      sampling = false;
-      if (frameToken !== undefined) video.cancelVideoFrameCallback?.(frameToken);
-      const seconds = (performance.now() - startClock) / 1000;
-      const endFrames = frameCount();
-      results.push({requested,readback:video.playbackRate,firstFrame,frameCallbacks,callbackFps:frameCallbacks === null ? null : frameCallbacks/seconds,maxFrameGapMs,extensionControlled:!!video.vsc,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
-      video.pause();
+        if (!setterAccepted) throw new Error('Extension rejected the playback rate');
+        if (Math.abs(video.playbackRate - requested) > requested * 0.001) throw new Error('Requested playback rate was not accepted');
+        await video.play();
+        const firstFrame = await firstPresentedFrame();
+        if (firstFrame !== 'presented') throw new Error('Video-frame callbacks ' + firstFrame);
+        const warmupClock = performance.now();
+        await delay(1000);
+        const warmupElapsed = (performance.now() - warmupClock) / 1000;
+        if (video.duration - video.currentTime < requested * 6 + 1) throw new Error('Insufficient remaining media for the complete measurement');
+        const events = {waiting:0,stalled:0,pause:0,ended:0,error:0,hidden:0};
+        const eventStates = [];
+        let eventStatesTruncated = false;
+        const captureEventState = (event) => {
+          if (eventStates.length >= 32) { eventStatesTruncated = true; return; }
+          const state = {event,elapsedMs:performance.now()-startClock,currentTime:null,readyState:null,networkState:null,bufferedAhead:null};
+          try {
+            state.currentTime = video.currentTime;
+            state.readyState = video.readyState;
+            state.networkState = video.networkState;
+            const buffered = video.buffered;
+            let ahead = 0;
+            for (let index = 0; index < buffered.length; index++) {
+              if (buffered.start(index) <= state.currentTime && buffered.end(index) >= state.currentTime) ahead = Math.max(ahead, buffered.end(index)-state.currentTime);
+            }
+            state.bufferedAhead = ahead;
+          } catch { /* Missing event-time state fails validation. */ }
+          eventStates.push(state);
+        };
+        const listen = (target, type, callback) => {
+          target.addEventListener(type, callback);
+          removeListeners.push(() => target.removeEventListener(type, callback));
+        };
+        for (const type of ['waiting','stalled','pause','ended','error']) listen(video, type, () => {
+          events[type]++;
+          if (type === 'waiting' || type === 'stalled') captureEventState(type);
+        });
+        listen(document, 'visibilitychange', () => { if (document.visibilityState !== 'visible') events.hidden++; });
+        const ownershipAtStart = !!video.vsc;
+        let ownershipChanged = false;
+        const qualityStart = frameCounters();
+        const startTime = video.currentTime;
+        const startClock = performance.now();
+        const callbackTimes = [];
+        let sampling = true;
+        const countPresented = () => {
+          if (!sampling) return;
+          // Measure callback delivery on the same clock as the window edges.
+          callbackTimes.push(performance.now() - startClock);
+          ownershipChanged = ownershipChanged || ownershipAtStart !== !!video.vsc;
+          frameToken = video.requestVideoFrameCallback(countPresented);
+        };
+        frameToken = video.requestVideoFrameCallback(countPresented);
+        await delay(6000);
+        const endClock = performance.now();
+        sampling = false;
+        video.cancelVideoFrameCallback?.(frameToken);
+        frameToken = undefined;
+        const seconds = (endClock - startClock) / 1000;
+        const cadence = summarizeFrameCadence(callbackTimes, endClock - startClock);
+        const qualityEnd = frameCounters();
+        const endTime = video.currentTime;
+        const webkitDecodedFrames = qualityStart.webkitDecodedFrameCount === null || qualityEnd.webkitDecodedFrameCount === null ? null : qualityEnd.webkitDecodedFrameCount - qualityStart.webkitDecodedFrameCount;
+        results.push({requested,readback:video.playbackRate,setterAccepted,firstFrame,...cadence,callbackFps:cadence?.callbackHz ?? null,qualityStart,qualityEnd,
+          // Legacy field now means only the actual WebKit decoded counter.
+          decodedFrames:webkitDecodedFrames,webkitDecodedFrames,duration:video.duration,warmupElapsed,startTime,measuredTimeRate:(endTime-startTime)/seconds,elapsed:seconds,time:endTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0,readyState:video.readyState,visibility:document.visibilityState,events,eventStates,eventStatesTruncated,extensionControlled:!!video.vsc,ownershipChanged:ownershipChanged || ownershipAtStart !== !!video.vsc});
+      } catch(error) {
+        results.push({requested,error:String(error),readback:video.playbackRate,paused:video.paused,ended:video.ended,extensionControlled:!!video.vsc});
+      } finally {
+        if (frameToken !== undefined) video.cancelVideoFrameCallback?.(frameToken);
+        removeListeners.forEach(remove => remove());
+        video.pause();
+      }
       status.textContent = 'Rate probe results: ' + JSON.stringify({setterAcceptance,results});
     }
   } catch(error) { results.push({error:String(error)}); }
   finally { video.pause(); video.playbackRate = 1; button.disabled = false; }
-  window.__nativeRateResults = {mode:controlled ? 'extension' : 'native-baseline',setterAcceptance,results};
+  window.__nativeRateResults = {mode:controlled ? 'extension' : 'native-baseline',setterAcceptance,results,pageErrors};
+  window.__nativeRateResults.validation = validateRateProbeReport(window.__nativeRateResults);
   status.textContent = 'Rate probe complete: ' + JSON.stringify(window.__nativeRateResults);
 });
 </script></body></html>`;

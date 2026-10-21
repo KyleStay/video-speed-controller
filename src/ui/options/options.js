@@ -5,7 +5,12 @@
 
 // Core utilities and constants - must load first
 import '../../utils/constants.js';
-import { SPEED_LIMITS, speedRangeDescription } from '../../utils/speed-limits.js';
+import {
+  SPEED_LIMITS,
+  SAFARI_SPEED_REQUESTS,
+  normalizeSpeedSetting,
+  speedRangeDescription,
+} from '../../utils/speed-limits.js';
 import '../../utils/logger.js';
 
 // Storage and settings - depends on utils
@@ -1269,6 +1274,11 @@ async function handleImportFile(event) {
     let imported;
     try {
       imported = JSON.parse(text);
+      if (SAFARI_SPEED_REQUESTS && imported && typeof imported === 'object') {
+        imported = Object.fromEntries(
+          Object.entries(imported).map(([key, value]) => [key, normalizeSpeedSetting(key, value)])
+        );
+      }
     } catch (e) {
       throw new Error('File is not valid JSON', { cause: e });
     }

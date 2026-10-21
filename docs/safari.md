@@ -8,6 +8,32 @@ acceptance checks below pass on the intended devices.
 For signed iOS distribution and ready-to-use App Store Connect metadata, see
 [the TestFlight release packet](testflight.md).
 
+## October 21 Safari 16× verification
+
+The candidate caps requests at 16× and removes repeated lifecycle rate writes
+and unchanged custom-control DOM writes. Four paired native iPhone Safari runs
+(iPhone 17 Pro simulator, iOS 26.2) used a 180-second 1280×720 H.264/AAC moving
+clip, one-second warmup and six measured seconds at 1×/2×/2.5×/3×/4×/8×/16×.
+Every sample sustained media-time progress within 1% of its requested rate.
+
+| 16× run           | Presented-frame callbacks/s | 95th-percentile gap | Maximum gap |
+| ----------------- | --------------------------: | ------------------: | ----------: |
+| Native baseline A |                        54.7 |                17ms |       101ms |
+| Extension A       |                        54.7 |                18ms |       101ms |
+| Extension B       |                        53.8 |                19ms |       106ms |
+| Native baseline B |                        54.3 |                17ms |       113ms |
+
+These are local simulator measurements, not physical-device or live-stream
+smoothness guarantees. The strict cadence target did not pass every sample:
+1× showed larger percentile gaps, native 2× had a 151ms maximum gap, and one
+extension 2.5× sample had a 174ms gap. Original reports also failed the first
+validator's blanket rejection of download `stalled` notices despite uninterrupted
+progress. That evidence is retained; it is not counted as an all-green playback
+run. The instrumented probe distinguishes buffered network notices using bounded
+event-time state while keeping waiting, underbuffered stalls and cadence failures.
+See [the native QA guide](../tests/safari-ios/README.md). Raw JSON, screenshots,
+clip identity and XCTest bundles live under `test-results/safari-16x/`.
+
 ## Build and activate
 
 See [the Apple project guide](../apple/README.md) for Xcode setup, signing,
@@ -105,9 +131,17 @@ A rate accepted by Safari is not a guarantee that every frame can be decoded or
 presented at that speed. Apple documents choppy playback above 2× when the source's
 processing requirements exceed AVFoundation's capacity; playback may fall back
 to fewer frames. See [Apple QA1772](https://developer.apple.com/library/archive/qa/qa1772/_index.html).
-StayFast keeps higher rates available and preserves the original source, tracks
-and pitch policy. It avoids reassigning an unchanged native rate and does not
-fight a source-specific initialization clamp.
+StayFast accepts requested rates from 0.07× to 16× on Safari, matching Chrome
+and Firefox. This is a product limit; an accepted rate does not establish smooth
+decoding. Playback retains the site's original media, source, tracks, DRM session
+and audio pitch policy. StayFast avoids reassigning an unchanged native rate and
+does not fight a source-specific initialization clamp.
+
+Older finite absolute preferences above 16× are lowered to 16× when loaded or
+received from storage. Safari imports apply the same normalization to remembered
+speed, site-rule speeds and absolute Reset/Preferred shortcut values. Null
+authority, relative speed increments, seek intervals and frame rates retain
+their meaning. New popup and custom-player entries above 16× are rejected.
 
 The native `/rate-probe.html` fixture compares 1×, 2×, 2.5×, 3× and 4× using
 1.5-second samples of video-frame callbacks and media-time progress. Add
@@ -238,16 +272,11 @@ evidence below does not verify this change.
 - Speed and seek buttons have at least 44px touch targets. Presets select 1×,
   1.25×, 1.5×, or 2×; the active preset follows the current speed. The expanded
   panel is clamped to the visual viewport as it resizes or scrolls.
-- Safari's candidate speed choices add 6×, 8×, 12×, 16×, and 32× plus a custom
-  finite rate from 0.07×, bounded by the target media/native floating-point API.
-  Safari has no universal 16× playback ceiling; Chrome/Firefox retain the
-  extension's 16× limit. High-rate assignment or readback does not establish
-  decoded playback at that rate. Device, codec, streaming engine, audio and
-  site restrictions may limit the result. A separate native probe below observes
-  decoded/presented progress above 16× for one clip and simulator. Native product
-  controls separately pass 32× selection and custom 64× entry while paused. See
-  [WebKit's rate implementation](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/html/HTMLMediaElement.cpp),
-  which includes media-specific restrictions rather than a universal 16× cap.
+- Safari speed choices include 6×, 8×, 12× and 16×, plus custom finite rates
+  from 0.07× to 16×. Device, codec, streaming engine, audio and site restrictions
+  may reduce smoothness within that range. The historical build 4 controls and
+  raw native probe below accepted 32×/64×; those results describe the earlier
+  build and native fixture, not the current product range.
 - Popup and settings layouts adapt to narrow screens. Hardware keyboard
   shortcuts remain available on iPad and Mac.
 - Visible-tab and persisted-history events coalesce a deferred media recovery
@@ -555,7 +584,7 @@ Physical-device, live-Safari-site, DRM, PiP and AirPlay acceptance remain
 unverified. Simulator controls and the separate rate probe do not establish
 universal media compatibility or high-rate audio quality.
 
-An independent native Safari probe used an extension-inaccessible closed-shadow
+A historical independent native Safari probe used an extension-inaccessible closed-shadow
 video on iPhone 17 Pro / iOS 26.2 simulator: a local 300-second H.264 Baseline/AAC
 MP4. In approximately 400ms windows, requests of 1×/16×/32×/64× produced measured
 media-time slopes of **0.894×/13.057×/31.958×/64.035×**, with **9/17/23/19**

@@ -7,6 +7,7 @@ import {
   installChromeMock,
   cleanupChromeMock,
   resetMockStorage,
+  simulateExternalStorageWrite,
 } from '../../helpers/chrome-mock.js';
 import { createMockVideo, createMockDOM } from '../../helpers/test-utils.js';
 
@@ -372,6 +373,329 @@ describe('VideoController', () => {
     // Lifecycle restore should re-apply speed but NOT corrupt lastSpeed
     expect(mockVideo.playbackRate).toBe(1.8);
     expect(config.settings.lastSpeed).toBe(1.8);
+  });
+
+  describe('source-specific lifecycle speed restoration', () => {
+    async function setup(lastSpeed = 8) {
+      const config = new window.VSC.VideoSpeedConfig();
+      await config.load();
+      config.settings.lastSpeed = lastSpeed;
+      const manager = new window.VSC.EventManager(config, null);
+      const action = new window.VSC.ActionHandler(config, manager);
+      manager.actionHandler = action;
+      const video = createMockVideo({ readyState: 4 });
+      mockDOM.container.append(video);
+      const setter = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media, speed) => {
+          media.playbackRate = Math.min(speed, 2);
+        });
+      const controller = new window.VSC.VideoController(video, null, config, action);
+      return { config, manager, action, video, setter, controller };
+    }
+
+    it('does no rate, cooldown or UI work on repeated play/seek after a source clamps initialization', async () => {
+      const { config, manager, action, video, setter, controller } = await setup();
+      const cooldown = vi.spyOn(manager, 'refreshCoolDown');
+      const flash = vi.spyOn(action, 'flashController');
+      const dispatch = vi.spyOn(video, 'dispatchEvent');
+      const state = manager.getMediaRateState(video);
+      try {
+        expect(video.playbackRate).toBe(2);
+        expect(state.lifecycleSpeed).toBe(2);
+        for (const type of ['play', 'seeked', 'play', 'seeked']) {
+          video.dispatchEvent(new Event(type));
+        }
+        expect(setter).toHaveBeenCalledTimes(1);
+        expect(cooldown).not.toHaveBeenCalled();
+        expect(flash).not.toHaveBeenCalled();
+        expect(dispatch.mock.calls.filter(([event]) => event.type === 'ratechange')).toHaveLength(
+          0
+        );
+        expect(manager.getMediaRateState(video)).toBe(state);
+        expect(config.settings.lastSpeed).toBe(8);
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('restores the locally accepted rate once after an actual reset and still accepts a new command', async () => {
+      const { config, manager, action, video, setter, controller } = await setup();
+      try {
+        video.playbackRate = 1;
+        video.dispatchEvent(new Event('seeked'));
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('seeked'));
+        expect(setter).toHaveBeenCalledTimes(2);
+        expect(setter).toHaveBeenLastCalledWith(video, 2);
+        expect(video.playbackRate).toBe(2);
+        expect(config.settings.lastSpeed).toBe(8);
+        action.setSpeed(video, 1.5, 'user');
+        expect(video.playbackRate).toBe(1.5);
+        video.dispatchEvent(new Event('play'));
+        expect(setter).toHaveBeenCalledTimes(3);
+        expect(manager.getMediaRateState(video).lifecycleSpeed).toBe(1.5);
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('updates the lifecycle cache when a native speed change follows a user gesture', async () => {
+      const { config, manager, video, setter, controller } = await setup();
+      try {
+        const state = manager.getMediaRateState(video);
+        clearTimeout(state.coolDown);
+        state.coolDown = false;
+        manager.lastUserInteractionAt = 1000;
+        video.playbackRate = 1.75;
+        manager.handleRateChange({
+          target: video,
+          timeStamp: 1050,
+          stopImmediatePropagation: vi.fn(),
+        });
+        expect(config.settings.lastSpeed).toBe(1.75);
+        expect(manager.getMediaRateState(video).lifecycleSpeed).toBe(1.75);
+        setter.mockClear();
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('seeked'));
+        expect(video.playbackRate).toBe(1.75);
+        expect(setter).not.toHaveBeenCalled();
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it.each([
+      ['reset', 1, 'play'],
+      ['reset', 1, 'seeked'],
+      ['import', 1.5, 'play'],
+      ['import', 1.5, 'seeked'],
+      ['removal', undefined, 'play'],
+      ['removal', undefined, 'seeked'],
+    ])('adopts an external %s on %s preference through %s', async (_reason, speed, type) => {
+      const { config, manager, video, setter, controller } = await setup();
+      try {
+        const revision = config.speedPreferenceRevision;
+        simulateExternalStorageWrite({ lastSpeed: speed });
+        expect(config.speedPreferenceRevision).toBe(revision + 1);
+        const expected = speed ?? window.VSC.Constants.DEFAULT_SETTINGS.lastSpeed;
+        video.dispatchEvent(new Event(type));
+        expect(setter).toHaveBeenLastCalledWith(video, expected);
+        expect(video.playbackRate).toBe(expected);
+        const state = manager.getMediaRateState(video);
+        expect(state.lifecycleSpeedRevision).toBe(config.speedPreferenceRevision);
+        expect(state.acceptedSpeedRevision).toBe(config.speedPreferenceRevision);
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it.each([false, true])(
+      'uses external authority before lifecycle recovery (cooldown %s)',
+      async (cooldown) => {
+        const { config, manager, video, setter, controller } = await setup();
+        try {
+          const state = manager.getMediaRateState(video);
+          if (!cooldown) {
+            clearTimeout(state.coolDown);
+            state.coolDown = false;
+          }
+          simulateExternalStorageWrite({ lastSpeed: 1.5 });
+          video.playbackRate = 1;
+          manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+          expect(setter).toHaveBeenLastCalledWith(video, 1.5);
+          expect(video.playbackRate).toBe(1.5);
+          expect(state.acceptedSpeedRevision).toBe(config.speedPreferenceRevision);
+          expect(state.lifecycleSpeedRevision).toBe(config.speedPreferenceRevision);
+        } finally {
+          controller.remove();
+          manager.cleanup();
+          vi.restoreAllMocks();
+        }
+      }
+    );
+
+    it('retries a replaced preference even when an external reset repeats its saved value', async () => {
+      const { config, manager, video, setter, controller } = await setup();
+      try {
+        const revision = config.speedPreferenceRevision;
+        simulateExternalStorageWrite({ lastSpeed: 8 });
+        expect(config.speedPreferenceRevision).toBe(revision + 1);
+        setter.mockImplementation((media, speed) => {
+          media.playbackRate = speed;
+        });
+        video.dispatchEvent(new Event('play'));
+        expect(setter).toHaveBeenLastCalledWith(video, 8);
+        expect(video.playbackRate).toBe(8);
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('adopts an already matching replacement without a native write', async () => {
+      const { config, manager, video, setter, controller } = await setup();
+      try {
+        simulateExternalStorageWrite({ lastSpeed: 2 });
+        setter.mockClear();
+        video.dispatchEvent(new Event('play'));
+        const state = manager.getMediaRateState(video);
+        expect(state.lifecycleSpeedRevision).toBe(config.speedPreferenceRevision);
+        expect(state.acceptedSpeedRevision).toBe(config.speedPreferenceRevision);
+        expect(setter).not.toHaveBeenCalled();
+        // An ordinary sibling command changes the shared preference, not this revision.
+        config.settings.lastSpeed = 1.5;
+        video.dispatchEvent(new Event('seeked'));
+        expect(video.playbackRate).toBe(2);
+        expect(setter).not.toHaveBeenCalled();
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('keeps local authority through its actual debounced storage self-echo', async () => {
+      const { config, manager, action, video, setter, controller } = await setup();
+      vi.useFakeTimers();
+      try {
+        config.settings.rememberSpeed = true;
+        const revision = config.speedPreferenceRevision;
+        action.setSpeed(video, 1.5, 'user');
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(config.speedPreferenceRevision).toBe(revision);
+        expect(config._lastWrittenSpeed).toBeNull();
+        setter.mockClear();
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('seeked'));
+        expect(video.playbackRate).toBe(1.5);
+        expect(setter).not.toHaveBeenCalled();
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('keeps a source clamp through a sibling command without replacing its revision', async () => {
+      const { config, manager, action, video, setter, controller } = await setup();
+      const other = createMockVideo({ readyState: 4 });
+      mockDOM.container.append(other);
+      const sibling = new window.VSC.VideoController(other, null, config, action);
+      try {
+        const revision = config.speedPreferenceRevision;
+        action.setSpeed(other, 1.5, 'user');
+        expect(config.settings.lastSpeed).toBe(1.5);
+        expect(config.speedPreferenceRevision).toBe(revision);
+        setter.mockClear();
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('seeked'));
+        expect(video.playbackRate).toBe(2);
+        expect(setter).not.toHaveBeenCalled();
+        video.playbackRate = 1;
+        manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+        expect(setter).toHaveBeenLastCalledWith(video, 2);
+      } finally {
+        sibling.remove();
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('contains a page-owned playbackRate getter failure in play and seek callbacks', async () => {
+      const { manager, video, setter, controller } = await setup();
+      const descriptor = Object.getOwnPropertyDescriptor(video, 'playbackRate');
+      try {
+        Object.defineProperty(video, 'playbackRate', {
+          configurable: true,
+          get() {
+            throw new Error('Page getter unavailable');
+          },
+        });
+        expect(() => controller.handlePlay({ target: video, type: 'play' })).not.toThrow();
+        expect(() => controller.handleSeek({ target: video, type: 'seeked' })).not.toThrow();
+        expect(setter).toHaveBeenCalledTimes(1);
+      } finally {
+        if (descriptor) {
+          Object.defineProperty(video, 'playbackRate', descriptor);
+        } else {
+          delete video.playbackRate;
+        }
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it.each(['emptied', 'loadstart'])(
+      'releases source rate state on %s and retries preference for the next resource',
+      async (type) => {
+        const { config, manager, video, setter, controller } = await setup();
+        try {
+          const oldState = manager.getMediaRateState(video);
+          video.dispatchEvent(new Event(type));
+          expect(manager.getMediaRateState(video)).toBeNull();
+          expect(oldState.coolDown).toBe(false);
+          setter.mockImplementation((media, speed) => {
+            media.playbackRate = speed;
+          });
+          video.playbackRate = 1;
+          video.dispatchEvent(new Event('play'));
+          expect(setter).toHaveBeenLastCalledWith(video, 8);
+          expect(video.playbackRate).toBe(8);
+          expect(manager.getMediaRateState(video)).not.toBe(oldState);
+          expect(config.settings.lastSpeed).toBe(8);
+          const release = vi.spyOn(manager, 'releaseMediaState');
+          controller.remove();
+          release.mockClear();
+          video.dispatchEvent(new Event(type));
+          expect(release).not.toHaveBeenCalled();
+          expect(manager.getMediaRateState(video)).toBeNull();
+        } finally {
+          if (!controller.disposed) {
+            controller.remove();
+          }
+          manager.cleanup();
+          vi.restoreAllMocks();
+        }
+      }
+    );
+
+    it('tracks lifecycle readback without establishing fight authority for null startup', async () => {
+      const { config, manager, video, setter, controller } = await setup(null);
+      try {
+        // Force initialization of a non-default site baseline, retaining null user authority.
+        controller.actionHandler.setSpeed(video, 1.5, 'init');
+        expect(manager.getMediaRateState(video).lifecycleSpeed).toBe(1.5);
+        expect(manager.getMediaRateState(video).acceptedSpeed).toBeUndefined();
+        expect(config.settings.lastSpeed).toBeNull();
+        setter.mockClear();
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('seeked'));
+        expect(setter).not.toHaveBeenCalled();
+        video.playbackRate = 1;
+        manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+        // The external rate is accepted, never restored to the lifecycle baseline.
+        expect(video.playbackRate).toBe(1);
+        expect(setter.mock.calls.every(([, speed]) => speed === 1)).toBe(true);
+        expect(config.settings.lastSpeed).toBeNull();
+      } finally {
+        controller.remove();
+        manager.cleanup();
+        vi.restoreAllMocks();
+      }
+    });
   });
 
   // --- Frame-rate detection (rVFC burst for frame-step shortcuts) ---

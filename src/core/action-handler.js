@@ -527,6 +527,7 @@ class ActionHandler {
     const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
     let numericSpeed = Number(Math.min(MAX, Math.max(MIN, speed)).toFixed(2));
     const previousSpeed = this.config.settings.lastSpeed;
+    const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
 
     // 1. Update lastSpeed BEFORE touching playbackRate. The playbackRate
     //    assignment (step 3) fires a synchronous native ratechange event.
@@ -565,10 +566,15 @@ class ActionHandler {
       if (source !== 'external' && source !== 'init') {
         this.config.settings.lastSpeed = numericSpeed;
       }
+      if (mediaRateState) {
+        mediaRateState.lifecycleSpeed = numericSpeed;
+        mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+      }
       if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
         // Each source can accept a different rate for the same command.
         // A sibling's readback must not invalidate this media's authority.
         mediaRateState.acceptedSpeed = numericSpeed;
+        mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
       }
     } catch (error) {
       let restoredSpeed = previousSpeed;
@@ -580,8 +586,13 @@ class ActionHandler {
           if (source !== 'external' && source !== 'init') {
             restoredSpeed = actual;
           }
+          if (mediaRateState) {
+            mediaRateState.lifecycleSpeed = actual;
+            mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+          }
           if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
             mediaRateState.acceptedSpeed = actual;
+            mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
           }
         }
       } catch {

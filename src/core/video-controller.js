@@ -512,7 +512,38 @@ class VideoController {
    */
   setupEventHandlers() {
     const mediaEventAction = (event) => {
-      const targetSpeed = this.getTargetSpeed(event.target);
+      const local = this.actionHandler.eventManager?.getMediaRateState?.(event.target);
+      const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
+      const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
+      const targetSpeed = Math.min(
+        MAX,
+        Math.max(
+          MIN,
+          Number.isFinite(local?.lifecycleSpeed) &&
+            (local.lifecycleSpeedRevision ?? 0) === speedPreferenceRevision
+            ? local.lifecycleSpeed
+            : this.getTargetSpeed()
+        )
+      );
+      // Resuming/seeking must not retry a source's refused request or renew
+      // cooldown, dispatch synthetic events and flash an already-correct UI.
+      try {
+        if (event.target.playbackRate === targetSpeed) {
+          if (local) {
+            // Adopt a replacement that already matches without a native write.
+            local.lifecycleSpeed = targetSpeed;
+            local.lifecycleSpeedRevision = speedPreferenceRevision;
+            if (Number.isFinite(this.config.settings.lastSpeed)) {
+              local.acceptedSpeed = targetSpeed;
+              local.acceptedSpeedRevision = speedPreferenceRevision;
+            }
+          }
+          return;
+        }
+      } catch {
+        // A page-owned getter must not break the media lifecycle callback.
+        return;
+      }
 
       // Lifecycle restore, not a user choice — don't persist to lastSpeed.
       window.VSC.logger.info(`Media event ${event.type}: restoring speed to ${targetSpeed}`);
@@ -533,6 +564,10 @@ class VideoController {
     // Add essential event listeners for speed restoration
     this.video.addEventListener('play', this.handlePlay);
     this.video.addEventListener('seeked', this.handleSeek);
+    this.handleRateSourceReset = () =>
+      this.actionHandler.eventManager?.releaseMediaState?.(this.video);
+    this.video.addEventListener('emptied', this.handleRateSourceReset);
+    this.video.addEventListener('loadstart', this.handleRateSourceReset);
 
     // Native ratechange events are not composed: a shadow root prevents them
     // from reaching EventManager's document capture listener. Forward only
@@ -606,6 +641,11 @@ class VideoController {
     }
     if (this.handleSeek) {
       this.video.removeEventListener('seeked', this.handleSeek);
+    }
+    if (this.handleRateSourceReset) {
+      this.video.removeEventListener('emptied', this.handleRateSourceReset);
+      this.video.removeEventListener('loadstart', this.handleRateSourceReset);
+      this.handleRateSourceReset = null;
     }
     if (this.handleShadowRateChange) {
       this.video.removeEventListener('ratechange', this.handleShadowRateChange);

@@ -118,12 +118,24 @@ final class SafariQATests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 20))
         start.tap()
         let result = safari.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Rate probe complete:'")).firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 45))
+        XCTAssertTrue(result.waitForExistence(timeout: 120))
         print("NATIVE RATE RESULT " + result.label)
         let text = XCTAttachment(string: result.label)
         text.name = "native-rate-result"; text.lifetime = .keepAlways; add(text)
         capture(safari, "native-rate-probe")
-        XCTAssertTrue(result.label.contains("setterAcceptance"))
+        let prefix = "Rate probe complete: "
+        guard let data = String(result.label.dropFirst(prefix.count)).data(using: .utf8),
+              let report = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let validation = report["validation"] as? [String: Any],
+              let cadence = validation["cadence"] as? [String: Any],
+              let cadencePassed = cadence["passed"] as? Bool else {
+            XCTFail("Missing parsed functional/cadence validation in native probe report")
+            return
+        }
+        XCTAssertEqual(validation["passed"] as? Bool, true, "Functional playback failed: \(validation)")
+        // Cadence is reported independently for paired baseline/control review;
+        // functional success does not promise smooth playback on other devices.
+        print("NATIVE RATE CADENCE TARGET PASSED \(cadencePassed): \(cadence)")
     }
 
     func testRuntime() {

@@ -1399,17 +1399,21 @@ describe('ActionHandler', () => {
       expect(save).toHaveBeenCalledWith({ lastSpeed: 16 });
     });
 
-    it('allows Safari requests above 16 and preserves the accepted request', () => {
-      const previous = window.VSC.Constants.SPEED_LIMITS;
-      window.VSC.Constants.SPEED_LIMITS = { MIN: 0.07, MAX: 3.4028234663852886e38 };
+    it('caps legacy high speed user commands at 16 and establishes lifecycle authority', () => {
+      const { video, actionHandler, config, save } = setup();
+      const manager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = manager;
+      const setter = vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange');
       try {
-        const { video, actionHandler, config, save } = setup();
         expect(actionHandler.setSpeed(video, 64, 'user')).toBe(true);
-        expect(video.playbackRate).toBe(64);
-        expect(config.settings.lastSpeed).toBe(64);
-        expect(save).toHaveBeenCalledWith({ lastSpeed: 64 });
+        expect(setter).toHaveBeenCalledExactlyOnceWith(video, 16);
+        expect(video.playbackRate).toBe(16);
+        expect(config.settings.lastSpeed).toBe(16);
+        expect(manager.getMediaRateState(video).acceptedSpeed).toBe(16);
+        expect(manager.getMediaRateState(video).lifecycleSpeed).toBe(16);
+        expect(save).toHaveBeenCalledWith({ lastSpeed: 16 });
       } finally {
-        window.VSC.Constants.SPEED_LIMITS = previous;
+        manager.cleanup();
       }
     });
 

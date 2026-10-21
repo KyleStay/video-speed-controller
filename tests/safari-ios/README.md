@@ -86,7 +86,7 @@ Custom player from the speed panel. It checks the original decoded video, advanc
 controller, and zero page/media errors. It checks play/pause, range and 10-second
 seeking, distance-based fine scrubbing with genuine near/far finger drags, mute,
 fit/fill buttons and pinch, remaining/total time, repeated absolute 1×, default
-preferred speed 1.8×, native speed-menu selections through 32× and a custom 64× entry, 44px controls, landscape layout, app switching, Done,
+preferred speed 1.8×, native speed-menu selections through 16×, rejection above 16×, and a custom 12× entry, 44px controls, landscape layout, app switching, Done,
 explicit reopen, and More → Use site player. Done restores the original position while
 restoring native controls and keeping the explicit Custom player entry available; Use site player restores native controls
 and leaves playback in the site player. The flow then verifies native fullscreen
@@ -175,19 +175,31 @@ For optional native speed capability diagnostics, serve a longer moving clip. Th
 measures requested/read-back rates, time progress and presented-frame callbacks
 separately; it does not promise the same throughput or decoding fidelity on other
 media or devices. The fixture keeps this video in a closed shadow root so extension
-rate guards cannot influence the platform measurement.
+rate guards cannot influence the platform measurement. Open the same URL with
+`?controlled` for the paired extension measurement. Run both modes on a quiet
+host, then repeat in reverse order with fresh documents.
 
 ```sh
 ffmpeg -stream_loop 19 -i tests/safari-ios/sample.mp4 -t 300 -c copy -movflags +faststart /private/tmp/stayfast-rate-probe-300s.mp4
 STAYFAST_RATE_PROBE_MP4=/private/tmp/stayfast-rate-probe-300s.mp4 node tests/safari-ios/fixture-server.mjs --port 62938
 xcrun simctl openurl "$STAYFAST_SIMULATOR_UDID" "http://127.0.0.1:62938/rate-probe.html"
-xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/native-rates.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -collect-test-diagnostics never -only-testing:StayFastSafariQATests/SafariQATests/testNativeRateProbe test
+xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/native-rates.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 240 -collect-test-diagnostics never -only-testing:StayFastSafariQATests/SafariQATests/testNativeRateProbe test
 ```
 
 Use one fixture server at a time and stop its exact process before restarting with
 another clip. The probe records detached video/audio setter acceptance separately
-from playback. Inspect the JSON attachment; successful test completion means the
-diagnostic finished, not that every requested rate achieved its target.
+from playback. Inspect the JSON attachment; the test requires all seven rates (1×, 2×, 2.5×, 3×, 4×, 8×, 16×) to sustain
+requested media-time progress within 10% for six seconds after a one-second
+warmup, with no waiting, underbuffered stalls, pause/end/error, hidden document
+or ownership change. A download `stalled` notice is a separate warning only
+when its captured ready state is at least 3 and buffered data covers at least
+one wall-clock second at that rate; missing/truncated state fails closed.
+The [HTML standard](https://html.spec.whatwg.org/multipage/media.html#event-media-stalled)
+defines this notice in terms of fetching.
+Cadence has a separate verdict: at least 24 callbacks/second (20 at 1×),
+95th-percentile gaps at most 50ms and maximum gap at most 150ms. Functional
+success alone does not satisfy that cadence target or prove physical-device
+smoothness. Raw playback-quality counters stay separate from callback cadence.
 
 Inspect the kept screenshots and hierarchy attachments, including owned portrait/landscape, the restored inline state, and explicit
 site-player hand-back:

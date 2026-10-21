@@ -1,6 +1,19 @@
 /** Own the iOS presentation while retaining the site's original media session. */
 window.VSC = window.VSC || {};
 
+// Comparing against the rendered DOM also repairs external edits without a
+// second state cache. Avoid replacing unchanged text nodes on every clock tick.
+function setControlProperty(element, property, value) {
+  if (element[property] !== value) {
+    element[property] = value;
+  }
+}
+function setControlAttribute(element, name, value) {
+  if (element.getAttribute(name) !== value) {
+    element.setAttribute(name, value);
+  }
+}
+
 class IOSPlayer {
   static activePlayers = new WeakMap();
   static siteRelinquished = new WeakSet();
@@ -1149,39 +1162,49 @@ class IOSPlayer {
       this.scrubber?.active && Number.isFinite(this.scrubber.value)
         ? this.scrubber.value
         : this.video.currentTime;
-    refs.play.textContent = this.video.ended ? 'Replay' : this.video.paused ? 'Play' : 'Pause';
-    refs.play.setAttribute(
+    setControlProperty(
+      refs.play,
+      'textContent',
+      this.video.ended ? 'Replay' : this.video.paused ? 'Play' : 'Pause'
+    );
+    setControlAttribute(
+      refs.play,
       'aria-label',
       this.video.ended ? 'Replay video' : this.video.paused ? 'Play video' : 'Pause video'
     );
-    refs.mute.textContent = this.video.muted ? 'Unmute' : 'Mute';
-    refs.mute.setAttribute('aria-label', this.video.muted ? 'Unmute video' : 'Mute video');
-    refs.current.textContent = IOSPlayer.formatTime(position);
+    setControlProperty(refs.mute, 'textContent', this.video.muted ? 'Unmute' : 'Mute');
+    setControlAttribute(refs.mute, 'aria-label', this.video.muted ? 'Unmute video' : 'Mute video');
+    setControlProperty(refs.current, 'textContent', IOSPlayer.formatTime(position));
     const finite = Number.isFinite(this.video.duration) && this.video.duration > 0;
-    refs.duration.textContent =
+    setControlProperty(
+      refs.duration,
+      'textContent',
       this.remaining && finite
         ? `−${IOSPlayer.formatTime(Math.max(0, this.video.duration - position))}`
-        : IOSPlayer.formatTime(this.video.duration);
-    refs.duration.disabled = !finite;
-    refs.duration.setAttribute(
+        : IOSPlayer.formatTime(this.video.duration)
+    );
+    setControlProperty(refs.duration, 'disabled', !finite);
+    setControlAttribute(
+      refs.duration,
       'aria-label',
       finite ? (this.remaining ? 'Show total duration' : 'Show remaining time') : 'Live video'
     );
     const bounds = this.seekBounds();
-    refs.live.hidden = finite || !bounds;
-    refs.live.disabled = !bounds || bounds[1] - position < 1;
-    refs.volume.hidden = !this.canSetVolume();
-    refs.volume.value = String(this.video.muted ? 0 : this.video.volume);
-    refs.seek.disabled = !bounds;
-    refs.back.disabled = !bounds;
-    refs.forward.disabled = !bounds;
+    setControlProperty(refs.live, 'hidden', finite || !bounds);
+    setControlProperty(refs.live, 'disabled', !bounds || bounds[1] - position < 1);
+    setControlProperty(refs.volume, 'hidden', !this.canSetVolume());
+    setControlProperty(refs.volume, 'value', String(this.video.muted ? 0 : this.video.volume));
+    setControlProperty(refs.seek, 'disabled', !bounds);
+    setControlProperty(refs.back, 'disabled', !bounds);
+    setControlProperty(refs.forward, 'disabled', !bounds);
     if (bounds) {
-      refs.seek.min = String(bounds[0]);
-      refs.seek.max = String(bounds[1]);
+      setControlProperty(refs.seek, 'min', String(bounds[0]));
+      setControlProperty(refs.seek, 'max', String(bounds[1]));
       if (!this.scrubber?.active) {
-        refs.seek.value = String(position);
+        setControlProperty(refs.seek, 'value', String(position));
       }
-      refs.seek.setAttribute(
+      setControlAttribute(
+        refs.seek,
         'aria-valuetext',
         `${IOSPlayer.formatTime(position)} of ${IOSPlayer.formatTime(bounds[1])}`
       );
@@ -1191,15 +1214,18 @@ class IOSPlayer {
       const option = this.doc.createElement('option');
       option.value = rate;
       option.textContent = `${rate}×`;
+      option.disabled = Number(rate) > window.VSC.Constants.SPEED_LIMITS.MAX;
       refs.speed.append(option);
     }
-    refs.speed.value = rate;
-    refs.normal.setAttribute('aria-pressed', String(this.video.playbackRate === 1));
-    refs.preferred.setAttribute(
+    setControlProperty(refs.speed, 'value', rate);
+    setControlAttribute(refs.normal, 'aria-pressed', String(this.video.playbackRate === 1));
+    const preferred = this.preferredSpeed();
+    setControlAttribute(
+      refs.preferred,
       'aria-pressed',
-      String(this.video.playbackRate === this.preferredSpeed())
+      String(this.video.playbackRate === preferred)
     );
-    refs.preferred.title = `Preferred speed: ${this.preferredSpeed()}×`;
+    setControlProperty(refs.preferred, 'title', `Preferred speed: ${preferred}×`);
     const tracks = this.captionTracks();
     const signature = tracks
       .map((track, index) => `${index}:${track.label}:${track.language}`)
@@ -1218,11 +1244,11 @@ class IOSPlayer {
         refs.captions.append(option);
       });
     }
-    refs.captions.hidden = tracks.length === 0;
+    setControlProperty(refs.captions, 'hidden', tracks.length === 0);
     const showing = tracks.findIndex((track) => track.mode === 'showing');
-    refs.captions.value = showing < 0 ? 'off' : String(showing);
+    setControlProperty(refs.captions, 'value', showing < 0 ? 'off' : String(showing));
     const audio = this.audioTracks();
-    refs.audio.hidden = audio.length < 2;
+    setControlProperty(refs.audio, 'hidden', audio.length < 2);
     const audioSignature = audio
       .map((track, index) => `${index}:${track.id}:${track.label}:${track.language}`)
       .join('|');
@@ -1236,7 +1262,7 @@ class IOSPlayer {
         refs.audio.append(option);
       });
     }
-    refs.audio.value = String(audio.findIndex((track) => track.enabled));
+    setControlProperty(refs.audio, 'value', String(audio.findIndex((track) => track.enabled)));
     if (this.video.paused) {
       this.showControls();
     }

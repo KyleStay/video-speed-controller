@@ -1,8 +1,4 @@
-import {
-  SPEED_LIMITS,
-  SAFARI_SPEED_REQUESTS,
-  speedRangeDescription,
-} from '../../utils/speed-limits.js';
+import { SPEED_LIMITS, speedRangeDescription } from '../../utils/speed-limits.js';
 import { sendTabCommand } from './tab-command.js';
 import { initializeDiagnosticsPanel } from './diagnostics.js';
 
@@ -19,15 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeDiagnosticsPanel();
   const customInput = document.querySelector('#custom-speed-input');
   if (customInput) {
-    if (SAFARI_SPEED_REQUESTS) {
-      customInput.removeAttribute('max');
-    } else {
-      customInput.max = String(SPEED_LIMITS.MAX);
-    }
-  }
-  const range = document.querySelector('.speed-range');
-  if (range && SAFARI_SPEED_REQUESTS) {
-    range.textContent = '0.07× and faster';
+    customInput.max = String(SPEED_LIMITS.MAX);
   }
   let enabled = true;
   let commandGeneration = 0;
