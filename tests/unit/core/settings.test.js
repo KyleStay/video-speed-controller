@@ -7,6 +7,8 @@ import {
   installChromeMock,
   cleanupChromeMock,
   resetMockStorage,
+  getMockStorage,
+  simulateExternalStorageWrite,
 } from '../../helpers/chrome-mock.js';
 import { vi } from 'vitest';
 
@@ -315,5 +317,98 @@ describe('Settings', () => {
     expect(config.settings.siteDefaultSpeed).toBe(2.3);
 
     window.VSC.matchSiteRule = original;
+  });
+  it('revises speed authority only for external speed preferences after the self-echo guard', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    expect(config.speedPreferenceRevision).toBe(0);
+    await config.load();
+    const revision = config.speedPreferenceRevision;
+    simulateExternalStorageWrite({
+      controllerOpacity: 0.5,
+      keyBindings: config.settings.keyBindings,
+    });
+    expect(config.speedPreferenceRevision).toBe(revision);
+    config.settings.lastSpeed = 1.5;
+    config._lastWrittenSpeed = 8;
+    simulateExternalStorageWrite({ lastSpeed: 8 });
+    expect(config.settings.lastSpeed).toBe(1.5);
+    expect(config.speedPreferenceRevision).toBe(revision);
+    simulateExternalStorageWrite({ lastSpeed: 8 });
+    expect(config.speedPreferenceRevision).toBe(revision + 1);
+    simulateExternalStorageWrite({ lastSpeed: undefined });
+    expect(config.speedPreferenceRevision).toBe(revision + 2);
+    simulateExternalStorageWrite({ siteRules: config.settings.siteRules });
+    expect(config.speedPreferenceRevision).toBe(revision + 3);
+    config.settings.siteDefaultSpeed = 2;
+    simulateExternalStorageWrite({ siteDefaultSpeed: undefined });
+    expect(config.speedPreferenceRevision).toBe(revision + 4);
+  });
+
+  describe('legacy absolute speed normalization', () => {
+    const legacy = () => ({
+      rememberSpeed: true,
+      lastSpeed: 64,
+      keyBindings: [
+        { action: 'fast', key: 71, value: 64 },
+        { action: 'reset', key: 82, value: 32 },
+        { action: 'faster', key: 68, value: 32 },
+        { action: 'slower', key: 83, value: 64 },
+        { action: 'rewind', key: 90, value: 90 },
+        { action: 'advance', key: 88, value: 120 },
+        { action: 'rewindFrame', key: 188, value: 60 },
+        { action: 'advanceFrame', key: 190, value: 120 },
+      ],
+      siteRules: [
+        { pattern: 'unrelated.invalid', enabled: true, speed: 128 },
+        { pattern: 'another.invalid', enabled: true, speed: null },
+      ],
+    });
+
+    it.each(['load', 'change', 'save'])(
+      'bounds only absolute speed units during %s',
+      async (mode) => {
+        const data = legacy();
+        const original = structuredClone(data);
+        const storageRead =
+          mode === 'load'
+            ? vi.spyOn(window.VSC.StorageManager, 'get').mockResolvedValue({
+                ...window.VSC.Constants.DEFAULT_SETTINGS,
+                ...data,
+                controllerCSS: null,
+              })
+            : null;
+        const config = new window.VSC.VideoSpeedConfig();
+        await config.load();
+        storageRead?.mockRestore();
+        if (mode === 'change') {
+          simulateExternalStorageWrite(data);
+        }
+        if (mode === 'save') {
+          await config.save(data);
+        }
+        expect(config.settings.lastSpeed).toBe(16);
+        expect(config.settings.keyBindings.map(({ value }) => value)).toEqual([
+          16, 16, 32, 64, 90, 120, 60, 120,
+        ]);
+        expect(config.settings.siteRules.map(({ speed }) => speed)).toEqual([16, null]);
+        expect(data).toEqual(original);
+        if (mode === 'save') {
+          expect(getMockStorage().lastSpeed).toBe(16);
+          expect(getMockStorage().keyBindings.map(({ value }) => value)).toEqual([
+            16, 16, 32, 64, 90, 120, 60, 120,
+          ]);
+        }
+      }
+    );
+
+    it('normalizes speed-only saves before the debounce writes storage', async () => {
+      const config = new window.VSC.VideoSpeedConfig();
+      await config.load();
+      await config.save({ lastSpeed: 64 });
+      expect(config.settings.lastSpeed).toBe(16);
+      expect(config.pendingSave).toBe(16);
+      await vi.advanceTimersByTimeAsync(config.SAVE_DELAY + 50);
+      expect(getMockStorage().lastSpeed).toBe(16);
+    });
   });
 });

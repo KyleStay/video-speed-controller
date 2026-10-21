@@ -358,13 +358,13 @@ describe('content-bridge', () => {
   // =========================================================================
 
   describe('VSC_WRITE_STORAGE trust boundary', () => {
-    it('preserves finite Safari speed requests above 16 across the isolated bridge', async () => {
+    it('caps finite Safari speed persistence at 16 across the isolated bridge', async () => {
       vi.stubGlobal('__VSC_BROWSER__', 'safari');
       try {
         await loadBridge();
         docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 64 } }));
         await vi.advanceTimersByTimeAsync(1100);
-        expect(getMockStorage().lastSpeed).toBe(64);
+        expect(getMockStorage().lastSpeed).toBe(16);
       } finally {
         vi.unstubAllGlobals();
       }

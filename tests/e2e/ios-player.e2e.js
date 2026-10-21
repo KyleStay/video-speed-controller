@@ -51,8 +51,23 @@ async function tapPlayer(page, ref, context = page) {
   }, ref);
   assert.exists(bounds, `Visible owned control ${ref}`);
   assert.true(bounds.width >= 44 && bounds.height >= 44, `${ref} must have a 44px target`);
-  // Child coordinates equal top coordinates once its owned frame is expanded.
-  await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  // CDP maps the control through the current iframe bounds. A fixed-style
+  // change alone does not establish the child viewport's settled coordinates.
+  const handle = await context.evaluateHandle(
+    (name) =>
+      document.querySelector('vsc-ios-player')?.shadowRoot?.querySelector(`[data-ref="${name}"]`),
+    ref
+  );
+  try {
+    const mapped = await handle.asElement()?.boundingBox();
+    assert.exists(mapped, `Mapped owned control ${ref}`);
+    if (context !== page) {
+      console.log(`   Frame control ${ref}: ${JSON.stringify({ local: bounds, mapped })}`);
+    }
+    await page.touchscreen.tap(mapped.x + mapped.width / 2, mapped.y + mapped.height / 2);
+  } finally {
+    await handle.dispose();
+  }
 }
 
 async function tapInline(page, selector, mediaId = 'mobile-video', context = page) {

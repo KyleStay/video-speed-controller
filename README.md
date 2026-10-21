@@ -13,9 +13,9 @@ advertising, analytics, or StayTech backend.
 
 - **Control across sites** — works with HTML5 video and audio, including media
   inside supported embedded players and dynamic pages.
-- **Fine-grained speed** — choose configurable increments. Chrome/Firefox use
-  0.07×–16×; Safari offers higher presets and custom
-  positive rates within the media engine's limits.
+- **Fine-grained speed** — choose configurable increments and custom rates from
+  0.07× to 16× in Chrome, Firefox, and Safari. The source and device determine
+  how smoothly a requested rate plays.
 - **Precise navigation** — seek by custom intervals, set and revisit markers,
   and step through video frame by frame while paused.
 - **Custom keyboard control** — remap actions, use modifier chords, and create

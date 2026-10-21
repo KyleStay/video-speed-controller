@@ -89,6 +89,45 @@ describe('iOS player ownership, playback, and restoration', () => {
     return item;
   }
 
+  it('does not rewrite unchanged controls on playback progress while keeping live changes visible', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const { refs, shadow } = player.ui;
+    player.update();
+    const playText = refs.play.firstChild;
+    const durationText = refs.duration.firstChild;
+    const observer = new MutationObserver(() => {});
+    observer.observe(shadow, {
+      subtree: true,
+      attributes: true,
+      childList: true,
+      characterData: true,
+    });
+    for (const type of ['timeupdate', 'progress', 'timeupdate']) {
+      video.dispatchEvent(new Event(type));
+    }
+    expect(observer.takeRecords()).toEqual([]);
+
+    video.currentTime = 25;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(refs.current.textContent).toBe('0:25');
+    expect(Number(refs.seek.value)).toBe(25);
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+    expect(refs.play.firstChild).toBe(playText);
+    expect(refs.duration.firstChild).toBe(durationText);
+
+    video.play();
+    expect(refs.play.textContent).toBe('Pause');
+    video.muted = true;
+    video.dispatchEvent(new Event('volumechange'));
+    expect(refs.mute.textContent).toBe('Unmute');
+    video.playbackRate = 16;
+    video.dispatchEvent(new Event('ratechange'));
+    expect(refs.speed.value).toBe('16');
+    observer.disconnect();
+  });
+
   const flushEvents = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   beforeEach(() => {

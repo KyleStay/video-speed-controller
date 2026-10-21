@@ -330,14 +330,17 @@ with direct `chrome.*` access.
   that media's state; manager cleanup cancels every remaining timer.
   Accepted rates are scoped to each media until its next explicit rate change;
   a clamped initialization must not overwrite the saved preference or recursively
-  fight its own accepted readback. Sibling updates cannot invalidate that readback,
-  and fight-back writes guard synchronous events and retain accepted rates.
-  Unset (`null`) authority stays unset. Native
+  fight its own accepted readback. Cached accepted/lifecycle rates carry an
+  external-preference revision: storage replacements/removals invalidate them;
+  self-echo and sibling commands preserve the revision. `emptied`/`loadstart`
+  release the source's rate state. Fight-back writes guard synchronous events
+  and retain accepted rates. Unset (`null`) authority stays unset. Native
   assignments skip unchanged rates. Initialization never persists a speed.
-  `utils/speed-limits.js` selects browser limits at build time. All browsers
-  retain the 0.07× minimum. Safari accepts finite requests up to the largest
-  finite Float32 value, an AVPlayer numeric bound rather than a decoding limit;
-  Chrome/Firefox retain 16×.
+  `utils/speed-limits.js` owns the 0.07×–16× product request range for every
+  browser. Normalize legacy finite absolute rates above 16× on settings load,
+  storage changes and Safari import; preserve null authority, relative speed
+  increments, seek intervals and frame rates. Playback commands, restoration
+  and bridge persistence retain the same cap.
   Accepted playback state drives display/persistence; requested-rate readback
   alone does not prove high-rate decoded playback. Keep Safari acceptance
   media/device-specific and record decoded progress before claiming support.
