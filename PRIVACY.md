@@ -1,6 +1,6 @@
 # StayFast Video Privacy Policy
 
-Last updated: October 5, 2026
+Last updated: October 17, 2026
 
 StayFast Video is built to control media playback without collecting information
 about you or your browsing.
@@ -30,6 +30,22 @@ StayFast Video reads the media elements and page state needed to show controls
 and carry out your commands. This processing happens locally in your browser.
 The extension does not transmit page content or browsing activity to StayTech.
 
+## Optional diagnostic reports
+
+Video diagnostics keep a bounded technical trace in the page's memory to help
+investigate video-loading problems. The trace includes relative event timing,
+scroll positions, layout measurements, focused element types and playback state.
+It excludes page text, website/media URLs, account details and typed keys.
+Ordinary builds capture only when you start a session. A diagnostic TestFlight
+build may start capture automatically on Twitter/X; its release notes identify
+that behavior.
+
+Reports are not automatically transmitted or saved in extension storage. You can
+inspect a prepared report and explicitly copy, share or save it. Clear capture,
+reload or closing the page discards the in-memory trace. Copies you export remain
+where you saved or shared them. If you send a report to support, its technical
+contents are available to the recipient you choose.
+
 ## Permissions
 
 - **Storage** is used to save extension preferences.
@@ -50,7 +66,8 @@ StayFast Video uses information available through browser extension APIs and
 website access only to provide or improve the media-control features described
 in the extension and its store listing. It does not transfer this information
 to third parties, use it for advertising or creditworthiness, or permit people
-to read it. Its use of information complies with the Chrome Web Store User Data
+to read it, except for a diagnostic report you explicitly choose to send. Its use
+of information complies with the Chrome Web Store User Data
 Policy, including the Limited Use requirements.
 
 ## Changes

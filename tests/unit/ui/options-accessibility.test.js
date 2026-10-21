@@ -23,6 +23,31 @@ describe('Options accessibility and CSS safety', () => {
     vi.resetModules();
   });
 
+  it('accepts Safari speeds above 16 consistently in imported settings and site rules', async () => {
+    const previousConstants = window.VSC.Constants;
+    vi.stubGlobal('__VSC_BROWSER__', 'safari');
+    vi.resetModules();
+    try {
+      const { validateImportedSettings } = await import('../../../src/ui/options/options.js');
+      const settings = {
+        keyBindings: [],
+        lastSpeed: 64,
+        siteRules: [{ pattern: 'example.com', enabled: true, speed: 32 }],
+      };
+      expect(validateImportedSettings(settings)).toBe('');
+      expect(validateImportedSettings({ ...settings, lastSpeed: Infinity })).toContain('lastSpeed');
+      expect(
+        validateImportedSettings({
+          ...settings,
+          siteRules: [{ pattern: 'example.com', enabled: true, speed: Infinity }],
+        })
+      ).toContain('site rule');
+    } finally {
+      vi.unstubAllGlobals();
+      window.VSC.Constants = previousConstants;
+    }
+  });
+
   it('createRow applies accessible labels to generated controls', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -235,6 +260,39 @@ describe('Options accessibility and CSS safety', () => {
   it('keeps mobile preference checkbox layout from applying to site rule rows', () => {
     expect(optionsCss).toContain(".row:not(.site-rule):has(> input[type='checkbox'])");
     expect(optionsCss).not.toContain(".row:has(input[type='checkbox'])");
+  });
+
+  it('uses the device viewport while retaining user zoom', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    expect(parsed.querySelector('meta[name="viewport"]').content).toBe(
+      'width=device-width, initial-scale=1'
+    );
+  });
+
+  it('keeps touch inputs legible and matches the CSS editor highlight font size', () => {
+    const touchCss = optionsCss.split('@media (any-pointer: coarse) {')[1];
+    expect(touchCss).toMatch(/min-height: 44px;/);
+    expect(touchCss).toMatch(
+      /\.css-editor textarea,[\s\S]*?\.css-editor \.css-highlight\s*\{\s*font-size: 16px;/
+    );
+    expect(touchCss).toMatch(/\.removeParent,[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
+  });
+
+  it('bounds narrow touch row columns and gives the action selector its own row', () => {
+    expect(optionsCss).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(optionsCss).toMatch(/\.row.customs \.customDo\s*\{\s*grid-column: 1 \/ -1;/);
+    expect(optionsCss).toContain('grid-template-columns: minmax(0, 1fr) 44px 70px 44px');
+    expect(optionsCss).toMatch(/#site-rules-container\s*\{\s*width: 100%;\s*min-width: 0;/);
+  });
+
+  it('explains that Safari preferences stay on the device and offers transfer', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    const text = parsed.getElementById('about-privacy').parentElement.textContent;
+    expect(text.replace(/\s+/g, ' ')).toContain(
+      'Safari saves preferences on this device; they do not sync through iCloud.'
+    );
+    expect(text).toContain('Export');
+    expect(text).toContain('Import');
   });
 
   it('keeps shortcut text visible in forced colors mode', () => {

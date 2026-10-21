@@ -5,6 +5,7 @@
 
 // Core utilities and constants - must load first
 import '../../utils/constants.js';
+import { SPEED_LIMITS, speedRangeDescription } from '../../utils/speed-limits.js';
 import '../../utils/logger.js';
 
 // Storage and settings - depends on utils
@@ -825,7 +826,7 @@ function shortcutValueError(action, value) {
   }
   const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
   if (['reset', 'fast'].includes(action) && (Number(value) < MIN || Number(value) > MAX)) {
-    return `Playback speed must be between ${MIN} and ${MAX}.`;
+    return `Playback speed must be ${speedRangeDescription()}.`;
   }
   return '';
 }
@@ -902,9 +903,7 @@ export function validate() {
         rule.speed < window.VSC.Constants.SPEED_LIMITS.MIN ||
         rule.speed > window.VSC.Constants.SPEED_LIMITS.MAX
       ) {
-        status.textContent = `Error: Speed for "${rule.pattern}" must be between ${
-          window.VSC.Constants.SPEED_LIMITS.MIN
-        } and ${window.VSC.Constants.SPEED_LIMITS.MAX}.`;
+        status.textContent = `Error: Speed for "${rule.pattern}" must be ${speedRangeDescription()}.`;
         status.classList.add('show', 'error');
         valid = false;
         window.validationTimeout = setTimeout(() => {
@@ -1184,7 +1183,7 @@ function import_settings() {
   document.getElementById('importFile').click();
 }
 
-function validateImportedSettings(settings) {
+export function validateImportedSettings(settings) {
   if (!settings || typeof settings !== 'object' || !Array.isArray(settings.keyBindings)) {
     return 'File does not look like a StayFast Video settings file';
   }
@@ -1215,7 +1214,7 @@ function validateImportedSettings(settings) {
     ['controllerButtonSize', 10, 32],
     ['logLevel', 1, 6],
     ['defaultLogLevel', 1, 6],
-    ['lastSpeed', 0.07, 16],
+    ['lastSpeed', SPEED_LIMITS.MIN, SPEED_LIMITS.MAX],
   ]) {
     if (key === 'lastSpeed' && settings[key] === null) {
       continue;
@@ -1245,7 +1244,9 @@ function validateImportedSettings(settings) {
           typeof rule.enabled !== 'boolean' ||
           (rule.speed !== null &&
             rule.speed !== undefined &&
-            (!Number.isFinite(rule.speed) || rule.speed < 0.07 || rule.speed > 16))
+            (!Number.isFinite(rule.speed) ||
+              rule.speed < SPEED_LIMITS.MIN ||
+              rule.speed > SPEED_LIMITS.MAX))
       ))
   ) {
     return 'Invalid imported site rule';

@@ -40,6 +40,7 @@ class VideoController {
     this.disposed = false;
 
     try {
+      window.VSC.recordVideoDiagnostic?.('before-controller', target);
       // Attach controller to video element first (needed for adjustSpeed)
       target.vsc = this;
 
@@ -55,6 +56,7 @@ class VideoController {
 
       // Create UI
       this.div = this.initializeControls();
+      window.VSC.recordVideoDiagnostic?.('after-controller', target);
 
       // Set up event handlers
       this.setupEventHandlers();
@@ -64,6 +66,14 @@ class VideoController {
 
       // Start measuring the real frame rate (video-only, zero steady-state cost).
       this.setupFpsDetection();
+
+      // Assign before attach so constructor rollback can restore native state.
+      if (window.VSC.IOSPlayer?.isSupported(target)) {
+        window.VSC.recordVideoDiagnostic?.('before-inline-policy', target);
+        this.iosPlayer = new window.VSC.IOSPlayer(this);
+        this.iosPlayer.attach();
+        window.VSC.recordVideoDiagnostic?.('after-inline-policy', target);
+      }
     } catch (error) {
       // Construction must be transactional. A page-owned DOM/media API can
       // throw in the MAIN world; never leave a stale expando or registered,
@@ -373,20 +383,34 @@ class VideoController {
     this.insertionParent = wrapper.parentNode;
     this.mediaParentAncestor = this.parent?.parentNode;
 
+    this.positionControls(wrapper);
+
+    window.VSC.logger.debug('initializeControls End');
+    return wrapper;
+  }
+
+  positionControls(wrapper) {
+    const shadow = wrapper.shadowRoot;
     // THEN compute position based on actual DOM state.
     // If a CSS override sets the wrapper to position:relative (e.g. YouTube, Netflix),
     // the inner controller stays at (0,0) and the CSS nudge handles placement.
     // Otherwise (wrapper is absolute), compute coordinates for generic sites.
     const computedPosition = getComputedStyle(wrapper).position;
-    if (computedPosition !== 'relative') {
-      const position = window.VSC.ShadowDOMManager.calculatePosition(this.video);
+    if (computedPosition !== 'relative' || this.controlsManager.inlineIOS) {
+      const position =
+        computedPosition === 'relative'
+          ? { top: '0px', left: '0px' }
+          : window.VSC.ShadowDOMManager.calculatePosition(this.video);
       const innerController = window.VSC.ShadowDOMManager.getController(shadow);
       innerController.style.top = position.top;
       innerController.style.left = position.left;
     }
 
-    window.VSC.logger.debug('initializeControls End');
-    return wrapper;
+    // Establish final inline bounds before returning to the site's readiness
+    // handlers; ResizeObserver runs too late for their synchronous measurements.
+    if (this.controlsManager.inlineIOS) {
+      this.controlsManager.positionInlineControls(shadow, this.video);
+    }
   }
 
   /**
@@ -449,6 +473,9 @@ class VideoController {
 
   /** Restore a removed/moved overlay without recreating its state or listeners. */
   repairDOMPlacement() {
+    if (this.iosPlayer?.active) {
+      return false;
+    }
     if (this.disposed || !this.div || !this.video.isConnected) {
       return false;
     }
@@ -469,6 +496,9 @@ class VideoController {
       this.insertIntoDOM(this.video.ownerDocument, this.div);
       this.insertionParent = this.div.parentNode;
       this.mediaParentAncestor = parent.parentNode;
+      if (this.controlsManager.inlineIOS) {
+        this.positionControls(this.div);
+      }
       return this.div.isConnected;
     } catch (error) {
       window.VSC.logger.warn(`Controller placement recovery failed: ${error.message}`);
@@ -549,7 +579,10 @@ class VideoController {
    * Remove controller and clean up
    */
   remove() {
+    window.VSC.recordVideoDiagnostic?.('controller-remove', this.video);
     window.VSC.logger.debug('Removing VideoController');
+    this.iosPlayer?.cleanup();
+    this.controlsManager?.cleanup();
     this.actionHandler?.eventManager?.releaseMediaState?.(this.video);
 
     // Remove DOM element

@@ -12,6 +12,7 @@ import {
   BLACKLISTED_CODES,
   DEFAULT_BINDINGS,
 } from './key-maps.js';
+import { SPEED_LIMITS, SAFARI_SPEED_REQUESTS } from './speed-limits.js';
 import { DEFAULT_CONTROLLER_CSS } from '../styles/controller-css-defaults.js';
 
 window.VSC = window.VSC || {};
@@ -85,13 +86,9 @@ meet.google.com`.replace(regStrip, ''),
     RESET_SPEED: 'VSC_RESET_SPEED',
     TOGGLE_DISPLAY: 'VSC_TOGGLE_DISPLAY',
     GET_STATUS: 'VSC_GET_STATUS',
+    VIDEO_DIAGNOSTICS: 'VSC_VIDEO_DIAGNOSTICS',
     TEARDOWN: 'VSC_TEARDOWN',
     REINIT: 'VSC_REINIT',
-  };
-
-  const SPEED_LIMITS = {
-    MIN: 0.07, // Video min rate per Chromium source
-    MAX: 16, // Maximum playback speed in Chrome per Chromium source
   };
 
   const CONTROLLER_SIZE_LIMITS = {
@@ -110,6 +107,7 @@ meet.google.com`.replace(regStrip, ''),
   window.VSC.Constants.LOG_LEVELS = LOG_LEVELS;
   window.VSC.Constants.MESSAGE_TYPES = MESSAGE_TYPES;
   window.VSC.Constants.SPEED_LIMITS = SPEED_LIMITS;
+  window.VSC.Constants.SAFARI_SPEED_REQUESTS = SAFARI_SPEED_REQUESTS;
   window.VSC.Constants.CONTROLLER_SIZE_LIMITS = CONTROLLER_SIZE_LIMITS;
   window.VSC.Constants.CUSTOM_ACTIONS_NO_VALUES = CUSTOM_ACTIONS_NO_VALUES;
   window.VSC.Constants.PREDEFINED_CODE_MAP = PREDEFINED_CODE_MAP;

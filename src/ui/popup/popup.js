@@ -1,4 +1,10 @@
+import {
+  SPEED_LIMITS,
+  SAFARI_SPEED_REQUESTS,
+  speedRangeDescription,
+} from '../../utils/speed-limits.js';
 import { sendTabCommand } from './tab-command.js';
+import { initializeDiagnosticsPanel } from './diagnostics.js';
 
 // Message type constants
 const MessageTypes = {
@@ -9,12 +15,20 @@ const MessageTypes = {
   GET_STATUS: 'VSC_GET_STATUS',
 };
 
-const SPEED_LIMITS = {
-  MIN: 0.07,
-  MAX: 16,
-};
-
 document.addEventListener('DOMContentLoaded', () => {
+  initializeDiagnosticsPanel();
+  const customInput = document.querySelector('#custom-speed-input');
+  if (customInput) {
+    if (SAFARI_SPEED_REQUESTS) {
+      customInput.removeAttribute('max');
+    } else {
+      customInput.max = String(SPEED_LIMITS.MAX);
+    }
+  }
+  const range = document.querySelector('.speed-range');
+  if (range && SAFARI_SPEED_REQUESTS) {
+    range.textContent = '0.07× and faster';
+  }
   let enabled = true;
   let commandGeneration = 0;
   let lifecycleGeneration = 0;
@@ -124,11 +138,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function validateCustomSpeedValue(value) {
     const speed = parseFloat(value);
     if (!Number.isFinite(speed)) {
-      return { valid: false, speed, message: 'Enter a speed from 0.07x to 16x.' };
+      return { valid: false, speed, message: `Enter a finite speed ${speedRangeDescription()}.` };
     }
 
     if (speed < SPEED_LIMITS.MIN || speed > SPEED_LIMITS.MAX) {
-      return { valid: false, speed, message: 'Speed must be between 0.07x and 16x.' };
+      return { valid: false, speed, message: `Speed must be ${speedRangeDescription()}.` };
     }
 
     return { valid: true, speed };

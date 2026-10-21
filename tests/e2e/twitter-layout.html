@@ -1,0 +1,237 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Natural-height X feed fixture</title>
+<style>
+  body {
+    margin: 0;
+    font: 16px/1.4 system-ui;
+  }
+  header {
+    padding: 16px;
+  }
+  #scroller {
+    height: 650px;
+    overflow: auto;
+    border: 1px solid #bbb;
+  }
+  article {
+    padding: 16px;
+    border-bottom: 1px solid #ddd;
+  }
+  p {
+    margin: 0 0 12px;
+  }
+  video {
+    display: block;
+    width: 100%;
+  }
+</style>
+<header>Natural-height local feed</header>
+<main id="scroller">
+  <div id="top-space"></div>
+  <div id="cells"></div>
+</main>
+<script>
+  const telemetry = { calls: [], shifts: [], scrolls: [], geometry: [] };
+  window.__layoutTelemetry = telemetry;
+  const record = (method, target) =>
+    telemetry.calls.push({
+      method,
+      target,
+      stack: new Error().stack.split('\n').slice(1, 5).join('\n'),
+    });
+  for (const name of ['scrollTo', 'scrollBy']) {
+    const original = window[name];
+    window[name] = function (...args) {
+      record(name, 'window');
+      return original.apply(this, args);
+    };
+  }
+  for (const [prototype, name] of [
+    [Element.prototype, 'scrollIntoView'],
+    [HTMLElement.prototype, 'focus'],
+  ]) {
+    const original = prototype[name];
+    prototype[name] = function (...args) {
+      record(name, this.id || this.tagName);
+      return original.apply(this, args);
+    };
+  }
+  for (const name of ['webkitEnterFullscreen', 'webkitEnterFullScreen']) {
+    HTMLVideoElement.prototype[name] = function () {
+      record(name, this.id);
+    };
+  }
+  HTMLVideoElement.prototype.webkitSetPresentationMode = function (mode) {
+    if (mode === 'fullscreen') record('presentationFullscreen', this.id);
+  };
+  try {
+    new PerformanceObserver((list) =>
+      telemetry.shifts.push(
+        ...list.getEntries().map((e) => ({
+          value: e.value,
+          recent: e.hadRecentInput,
+          nodes: e.sources.map((s) => s.node?.id || s.node?.tagName),
+        }))
+      )
+    ).observe({ type: 'layout-shift', buffered: true });
+  } catch {}
+  const scroller = document.querySelector('#scroller');
+  const cells = document.querySelector('#cells');
+  for (let index = 0; index < 55; index++) {
+    const cell = document.createElement('article');
+    cell.id = 'cell-' + index;
+    cell.dataset.testid = 'tweet';
+    const text = document.createElement('p');
+    text.textContent =
+      'Feed item ' + index + ': ' + 'Natural text layout. '.repeat((index % 3) + 1);
+    cell.append(text);
+    cells.append(cell);
+  }
+  const snapshot = () => {
+    const anchor = document.querySelector('#anchor');
+    const video = window.__layoutVideo;
+    const media = video?.getBoundingClientRect();
+    const controller = video?.vsc?.div?.shadowRoot
+      ?.querySelector('#controller')
+      ?.getBoundingClientRect();
+    return {
+      current: media
+        ? {
+            mediaTop: media.top,
+            controllerTop: controller?.top,
+            deltaY: controller ? controller.top - media.top : null,
+            width: media.width,
+            height: media.height,
+            original: window.__reparentDimensions,
+            sameController:
+              !window.__reparentController || video.vsc === window.__reparentController,
+          }
+        : null,
+      pageX: scrollX,
+      pageY: scrollY,
+      scrollTop: scroller.scrollTop,
+      scrollLeft: scroller.scrollLeft,
+      anchorTop: anchor?.getBoundingClientRect().top,
+      active: document.activeElement?.id || document.activeElement?.tagName,
+      owned: document.querySelectorAll('vsc-ios-player').length,
+      calls: telemetry.calls.slice(),
+      shifts: telemetry.shifts.slice(-8),
+      geometry: telemetry.geometry.slice(),
+    };
+  };
+  document.addEventListener('scroll', () => telemetry.scrolls.push(snapshot()), true);
+  const choose = () => {
+    const rect = scroller.getBoundingClientRect();
+    const cell = Array.from(cells.children).find(
+      (n) => n.getBoundingClientRect().top > rect.top + 150
+    );
+    cell.id = 'anchor';
+    window.__anchor = cell;
+    telemetry.calls.length = 0;
+    telemetry.shifts.length = 0;
+    return snapshot();
+  };
+  const media = (cell) => {
+    const v = document.createElement('video');
+    v.id = 'layout-video';
+    v.muted = true;
+    v.loop = true;
+    v.controls = true;
+    v.preload = 'none';
+    v.addEventListener('loadeddata', () => {
+      if (v.id !== 'far-video') return;
+      const measure = (phase) => {
+        const controller = v.vsc?.div?.shadowRoot?.querySelector('#controller');
+        const rect = v.getBoundingClientRect();
+        const controlRect = controller?.getBoundingClientRect();
+        telemetry.geometry.push({
+          phase,
+          scrollTop: scroller.scrollTop,
+          scrollHeight: scroller.scrollHeight,
+          mediaTop: rect.top,
+          mediaLeft: rect.left,
+          mediaHeight: rect.height,
+          hostTop: v.vsc?.div?.getBoundingClientRect().top,
+          controllerTop: controlRect?.top,
+          controllerLeft: controlRect?.left,
+          controllerTransform: controller && getComputedStyle(controller).transform,
+          controllerStyle: controller?.getAttribute('style'),
+          deltaY: controlRect ? controlRect.top - rect.top : null,
+        });
+      };
+      measure('target-loadeddata');
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        measure('first-site-RO');
+        requestAnimationFrame(() => measure('after-RO-frame'));
+      });
+      observer.observe(v);
+    });
+    cell.append(v);
+    window.__layoutVideo = v;
+    return v;
+  };
+  window.__layout = {
+    snapshot,
+    choose,
+    async far() {
+      const cell = document.querySelector('#cell-45');
+      cell.style.transform = 'translateY(120px)';
+      const video = media(cell);
+      video.id = 'far-video';
+      video.src = '/__layout_sample.webm?far';
+      await video.play();
+    },
+    async fresh() {
+      const video = media(window.__anchor);
+      video.src = '/__layout_sample.webm?fresh';
+      await video.play();
+    },
+    async recycle() {
+      const v = window.__layoutVideo;
+      v.pause();
+      v.src = '/__layout_sample.webm?recycle';
+      v.load();
+      await v.play();
+    },
+    async above() {
+      const v = media(window.__anchor.previousElementSibling);
+      v.id = 'above-video';
+      v.src = '/__layout_sample.webm?above';
+      await v.play();
+    },
+    virtualize() {
+      const before = scroller.scrollTop;
+      const top = document.querySelector('#top-space');
+      let height = 0;
+      for (const n of Array.from(cells.children)) {
+        if (n === window.__anchor.previousElementSibling) break;
+        height += n.getBoundingClientRect().height;
+        n.remove();
+      }
+      top.style.height = (parseFloat(top.style.height) || 0) + height + 'px';
+      scroller.scrollTop = before;
+    },
+    reparent() {
+      const video = window.__layoutVideo,
+        rect = video.getBoundingClientRect();
+      window.__reparentController = video.vsc;
+      window.__reparentDimensions = { width: rect.width, height: rect.height };
+      const target = document.querySelector('#cell-40');
+      target.style.cssText = 'position:relative;padding-top:56px;transform:translateY(35px)';
+      target.append(video);
+    },
+    rerender() {
+      const v = window.__layoutVideo;
+      const parent = v.parentNode;
+      const replacement = document.createElement('article');
+      replacement.id = parent.id;
+      replacement.dataset.testid = 'tweet';
+      while (parent.firstChild) replacement.append(parent.firstChild);
+      parent.replaceWith(replacement);
+      if (window.__anchor === parent) window.__anchor = replacement;
+    },
+  };
+</script>

@@ -13,8 +13,9 @@ advertising, analytics, or StayTech backend.
 
 - **Control across sites** — works with HTML5 video and audio, including media
   inside supported embedded players and dynamic pages.
-- **Fine-grained speed** — choose speeds from 0.07× to 16× in configurable
-  increments.
+- **Fine-grained speed** — choose configurable increments. Chrome/Firefox use
+  0.07×–16×; Safari offers higher presets and custom
+  positive rates within the media engine's limits.
 - **Precise navigation** — seek by custom intervals, set and revisit markers,
   and step through video frame by frame while paused.
 - **Custom keyboard control** — remap actions, use modifier chords, and create
@@ -24,12 +25,27 @@ advertising, analytics, or StayTech backend.
 - **Resilient playback preferences** — optionally remember your speed and
   reapply it when a player attempts to reset it.
 - **Adaptable controller** — reposition the on-media indicator and customize
-  its appearance.
+  its appearance. Use the overlay's **1×** and **Pref** buttons to set normal
+  speed or your configured preferred speed directly. **Pref** uses the first
+  Preferred speed shortcut's value, falling back to 1× if that shortcut is removed.
+- **Touch controls** — on devices with a coarse pointer, tap the speed pill to
+  open large speed/seek controls, 1×/1.25×/1.5×/2× presets, and an explicit close
+  button. Touch interaction does not require hover.
+- **iPhone/iPad presentation** — inline playback, direct native fullscreen,
+  and a separate custom StayFast player
+  offering precision seeking, speed, Fit/Fill, and language/system controls.
+  The original video and its media source stay in use.
 - **Private by design** — playback and page processing stay in your browser.
   See the [privacy policy](PRIVACY.md) for details.
 
+Startup recovers if Chrome starts the page controller before the settings bridge,
+including when the bridge arrives after the initial timeout.
 Controls recover when a page replaces its document. Players inside open shadow
 DOM keep the speed indicator synchronized with native player speed changes.
+Returning to a suspended tab or restoring a page from browser history also
+triggers a bounded, deferred recovery scan.
+Restoration refreshes missed settings changes and prevents queued speed saves
+from undoing a reset. Newer settings changes take priority over delayed reads.
 Videos loaded further down X/Twitter's infinite-scroll feeds get
 controls as soon as they become ready or start playing, even on busy pages.
 Speed changes following a real click or unhandled keypress are accepted as your
@@ -93,6 +109,65 @@ npm run watch
 
 Reload the extension and the page under test after a rebuild. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for project checks and contribution guidance.
+
+### Safari on iPhone, iPad, and Mac
+
+To investigate a video-loading problem, open StayFast's Safari menu and use
+**Video diagnostics → Start new capture**. Reproduce the issue in the same tab,
+then select **Stop & prepare report** and **Share / save report** or **Copy report**.
+The report contains technical timing, scroll, layout and playback state, without
+page text, media URLs or account details. It stays in memory until you choose to
+export it; **Clear capture** discards it. Prepare the report before reloading or
+closing the page. Special diagnostic builds start capture automatically on
+Twitter/X. See the [Safari guide](docs/safari.md) for capture limits.
+
+The Safari edition targets iOS/iPadOS 18.4+ and macOS 15.4+ with Safari 18.4+.
+It shares the extension engine and includes a native containing app. Current
+verification, uploads and TestFlight availability are tracked in the
+[release packet](docs/testflight.md). See [Safari development](docs/safari.md)
+for builds, activation, verification status, and device testing.
+
+StayFast prepares videos for inline playback even when a site
+omits its inline flags. Ordinary Play keeps the original video on the page,
+with the site's controls and native fullscreen APIs available. A compact speed
+pill and 44px **Full screen** action provide explicit entry to Apple's native
+video fullscreen. **Custom Player** opens StayFast's separate viewing surface.
+StayFast also clears old presentation and scroll state when a
+feed reuses a video for a new source, so PiP/history return and old fullscreen
+callbacks cannot reopen the previous view or replay its scroll position. See the
+[Safari guide](docs/safari.md) for current evidence and release status.
+
+StayFast preserves the page and nested scrolling positions when
+entering or leaving native fullscreen or Custom Player. It keeps intentional
+page movement made while the custom view is open. Verification and release
+status are tracked in the [Safari guide](docs/safari.md).
+
+Inline controls use the video's connected layout for placement as a player
+loads or moves. This avoids temporarily oversized controller geometry during
+insertion. Compact speed and fullscreen targets stay at least 44px; small or
+cropped players show only fullscreen, and unusably small areas hide the controls.
+The expanded speed panel fits the viewport with readable text. Placement accounts
+for clipping and nearby page chrome where space permits. Verification limits
+and current site issues are recorded in the
+[Safari guide](docs/safari.md).
+
+The custom player includes **1×** and **Pref** quick actions alongside speed selection,
+play/pause, ten-second skips, scrubbing, and mute. While dragging the timeline,
+move your finger farther above or below it for half, quarter, or tenth-speed
+precision. Use the primary Fit/Fill button or pinch the video to change its fit.
+**More** contains available captions/audio languages, system controls, and
+**Use site player**. Tap the duration to show remaining time. Live streams offer
+**Go live** when a seek window exists.
+**Done** returns to the page; **Use site player** hands that video back to its
+original controls. The custom player fills Safari's webpage viewport, where
+browser bars can remain visible. Direct native fullscreen uses Apple's controls;
+webpage buttons cannot appear inside it or Picture in Picture.
+
+Same-origin embedded players can expand their owning iframe; cross-origin
+players remain inside their frame. Website permissions, player behavior, and
+protected media can limit compatibility. Safari settings stay on this device;
+this edition does not add iCloud settings sync. Current owned-player runtime
+verification is tracked separately in the [Safari guide](docs/safari.md).
 
 ## Privacy
 

@@ -1,0 +1,188 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Native inline control geometry</title>
+<style>
+  body {
+    margin: 0;
+    min-height: 700px;
+    font: 14px system-ui;
+  }
+  #frame {
+    position: absolute;
+    top: 110px;
+    left: 18px;
+    width: 360px;
+    height: 203px;
+    overflow: hidden;
+    background: #172b3a;
+  }
+  video {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  #actions {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 999999;
+    background: white;
+    padding: 4px;
+  }
+  button {
+    min-height: 44px;
+    font: 16px system-ui;
+  }
+  #diagnostics {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 190px;
+    height: 120px;
+    overflow: auto;
+    background: white;
+    z-index: 999999;
+  }
+  textarea {
+    width: 96%;
+    height: 60px;
+    font-size: 12px;
+  }
+</style>
+<div id="frame">
+  <video muted controls playsinline preload="auto" src="/sample.mp4?responsive"></video>
+</div>
+<div id="diagnostics">
+  <div id="status" role="status">Responsive status: starting</div>
+  <textarea aria-label="Responsive geometry" readonly></textarea>
+</div>
+<div id="actions">
+  <button data-case="wide">360 by 203</button><button data-case="medium">180 by 102</button>
+  <button data-case="small">120 by 68</button><button data-case="tiny">80 by 60</button>
+  <button data-case="unavailable">80 by 45</button
+  ><button data-case="cropped">Cropped wrapper</button> <button data-rate="1">Fixture rate 1</button
+  ><button data-rate="1.8">Fixture rate 1.8</button> <button data-rate="16">Fixture rate 16</button
+  ><button data-rate="64">Fixture rate 64</button>
+</div>
+<script>
+  const video = document.querySelector('video');
+  const frame = document.querySelector('#frame');
+  const cases = {
+    wide: [360, 203],
+    medium: [180, 102],
+    small: [120, 68],
+    tiny: [80, 60],
+    unavailable: [80, 45],
+    cropped: [120, 68],
+  };
+  let active = 'wide',
+    settled = false,
+    errors = 0,
+    nativeBegins = 0;
+  const rectangle = (element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
+  const shown = (element) =>
+    !!element &&
+    getComputedStyle(element).display !== 'none' &&
+    getComputedStyle(element).visibility !== 'hidden' &&
+    element.getBoundingClientRect().width > 0 &&
+    element.getBoundingClientRect().height > 0;
+  function update() {
+    const host = frame.querySelector('vsc-controller');
+    const shadow = host?.shadowRoot;
+    const pill = shadow?.querySelector('.draggable'),
+      fullscreen = shadow?.querySelector('.inline-fullscreen');
+    const media = rectangle(video),
+      clip = rectangle(frame);
+    const bounds = {
+      left: Math.max(media.left, clip.left, 0),
+      top: Math.max(media.top, clip.top, 0),
+      right: Math.min(media.right, clip.right, innerWidth),
+      bottom: Math.min(media.bottom, clip.bottom, innerHeight),
+    };
+    const controls = [pill, fullscreen].filter(shown).map((element) => ({
+      label: element.getAttribute('aria-label'),
+      text: element.textContent,
+      rect: rectangle(element),
+    }));
+    const data = {
+      case: active,
+      settled,
+      rate: video.playbackRate,
+      ready: video.readyState,
+      errors,
+      nativeBegins,
+      media,
+      clip,
+      bounds,
+      controls,
+      label: pill?.textContent,
+      unavailable: host?.hasAttribute('data-vsc-inline-unavailable'),
+      tiny: host?.hasAttribute('data-vsc-inline-tiny'),
+      controllers: frame.querySelectorAll('vsc-controller').length,
+    };
+    document.querySelector('textarea').value = JSON.stringify(data);
+    document.querySelector('#status').textContent =
+      `Responsive status: case: ${active}; settled: ${settled}; ready: ${video.readyState}; controllers: ${data.controllers}; visible: ${controls.length}; rate: ${video.playbackRate}; label: ${data.label}; errors: ${errors}; native begins: ${nativeBegins}`;
+  }
+  function settle() {
+    settled = false;
+    update();
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        settled = true;
+        update();
+      })
+    );
+  }
+  document.querySelectorAll('[data-case]').forEach(
+    (button) =>
+      (button.onclick = () => {
+        active = button.dataset.case;
+        const [width, height] = cases[active];
+        frame.style.width = width + 'px';
+        frame.style.height = height + 'px';
+        video.style.width = active === 'cropped' ? '360px' : '100%';
+        video.style.height = active === 'cropped' ? '203px' : '100%';
+        video.style.left = active === 'cropped' ? '-90px' : '0px';
+        video.style.top = active === 'cropped' ? '-50px' : '0px';
+        settle();
+      })
+  );
+  document.querySelectorAll('[data-rate]').forEach(
+    (button) =>
+      (button.onclick = () => {
+        video.playbackRate = Number(button.dataset.rate);
+        settle();
+      })
+  );
+  for (const event of ['loadedmetadata', 'loadeddata', 'canplay', 'ratechange'])
+    video.addEventListener(event, settle);
+  video.addEventListener('webkitbeginfullscreen', () => {
+    nativeBegins++;
+    update();
+  });
+  new MutationObserver(settle).observe(frame, { childList: true });
+  addEventListener('error', () => {
+    errors++;
+    update();
+  });
+  addEventListener('unhandledrejection', () => {
+    errors++;
+    update();
+  });
+  settle();
+</script>

@@ -84,6 +84,118 @@ describe('ActionHandler', () => {
     expect(config.settings.lastSpeed).toBe(2.0);
   });
 
+  describe('owned-player hardware shortcut targeting', () => {
+    let eventManager;
+    let actionHandler;
+    let owned;
+    let other;
+
+    const keys = [
+      ['D', 'KeyD', 'd', 68, 'playbackRate', 1.1],
+      ['S', 'KeyS', 's', 83, 'playbackRate', 0.9],
+      ['Z', 'KeyZ', 'z', 90, 'currentTime', 40],
+      ['X', 'KeyX', 'x', 88, 'currentTime', 60],
+    ];
+
+    function pressKey(target, code, key, keyCode) {
+      const event = new window.KeyboardEvent('keydown', {
+        code,
+        key,
+        keyCode,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    beforeEach(async () => {
+      const config = window.VSC.videoSpeedConfig;
+      await config.load();
+      config.settings.rememberSpeed = false;
+      config.settings.exclusiveKeys = true;
+      actionHandler = new window.VSC.ActionHandler(config, null);
+      eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      owned = createTestVideoWithController(config, actionHandler, {
+        playbackRate: 1,
+        currentTime: 50,
+      });
+      other = createTestVideoWithController(config, actionHandler, {
+        playbackRate: 1.8,
+        currentTime: 70,
+      });
+      window.VSC.IOSPlayer.activePlayers.set(document, { video: owned });
+      eventManager.setupKeyboardShortcuts(document);
+    });
+
+    afterEach(() => {
+      window.VSC.IOSPlayer.activePlayers.delete(document);
+      eventManager.cleanup();
+      owned.vsc?.remove();
+      other.vsc?.remove();
+    });
+
+    it.each(keys)(
+      '%s changes only the active owned video',
+      (_label, code, key, keyCode, property, expected) => {
+        const event = pressKey(document.body, code, key, keyCode);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(owned[property]).toBe(expected);
+        expect(other.playbackRate).toBe(1.8);
+        expect(other.currentTime).toBe(70);
+      }
+    );
+
+    it.each(['input', 'select'])('preserves typing in an owned-player shadow %s', (tagName) => {
+      const host = document.createElement('vsc-ios-player');
+      const shadow = host.attachShadow({ mode: 'open' });
+      const field = document.createElement(tagName);
+      shadow.append(field);
+      document.body.append(host);
+      field.focus();
+      const execute = vi.spyOn(actionHandler, 'executeAction');
+
+      for (const [_label, code, key, keyCode] of keys) {
+        expect(pressKey(field, code, key, keyCode).defaultPrevented).toBe(false);
+      }
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(owned.playbackRate).toBe(1);
+      expect(owned.currentTime).toBe(50);
+      expect(other.playbackRate).toBe(1.8);
+      expect(other.currentTime).toBe(70);
+      execute.mockRestore();
+      host.remove();
+    });
+
+    it('keeps eventless popup commands global while an owned player is active', () => {
+      actionHandler.runAction('ADJUST_SPEED', 0.1);
+
+      expect(owned.playbackRate).toBe(1.1);
+      expect(other.playbackRate).toBe(1.9);
+    });
+
+    it('keeps controller clicks scoped to their own media', () => {
+      const button = document.createElement('button');
+      other.vsc.div.shadowRoot.append(button);
+      actionHandler.runAction('faster', 0.1, { type: 'click', target: button });
+
+      expect(owned.playbackRate).toBe(1);
+      expect(other.playbackRate).toBe(1.9);
+    });
+
+    it('restores ordinary keyboard targeting when the owned player closes', () => {
+      window.VSC.IOSPlayer.activePlayers.delete(document);
+      pressKey(document.body, 'KeyD', 'd', 68);
+
+      expect(owned.playbackRate).toBe(1.1);
+      expect(other.playbackRate).toBe(1.9);
+    });
+  });
+
   it('ActionHandler should handle faster action', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
@@ -96,6 +208,32 @@ describe('ActionHandler', () => {
     actionHandler.runAction('faster', 0.1);
 
     expect(mockVideo.playbackRate).toBe(1.1);
+  });
+
+  it('keeps touch preset states and the accessible pill label current after speed changes', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.rememberSpeed = false;
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+    const video = createTestVideoWithController(config, actionHandler);
+    const controller = video.vsc;
+    const shadow = controller.div.shadowRoot;
+    controller.controlsManager.setTouchMode(shadow, true);
+
+    actionHandler.adjustSpeed(video, 2);
+    actionHandler.adjustSpeed(video, 1.5);
+
+    expect(shadow.querySelector('[data-value="1.5"]').getAttribute('aria-pressed')).toBe('true');
+    expect(shadow.querySelector('[data-value="2"]').getAttribute('aria-pressed')).toBe('false');
+    expect(controller.speedIndicator.getAttribute('aria-label')).toBe(
+      'Playback speed 1.50 times. Tap to show speed controls.'
+    );
+
+    actionHandler.adjustSpeed(video, 1.6);
+    expect(shadow.querySelectorAll('.touch-preset[aria-pressed="true"]')).toHaveLength(0);
+    controller.remove();
+    eventManager.cleanup();
   });
 
   it('ActionHandler should handle slower action', async () => {
@@ -1239,5 +1377,121 @@ describe('ActionHandler', () => {
     });
 
     expect(mockVideo.playbackRate).toBe(1.5); // Should use configured reset speed
+  });
+  describe('accepted playback speed state', () => {
+    function setup() {
+      const config = window.VSC.videoSpeedConfig;
+      config.settings.lastSpeed = 1.25;
+      config.settings.rememberSpeed = true;
+      const actionHandler = new window.VSC.ActionHandler(config, null);
+      const video = createTestVideoWithController(config, actionHandler);
+      const save = vi.spyOn(config, 'save').mockImplementation(() => {});
+      return { config, actionHandler, video, save };
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it('clamps direct setSpeed callers on Chrome as well as shortcut adjustments', () => {
+      const { video, actionHandler, config, save } = setup();
+      expect(actionHandler.setSpeed(video, 32, 'user')).toBe(true);
+      expect(video.playbackRate).toBe(16);
+      expect(config.settings.lastSpeed).toBe(16);
+      expect(save).toHaveBeenCalledWith({ lastSpeed: 16 });
+    });
+
+    it('allows Safari requests above 16 and preserves the accepted request', () => {
+      const previous = window.VSC.Constants.SPEED_LIMITS;
+      window.VSC.Constants.SPEED_LIMITS = { MIN: 0.07, MAX: 3.4028234663852886e38 };
+      try {
+        const { video, actionHandler, config, save } = setup();
+        expect(actionHandler.setSpeed(video, 64, 'user')).toBe(true);
+        expect(video.playbackRate).toBe(64);
+        expect(config.settings.lastSpeed).toBe(64);
+        expect(save).toHaveBeenCalledWith({ lastSpeed: 64 });
+      } finally {
+        window.VSC.Constants.SPEED_LIMITS = previous;
+      }
+    });
+
+    it.each([NaN, Infinity, -Infinity, undefined, '32'])(
+      'rejects non-finite or non-numeric direct input %s',
+      (speed) => {
+        const { video, actionHandler, config, save } = setup();
+        const before = video.playbackRate;
+        expect(actionHandler.setSpeed(video, speed, 'user')).toBe(false);
+        expect(video.playbackRate).toBe(before);
+        expect(config.settings.lastSpeed).toBe(1.25);
+        expect(save).not.toHaveBeenCalled();
+      }
+    );
+
+    it('does not persist or render a rejected native rate request', () => {
+      const { video, actionHandler, config, save } = setup();
+      const indicator = video.vsc.speedIndicator.textContent;
+      vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(() => {
+        expect(config.settings.lastSpeed).toBe(8);
+        throw new DOMException('Unsupported rate', 'NotSupportedError');
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(1.25);
+      expect(video.vsc.speedIndicator.textContent).toBe(indicator);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('does not recursively fight a synchronous native clamp during an explicit write', () => {
+      const { video, actionHandler, config, save } = setup();
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media) => {
+          media.playbackRate = 2;
+          eventManager.handleRateChange({ target: media, stopImmediatePropagation: vi.fn() });
+        });
+      try {
+        expect(actionHandler.setSpeed(video, 8, 'user')).toBe(true);
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(config.settings.lastSpeed).toBe(2);
+        expect(save).toHaveBeenCalledWith({ lastSpeed: 2 });
+        expect(eventManager.getMediaRateState(video).applyingSpeed).toBe(false);
+        handler.mockImplementation(() => {
+          throw new Error('Unsupported');
+        });
+        expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+        expect(eventManager.getMediaRateState(video).applyingSpeed).toBe(false);
+        expect(config.settings.lastSpeed).toBe(2);
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
+    it('handles a null rejection and retains actual authority after a partial site write', () => {
+      const { video, actionHandler, config, save } = setup();
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation(() => {
+          throw null;
+        });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(1.25);
+      handler.mockImplementation((media) => {
+        media.playbackRate = 2;
+        throw 'Site rejected';
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(2);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('uses native accepted readback when a source clamps the rate', () => {
+      const { video, actionHandler, config, save } = setup();
+      vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation((media) => {
+        media.playbackRate = 2;
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(true);
+      expect(config.settings.lastSpeed).toBe(2);
+      expect(video.vsc.speedIndicator.textContent).toBe('2.00');
+      expect(save).toHaveBeenCalledWith({ lastSpeed: 2 });
+    });
   });
 });

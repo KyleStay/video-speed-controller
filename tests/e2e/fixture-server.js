@@ -24,6 +24,262 @@ const emptyFrameHtml = `<!doctype html>
   <body><main id="fixture-root"></main></body>
 </html>`;
 
+const mobileHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StayFast mobile fixture</title>
+    <style>
+      body { margin: 0; font: 16px system-ui; background: #f3f7fa; color: #123; }
+      h1, p { margin: 16px; }
+      .player { position: relative; width: 100%; }
+      video { display: block; width: 100%; aspect-ratio: 16 / 9; }
+      #play, #pause, #enter-fullscreen { min-height: 44px; margin: 16px; }
+      .scroll-space { height: 1400px; }
+    </style>
+  </head>
+  <body>
+    <h1>StayFast mobile controls</h1>
+    <div class="player"><video id="mobile-video" muted loop playsinline controls preload="auto" src="/sample.webm"></video></div>
+    <button id="play" type="button">Play test video</button>
+    <button id="pause" type="button">Pause test video</button>
+    <button id="enter-fullscreen" type="button">Enter native fullscreen</button>
+    <p id="media-status" role="status" aria-live="polite">Loading test media</p>
+    <p>Touch the speed pill to open controls. Drag the page to scroll.</p>
+    <div class="scroll-space"></div>
+    <script>
+      const video = document.querySelector('video');
+      const scrollFixture = new URLSearchParams(location.search).get('scroll');
+      if (scrollFixture === 'page' || scrollFixture === 'nested') {
+        const spacer = document.createElement('div');
+        spacer.style.height = '900px';
+        spacer.setAttribute('aria-label', 'Page scroll fixture spacer');
+        document.body.prepend(spacer);
+        if (scrollFixture === 'nested') {
+          const viewport = document.createElement('div');
+          viewport.id = 'scroll-container';
+          viewport.style.cssText = 'height:360px;overflow:auto;overscroll-behavior:contain;';
+          const content = document.createElement('div');
+          content.style.cssText = 'width:570px;min-height:1300px;padding-top:260px;box-sizing:border-box;';
+          const player = video.parentNode;
+          player.style.cssText = 'width:330px;margin-left:110px;';
+          player.before(viewport);
+          viewport.append(content);
+          content.append(player);
+        }
+      }
+      const ownedDiagnostics = new URLSearchParams(location.search).has('owned');
+      if (ownedDiagnostics) {
+        window.__stayfastOwnedFixture = { video, source: video.src, parent: video.parentNode, nativeFullscreenCalls: 0 };
+        if (typeof video.webkitEnterFullscreen !== 'function' && !new URLSearchParams(location.search).has('standard-fullscreen')) {
+          video.webkitEnterFullscreen = () => { window.__stayfastOwnedFixture.nativeFullscreenCalls++; };
+        }
+      }
+      const mediaStatus = document.querySelector('#media-status');
+      const errors = [];
+      const observedRoots = new WeakSet();
+      const updateStatus = () => {
+        const hosts = document.querySelectorAll(ownedDiagnostics ? 'vsc-controller, vsc-ios-player' : 'vsc-controller');
+        for (const host of hosts) {
+          if (host.shadowRoot && !observedRoots.has(host.shadowRoot)) {
+            observedRoots.add(host.shadowRoot);
+            controllerObserver.observe(host.shadowRoot, { childList: true, characterData: true, subtree: true });
+          }
+        }
+        let text = 'Playback rate: ' + video.playbackRate +
+          '; controllers: ' + document.querySelectorAll('vsc-controller').length +
+          '; ready: ' + video.readyState + '; errors: ' + errors.length +
+          '; paused: ' + video.paused + '; time: ' + video.currentTime.toFixed(2) +
+          '; plays inline: ' + video.hasAttribute('playsinline') +
+          '; webkit inline: ' + video.hasAttribute('webkit-playsinline') +
+          '; inline property: ' + video.playsInline +
+          '; inline values: ' + JSON.stringify([video.getAttribute('playsinline'), video.getAttribute('webkit-playsinline')]) +
+          '; original inline flags: ' + JSON.stringify(window.__stayfastInlineOriginal || ['', null]) +
+          '; media error: ' + (video.error ? video.error.code : 0) +
+          '; native fullscreen: ' + (video.webkitDisplayingFullscreen === true || video.webkitPresentationMode === 'fullscreen') +
+          '; namespace: ' + !!window.VSC + '; initialized: ' + window.VSC_controller?.initialized +
+          '; abort: ' + window.VSC?.videoSpeedConfig?.settings?._abort +
+          '; lastSpeed: ' + window.VSC?.videoSpeedConfig?.settings?.lastSpeed;
+        if (ownedDiagnostics) {
+          const speedSelect = document.querySelector('vsc-ios-player')?.shadowRoot?.querySelector('[aria-label="Playback speed"]');
+          const inlineHost = video.vsc?.div;
+          const inlinePanel = inlineHost?.shadowRoot?.querySelector('#controls');
+          if (inlineHost) controllerObserver.observe(inlineHost, { attributes: true, attributeFilter: ['class'] });
+          text += '; inline speed label: ' + (inlineHost?.shadowRoot?.querySelector('.draggable')?.textContent || 'none');
+          const inlineOpen = inlineHost?.classList.contains('vsc-touch-open');
+          const inlineStyle = inlinePanel && inlineOpen ? getComputedStyle(inlinePanel) : null;
+          text += '; inline panel height: ' + (inlineStyle ? inlinePanel.getBoundingClientRect().height : 0) +
+            '; inline panel block size: ' + (inlineStyle?.blockSize || 'none') +
+            '; inline panel rows: ' + (inlineStyle?.gridTemplateRows || 'none');
+          const owner = video.vsc?.iosPlayer;
+          text += '; speed select height: ' + (speedSelect ? speedSelect.getBoundingClientRect().height : 0) +
+            '; speed select min height: ' + (speedSelect ? getComputedStyle(speedSelect).minHeight : 'none') +
+            '; video fit: ' + getComputedStyle(video).objectFit +
+            '; fit mode: ' + (owner?.fit || 'none') +
+            '; fit button: ' + (owner?.ui?.refs?.fit?.getAttribute('aria-label') || 'none') +
+            '; remaining mode: ' + !!owner?.remaining +
+            '; duration text: ' + (owner?.ui?.refs?.duration?.textContent || 'none') +
+            '; scrub active: ' + !!owner?.scrubber?.active +
+            '; scrub hint: ' + (owner?.ui?.refs?.scrubHint?.textContent || 'none');
+          const scrollContainer = document.querySelector('#scroll-container');
+          const baseline = window.__stayfastScrollBaseline;
+          text += '; page scroll: ' + scrollX + ',' + scrollY +
+            '; nested scroll: ' + (scrollContainer ? scrollContainer.scrollLeft + ',' + scrollContainer.scrollTop : 'none') +
+            '; video top: ' + video.getBoundingClientRect().top.toFixed(1) +
+            '; saved scroll: ' + (baseline ? baseline.pageX + ',' + baseline.pageY : 'none') +
+            '; saved nested: ' + (baseline ? baseline.nestedX + ',' + baseline.nestedY : 'none') +
+            '; saved video top: ' + (baseline ? baseline.videoTop.toFixed(1) : 'none');
+          text += '; original identity: ' + (document.getElementById('mobile-video') === video) +
+            '; currentSrc: ' + (video.currentSrc || video.src) +
+            '; source preserved: ' + ((video.currentSrc || video.src) === window.__stayfastOwnedFixture.source) +
+            '; owner active: ' + !!video.vsc?.iosPlayer?.active +
+            '; muted: ' + video.muted + '; native controls: ' + video.controls +
+            '; inline restored: ' + (video.parentNode === window.__stayfastOwnedFixture.parent) +
+            '; owned hosts: ' + document.querySelectorAll('vsc-ios-player').length +
+            '; controls hidden: ' + !!document.querySelector('vsc-ios-player')?.hasAttribute('data-controls-hidden');
+          for (const host of document.querySelectorAll('vsc-ios-player')) {
+            controllerObserver.observe(host, { attributes: true, attributeFilter: ['data-controls-hidden'] });
+            const dialog = host.shadowRoot?.querySelector('dialog');
+            if (!dialog) continue;
+            let status = dialog.querySelector('#owned-player-status');
+            if (!status) {
+              status = document.createElement('p');
+              status.id = 'owned-player-status';
+              status.setAttribute('role', 'status');
+              status.style.cssText = 'position:absolute;top:64px;left:8px;right:8px;z-index:5;margin:0;padding:4px;color:#67e8f9;background:#000b;font:10px/1.2 monospace;overflow-wrap:anywhere;max-height:24dvh;overflow:hidden;pointer-events:none;';
+              dialog.append(status);
+            }
+            if (status.textContent !== text) status.textContent = text;
+          }
+        }
+        if (mediaStatus.textContent !== text) mediaStatus.textContent = text;
+      };
+      const controllerObserver = new MutationObserver(updateStatus);
+      controllerObserver.observe(video, { attributes: true, attributeFilter: ['playsinline', 'webkit-playsinline'] });
+      if (scrollFixture === 'page' || scrollFixture === 'nested') {
+        const actions = document.createElement('div');
+        actions.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483646;display:grid;gap:4px;';
+        const remember = () => {
+          const node = document.querySelector('#scroll-container');
+          window.__stayfastScrollBaseline = {
+            pageX: scrollX, pageY: scrollY,
+            nestedX: node?.scrollLeft || 0, nestedY: node?.scrollTop || 0,
+            videoTop: video.getBoundingClientRect().top,
+          };
+          updateStatus();
+        };
+        for (const label of ['Prepare scroll baseline', 'Remember scroll position']) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = label;
+          button.style.cssText = 'min-height:44px;font:16px system-ui;';
+          button.addEventListener('click', (event) => {
+            if (!event.isTrusted) return;
+            if (label === 'Prepare scroll baseline') {
+              scrollTo({ top: 720, left: 0, behavior: 'instant' });
+              document.querySelector('#scroll-container')?.scrollTo({ top: 220, left: 70, behavior: 'instant' });
+            }
+            remember();
+          });
+          actions.append(button);
+        }
+        document.body.append(actions);
+        addEventListener('scroll', updateStatus, true);
+      }
+      for (const type of ['loadedmetadata', 'loadeddata', 'ratechange', 'playing', 'pause', 'timeupdate', 'error', 'webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged']) {
+        video.addEventListener(type, updateStatus);
+      }
+      new MutationObserver(updateStatus).observe(ownedDiagnostics ? document : document.querySelector('.player'), { childList: true, subtree: true });
+      addEventListener('error', (event) => { errors.push(event.message); updateStatus(); });
+      addEventListener('unhandledrejection', (event) => { errors.push(String(event.reason)); updateStatus(); });
+      for (const type of ['VSC_SETTINGS_READY', 'VSC_BRIDGE_READY', 'VSC_MESSAGE']) {
+        document.addEventListener(type, () => setTimeout(updateStatus, 0), true);
+      }
+      document.querySelector('#pause').addEventListener('click', () => video.pause());
+      document.querySelector('#play').addEventListener('click', () => {
+        video.play();
+      });
+      const fullscreenButton = document.querySelector('#enter-fullscreen');
+      fullscreenButton.disabled = typeof video.webkitEnterFullscreen !== 'function';
+      fullscreenButton.addEventListener('click', () => {
+        try {
+          video.webkitEnterFullscreen();
+        } catch (error) {
+          errors.push(String(error));
+          updateStatus();
+        }
+      });
+      updateStatus();
+      setTimeout(updateStatus, 3000);
+    </script>
+  </body>
+</html>`;
+
+// A visible closed-root video measures Safari itself without extension rate guards.
+const rateProbeHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Native rate probe</title></head><body style="font:16px system-ui;margin:16px">
+<h1>Native playback rate probe</h1><div id="native-player"></div><button id="start-probe" style="min-height:44px;font:inherit">Start rate probe</button><p id="rate-results" role="status" aria-live="polite">Rate probe ready</p>
+<script>
+const root = document.querySelector('#native-player').attachShadow({mode:'closed'});
+const video = document.createElement('video');
+video.src = '/probe.mp4'; video.muted = true; video.playsInline = true; video.controls = true; video.preload = 'auto'; video.style.cssText = 'width:100%;max-height:180px'; root.append(video);
+const status = document.querySelector('#rate-results');
+const button = document.querySelector('#start-probe');
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const frameCount = () => { try { const count = video.getVideoPlaybackQuality?.().totalVideoFrames ?? video.webkitDecodedFrameCount; return Number.isFinite(count) ? count : null; } catch { return null; } };
+const firstPresentedFrame = () => new Promise(resolve => {
+  if (typeof video.requestVideoFrameCallback !== 'function') { resolve('unavailable'); return; }
+  let token;
+  const timeout = setTimeout(() => { try { video.cancelVideoFrameCallback?.(token); } catch {} resolve('timedOut'); }, 5000);
+  try { token = video.requestVideoFrameCallback(() => { clearTimeout(timeout); resolve('presented'); }); } catch { clearTimeout(timeout); resolve('unavailable'); }
+});
+const seek = (time) => new Promise((resolve, reject) => {
+  let timeout;
+  const done = () => { clearTimeout(timeout); video.removeEventListener('seeked', done); resolve(); };
+  timeout = setTimeout(() => { video.removeEventListener('seeked', done); reject(new Error('seek timeout')); }, 4000);
+  video.addEventListener('seeked', done); video.currentTime = time; if (!video.seeking) done();
+});
+button.addEventListener('click', async () => {
+  button.disabled = true;
+  const results = [];
+  const setterAcceptance = [];
+  for (const media of ['video','audio']) {
+    const detached = document.createElement(media);
+    for (const requested of [16,32,64,128,256,1024]) { try { detached.playbackRate = requested; setterAcceptance.push({media,requested,readback:detached.playbackRate}); } catch(error) { setterAcceptance.push({media,requested,error:String(error)}); } }
+  }
+  status.textContent = 'Rate probe running';
+  try {
+    // Establish media activation synchronously in this real user gesture.
+    const activation = video.play();
+    await activation;
+    for (const requested of [1,16,32,64]) {
+      video.pause(); video.loop = false;
+      await seek(2);
+      try { video.playbackRate = requested; } catch(error) { results.push({requested,error:String(error)}); continue; }
+      await video.play();
+      const firstFrame = await firstPresentedFrame();
+      if (firstFrame === 'timedOut') { results.push({requested,readback:video.playbackRate,firstFrame,duration:video.duration,ended:video.ended,paused:video.paused,time:video.currentTime,error:video.error?.code || 0}); video.pause(); continue; }
+      let presentedFrames = typeof video.requestVideoFrameCallback === 'function' ? 0 : null;
+      let frameToken, sampling = true;
+      const countPresented = () => { presentedFrames++; if (sampling) frameToken = video.requestVideoFrameCallback(countPresented); };
+      if (presentedFrames !== null) frameToken = video.requestVideoFrameCallback(countPresented);
+      const startTime = video.currentTime, startClock = performance.now(), startFrames = frameCount();
+      await delay(400);
+      sampling = false;
+      if (frameToken !== undefined) video.cancelVideoFrameCallback?.(frameToken);
+      const seconds = (performance.now() - startClock) / 1000;
+      const endFrames = frameCount();
+      results.push({requested,readback:video.playbackRate,firstFrame,presentedFrames,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
+      video.pause();
+      status.textContent = 'Rate probe results: ' + JSON.stringify({setterAcceptance,results});
+    }
+  } catch(error) { results.push({error:String(error)}); }
+  finally { video.pause(); video.playbackRate = 1; button.disabled = false; }
+  window.__nativeRateResults = {setterAcceptance,results};
+  status.textContent = 'Rate probe complete: ' + JSON.stringify(window.__nativeRateResults);
+});
+</script></body></html>`;
+
 export function parseByteRange(value, length) {
   if (!value) {
     return null;
@@ -42,13 +298,13 @@ export function parseByteRange(value, length) {
   return { start, end };
 }
 
-function respondWithMedia(request, response, media) {
+function respondWithMedia(request, response, media, contentType = 'video/webm') {
   const range = parseByteRange(request.headers.range, media.length);
   if (range === null) {
     response.writeHead(200, {
       'Accept-Ranges': 'bytes',
       'Content-Length': media.length,
-      'Content-Type': 'video/webm',
+      'Content-Type': contentType,
       'Cache-Control': 'no-store',
     });
     response.end(media);
@@ -67,21 +323,36 @@ function respondWithMedia(request, response, media) {
     'Accept-Ranges': 'bytes',
     'Content-Length': end - start + 1,
     'Content-Range': `bytes ${start}-${end}/${media.length}`,
-    'Content-Type': 'video/webm',
+    'Content-Type': contentType,
     'Cache-Control': 'no-store',
   });
   response.end(media.subarray(start, end + 1));
 }
 
-export async function startFixtureServer() {
+export async function startFixtureServer({
+  mp4Path = resolve('tests/e2e/sample.mp4'),
+  probeMp4Path = mp4Path,
+  htmlRoutes = {},
+  port = 0,
+} = {}) {
   // VP8/WebM has native Chrome/Firefox decoding without OS H.264 libraries.
   // Synthetic 60s black clip; regenerate with the command in the manual guide.
   const mediaPath = resolve('tests/e2e/sample.webm');
   const media = await readFile(mediaPath);
+  const mp4 = await readFile(mp4Path);
+  const probeMp4 = probeMp4Path === mp4Path ? mp4 : await readFile(probeMp4Path);
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (url.pathname === '/sample.webm') {
       respondWithMedia(request, response, media);
+      return;
+    }
+    if (url.pathname === '/probe.mp4') {
+      respondWithMedia(request, response, probeMp4, 'video/mp4');
+      return;
+    }
+    if (url.pathname === '/sample.mp4') {
+      respondWithMedia(request, response, mp4, 'video/mp4');
       return;
     }
 
@@ -94,6 +365,44 @@ export async function startFixtureServer() {
       return;
     }
 
+    if (url.pathname === '/rate-probe.html') {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      response.end(rateProbeHtml);
+      return;
+    }
+
+    if (url.pathname === '/mobile.html') {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      let html = url.searchParams.has('mp4')
+        ? mobileHtml.replaceAll('/sample.webm', '/sample.mp4')
+        : mobileHtml;
+      let inlineOriginal = ['', null];
+      if (url.searchParams.has('no-playsinline')) {
+        html = html
+          .replace('muted loop playsinline controls', 'muted loop controls')
+          .replace('id="mobile-video"', 'id="mobile-video" aria-label="Test video"');
+        inlineOriginal = [null, null];
+      } else if (url.searchParams.has('site-inline')) {
+        html = html.replace(
+          'muted loop playsinline controls',
+          'muted loop playsinline="site-standard" webkit-playsinline="site-webkit" controls'
+        );
+        inlineOriginal = ['site-standard', 'site-webkit'];
+      }
+      html = html.replace(
+        '<div class="player">',
+        `<script>window.__stayfastInlineOriginal = ${JSON.stringify(inlineOriginal)};</script><div class="player">`
+      );
+      response.end(html);
+      return;
+    }
+
     if (url.pathname === '/' || url.pathname === '/fixture.html') {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
@@ -103,13 +412,22 @@ export async function startFixtureServer() {
       return;
     }
 
+    if (Object.hasOwn(htmlRoutes, url.pathname) && typeof htmlRoutes[url.pathname] === 'string') {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      response.end(htmlRoutes[url.pathname]);
+      return;
+    }
+
     response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   });
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(port, '127.0.0.1', resolve);
   });
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;

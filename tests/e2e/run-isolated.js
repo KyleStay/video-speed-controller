@@ -2,17 +2,39 @@
 import puppeteer from 'puppeteer';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import runBasic from './basic.e2e.js';
+import runStartup from './startup.e2e.js';
+import runResume from './resume.e2e.js';
+import { installBridgeTestHooks } from './bridge-test-hooks.js';
 import runYouTube from './youtube.e2e.js';
+import runMobile from './mobile.e2e.js';
+import runIOSPlayer from './ios-player.e2e.js';
+import runTwitterInline from './twitter-inline.e2e.js';
+import runTwitterLayout from './twitter-layout.e2e.js';
+import runTwitterVisual from './twitter-visual.e2e.js';
+import runVideoDiagnostics from './video-diagnostics.e2e.js';
+import runTwitterPristine from './twitter-pristine.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
   process.env.STAYFAST_CHROME_RUNNER ||
   join(homedir(), '.codex/skills/chrome-extension-test-runner/scripts/launch_test_chrome.py');
-const suites = { basic: runBasic, youtube: runYouTube };
+const suites = {
+  resume: runResume,
+  startup: runStartup,
+  basic: runBasic,
+  youtube: runYouTube,
+  mobile: runMobile,
+  'ios-player': runIOSPlayer,
+  'twitter-inline': runTwitterInline,
+  'twitter-layout': runTwitterLayout,
+  'twitter-visual': runTwitterVisual,
+  'video-diagnostics': runVideoDiagnostics,
+  'twitter-pristine': runTwitterPristine,
+};
 const externalSuites = {
   fixtures: ['tests/e2e/run-browser-fixtures.js', 'all'],
   'fixtures-chrome': ['tests/e2e/run-browser-fixtures.js', 'chrome'],
@@ -24,7 +46,9 @@ if (!names.length) {
   names.push('basic', 'youtube');
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
-  throw new Error('Use basic, youtube, fixtures, and/or benchmarks');
+  throw new Error(
+    'Use startup, resume, basic, mobile, ios-player, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
+  );
 }
 
 const needsBrowserBuilds = names.some((name) => externalSuites[name]);
@@ -36,7 +60,9 @@ if (needsBrowserBuilds) {
   process.stdout.write(stdout);
   process.stderr.write(stderr);
 }
-const extensionDirectory = resolve(needsBrowserBuilds ? 'dist/chrome' : 'dist');
+const extensionDirectory = resolve(
+  process.env.STAYFAST_EXTENSION_DIR || (needsBrowserBuilds ? 'dist/chrome' : 'dist')
+);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let owned = null;
@@ -199,14 +225,30 @@ for (const name of names) {
       continue;
     }
     const result = await suites[name]({
-      launch: async () => {
+      launch: async ({ bridgeHooks = false } = {}) => {
         const profile = await mkdtemp(join(tmpdir(), 'stayfast-browser-qa-'));
         owned = { profile };
-        const { stdout } = await execFileAsync(
-          'python3',
-          [runner, '--extension', extensionDirectory, '--profile', profile, '--url', 'about:blank'],
-          { timeout: 30000 }
-        );
+        let loadDirectory = extensionDirectory;
+        if (bridgeHooks) {
+          loadDirectory = join(profile, 'extension-under-test');
+          await cp(extensionDirectory, loadDirectory, { recursive: true });
+          const bundle = join(loadDirectory, 'content-bridge.js');
+          const source = await readFile(bundle, 'utf8');
+          await writeFile(bundle, `(${installBridgeTestHooks.toString()})();\n${source}`);
+        }
+        let stdout;
+        try {
+          ({ stdout } = await execFileAsync(
+            'python3',
+            [runner, '--extension', loadDirectory, '--profile', profile, '--url', 'about:blank'],
+            { timeout: 30000 }
+          ));
+        } catch (error) {
+          throw new Error(
+            `Disposable Chrome launch failed: ${error.stderr || error.stdout || error.message}`,
+            { cause: error }
+          );
+        }
         const info = JSON.parse(stdout);
         owned.pid = info.pid;
         if (!info.debugger_ready || !info.extension_loaded) {
@@ -229,7 +271,7 @@ for (const name of names) {
         const page = (await browser.pages())[0] || (await browser.newPage());
         await page.setViewport({ width: 1280, height: 800 });
         page.on('pageerror', (error) => console.error(`Page error: ${error.message}`));
-        return { browser, page };
+        return { browser, page, extensionId: info.extension_id };
       },
     });
     failed += result.failed;

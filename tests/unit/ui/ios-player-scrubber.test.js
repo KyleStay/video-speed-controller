@@ -1,0 +1,419 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '../../../src/ui/ios-player-scrubber.js';
+
+describe('owned-player pointer precision scrubbing', () => {
+  let owner;
+  let scrubber;
+  let range;
+  let host;
+  let paused;
+  let bounds;
+  let captured;
+  let visibilityDescriptor;
+
+  function pointer(type, x = 160, y = 122, id = 7, extra = {}) {
+    const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+    for (const [key, value] of Object.entries({
+      pointerId: id,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      isPrimary: true,
+      ...extra,
+    })) {
+      Object.defineProperty(event, key, { value });
+    }
+    (type === 'pointerdown' || type === 'lostpointercapture' ? range : window).dispatchEvent(event);
+    return event;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    host = document.createElement('div');
+    range = document.createElement('input');
+    range.type = 'range';
+    range.min = '0';
+    range.max = '100';
+    range.step = '0.001';
+    range.value = '50';
+    const hint = document.createElement('p');
+    const current = document.createElement('span');
+    const video = document.createElement('video');
+    video.currentTime = 50;
+    paused = false;
+    bounds = [0, 100];
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
+    Object.defineProperty(video, 'duration', { configurable: true, value: 100 });
+    video.pause = vi.fn(() => {
+      paused = true;
+    });
+    host.append(video, range, hint, current);
+    document.body.append(host);
+    range.getBoundingClientRect = () => ({ left: 10, top: 100, width: 300, height: 44 });
+    captured = new Set();
+    range.setPointerCapture = vi.fn((id) => captured.add(id));
+    range.releasePointerCapture = vi.fn((id) => {
+      captured.delete(id);
+      pointer('lostpointercapture', 160, 122, id);
+    });
+    owner = {
+      active: true,
+      session: 1,
+      video,
+      ui: { host, refs: { seek: range, scrubHint: hint, current } },
+      seekBounds: vi.fn(() => bounds),
+      seekTo: vi.fn((time) => {
+        video.currentTime = time;
+      }),
+      showControls: vi.fn(),
+      play: vi.fn(() => {
+        paused = false;
+      }),
+      update: vi.fn(() => {
+        if (!scrubber?.active) {
+          range.value = String(video.currentTime);
+        }
+      }),
+    };
+    scrubber = new window.VSC.IOSPlayerScrubber(owner);
+    scrubber.attach();
+  });
+
+  afterEach(() => {
+    scrubber.cleanup();
+    host.remove();
+    if (visibilityDescriptor) {
+      Object.defineProperty(document, 'visibilityState', visibilityDescriptor);
+    } else {
+      delete document.visibilityState;
+    }
+    vi.useRealTimers();
+  });
+
+  it('preserves a thumb grab position and previews subsequent horizontal movement', () => {
+    const event = pointer('pointerdown', 170);
+    expect(event.defaultPrevented).toBe(true);
+    expect(owner.video.pause).toHaveBeenCalledOnce();
+    expect(range.setPointerCapture).toHaveBeenCalledWith(7);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(scrubber.active).toBe(true);
+
+    pointer('pointermove', 200);
+    expect(owner.video.currentTime).toBe(50);
+    expect(Number(range.value)).toBe(60);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(60);
+    expect(Number(range.value)).toBe(60);
+    expect(owner.ui.refs.current.textContent).toBe('1:00');
+    expect(range.getAttribute('aria-valuetext')).toBe('1:00 of 1:40');
+    expect(owner.ui.refs.scrubHint.textContent).toBe('Scrubbing');
+  });
+
+  it('uses the owner time formatter for long-duration preview and accessibility text', () => {
+    bounds = [0, 7200];
+    owner.video.currentTime = 3600;
+    range.max = '7200';
+    range.value = '3600';
+    owner.formatTime = vi.fn((time) => `formatted ${time}`);
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    expect(owner.formatTime).toHaveBeenCalledWith(4320);
+    expect(owner.formatTime).toHaveBeenCalledWith(7200);
+    expect(owner.ui.refs.current.textContent).toBe('formatted 4320');
+    expect(range.getAttribute('aria-valuetext')).toBe('formatted 4320 of formatted 7200');
+  });
+
+  it('maps a bar tap to time and resumes a previously playing presentation once', () => {
+    pointer('pointerdown', 85);
+    expect(owner.video.currentTime).toBe(25);
+    expect(paused).toBe(true);
+    pointer('pointerup', 85);
+    expect(scrubber.active).toBe(false);
+    expect(paused).toBe(false);
+    expect(owner.play).toHaveBeenCalledOnce();
+    expect(captured.size).toBe(0);
+    expect(owner.ui.refs.scrubHint.textContent).toBe('');
+  });
+
+  it('leaves a previously paused video paused after seeking', () => {
+    paused = true;
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    pointer('pointerup', 190);
+    expect(owner.video.currentTime).toBe(60);
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(paused).toBe(true);
+  });
+
+  it.each([
+    [0, 1, 'Scrubbing'],
+    [43, 1, 'Scrubbing'],
+    [44, 0.5, 'Half speed'],
+    [88, 0.25, 'Quarter speed'],
+    [132, 0.1, 'Tenth speed'],
+    [200, 0.1, 'Tenth speed'],
+  ])(
+    'scales the same horizontal motion at distance %s above and below the bar',
+    (distance, rate, label) => {
+      for (const direction of [-1, 1]) {
+        owner.video.currentTime = 50;
+        pointer('pointerdown');
+        pointer('pointermove', 190, 122 + distance * direction);
+        expect(Number(range.value)).toBeCloseTo(50 + 10 * rate);
+        vi.advanceTimersByTime(50);
+        expect(owner.video.currentTime).toBeCloseTo(50 + 10 * rate);
+        expect(owner.ui.refs.scrubHint.textContent).toContain(label);
+        pointer('pointerup', 190, 122 + distance * direction);
+      }
+    }
+  );
+
+  it('changes precision continuously without jumping or seeking for vertical-only movement', () => {
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(60);
+    const writes = owner.seekTo.mock.calls.length;
+    pointer('pointermove', 190, 254);
+    expect(owner.video.currentTime).toBe(60);
+    expect(owner.seekTo).toHaveBeenCalledTimes(writes);
+    pointer('pointermove', 220, 254);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(61);
+    pointer('pointermove', 220, 122);
+    expect(owner.video.currentTime).toBe(61);
+    pointer('pointermove', 250, 122);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(71);
+  });
+
+  it.each(['pointercancel', 'lostpointercapture'])(
+    '%s restores starting time and playback state',
+    (type) => {
+      pointer('pointerdown', 85);
+      pointer('pointermove', 115);
+      vi.advanceTimersByTime(50);
+      expect(owner.video.currentTime).toBe(35);
+      pointer(type, 115);
+      expect(owner.video.currentTime).toBe(50);
+      expect(owner.play).toHaveBeenCalledOnce();
+      expect(paused).toBe(false);
+      expect(scrubber.active).toBe(false);
+    }
+  );
+
+  it('cancellation keeps a previously paused presentation paused', () => {
+    paused = true;
+    pointer('pointerdown', 85);
+    pointer('pointercancel', 85);
+    expect(owner.video.currentTime).toBe(50);
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(paused).toBe(true);
+  });
+
+  it('teardown removes active gesture listeners without restoring or resuming media', () => {
+    pointer('pointerdown', 85);
+    pointer('pointermove', 115);
+    expect(Number(range.value)).toBe(35);
+    scrubber.cleanup();
+    vi.advanceTimersByTime(100);
+    const writes = owner.seekTo.mock.calls.length;
+    pointer('pointermove', 200);
+    pointer('pointerup', 200);
+    expect(pointer('pointerdown', 200).defaultPrevented).toBe(false);
+    expect(owner.video.currentTime).toBe(25);
+    expect(owner.seekTo).toHaveBeenCalledTimes(writes);
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(scrubber.active).toBe(false);
+    expect(captured.size).toBe(0);
+  });
+
+  it.each(['video', 'host', 'inactive', 'session', 'replacement'])(
+    'does not restore or resume an abandoned %s presentation',
+    (change) => {
+      pointer('pointerdown', 85);
+      pointer('pointermove', 115);
+      if (change === 'video') {
+        owner.video.remove();
+      }
+      if (change === 'host') {
+        host.remove();
+      }
+      if (change === 'inactive') {
+        owner.active = false;
+      }
+      if (change === 'session') {
+        owner.session++;
+      }
+      if (change === 'replacement') {
+        owner.ui = { ...owner.ui };
+      }
+      pointer('pointercancel', 85);
+      vi.advanceTimersByTime(100);
+      expect(owner.video.currentTime).toBe(25);
+      expect(owner.play).not.toHaveBeenCalled();
+      expect(scrubber.active).toBe(false);
+    }
+  );
+
+  it('clamps finite live seek windows as they move during a drag', () => {
+    Object.defineProperty(owner.video, 'duration', { value: Infinity });
+    bounds = [1000, 1060];
+    owner.video.currentTime = 1030;
+    range.min = '1000';
+    range.max = '1060';
+    range.value = '1030';
+    pointer('pointerdown');
+    pointer('pointermove', 460);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(1060);
+    bounds = [1010, 1070];
+    pointer('pointermove', 160);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(1010);
+    pointer('pointercancel');
+    expect(owner.video.currentTime).toBe(1030);
+    expect(owner.seekTo.mock.calls.every(([time]) => Number.isFinite(time))).toBe(true);
+  });
+
+  it.each([null, [0, Infinity], [NaN, 100], [10, 5], [10, 10]])(
+    'ignores unavailable or invalid seek bounds %j',
+    (value) => {
+      bounds = value;
+      expect(pointer('pointerdown').defaultPrevented).toBe(false);
+      expect(scrubber.active).toBe(false);
+      expect(owner.video.pause).not.toHaveBeenCalled();
+      expect(owner.seekTo).not.toHaveBeenCalled();
+    }
+  );
+
+  it('never seeks NaN when media time or pointer coordinates are invalid', () => {
+    Object.defineProperty(owner.video, 'currentTime', {
+      configurable: true,
+      writable: true,
+      value: NaN,
+    });
+    pointer('pointerdown', 160);
+    pointer('pointermove', NaN, 122);
+    pointer('pointermove', 190, NaN);
+    pointer('pointermove', 190);
+    vi.advanceTimersByTime(50);
+    expect(owner.seekTo.mock.calls.every(([time]) => Number.isFinite(time))).toBe(true);
+    expect(owner.video.currentTime).toBe(60);
+  });
+
+  it('coalesces a burst of moves to one decoder seek and synchronously flushes the final target', () => {
+    pointer('pointerdown');
+    for (const x of [170, 180, 190]) {
+      pointer('pointermove', x);
+    }
+    expect(Number(range.value)).toBeCloseTo(60);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(49);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(owner.seekTo).toHaveBeenCalledOnce();
+    expect(owner.seekTo.mock.calls[0][0]).toBeCloseTo(60);
+    expect(vi.getTimerCount()).toBe(0);
+    pointer('pointermove', 220);
+    expect(Number(range.value)).toBeCloseTo(70);
+    expect(owner.video.currentTime).toBeCloseTo(60);
+    pointer('pointerup', 220);
+    expect(owner.seekTo.mock.calls.map(([time]) => Math.round(time))).toEqual([60, 70]);
+    vi.advanceTimersByTime(500);
+    expect(owner.seekTo).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['pointercancel', 'lostpointercapture'])(
+    'cancels pending decoder writes before %s restores the start time',
+    (type) => {
+      pointer('pointerdown', 85);
+      pointer('pointermove', 115);
+      expect(Number(range.value)).toBe(35);
+      pointer(type, 115);
+      expect(owner.seekTo.mock.calls.map(([time]) => time)).toEqual([25, 50]);
+      vi.advanceTimersByTime(500);
+      expect(owner.seekTo.mock.calls.map(([time]) => time)).toEqual([25, 50]);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('does not resume hidden playback when an app switch cancels the gesture', () => {
+    pointer('pointerdown', 85);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    pointer('pointercancel', 85);
+    expect(owner.video.currentTime).toBe(50);
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(paused).toBe(true);
+    expect(scrubber.active).toBe(false);
+  });
+
+  it('keeps asynchronous site seek feedback from replacing the immediate preview', () => {
+    owner.seekTo.mockImplementation(() => {});
+    owner.update.mockImplementation(() => {
+      range.value = '50';
+      owner.ui.refs.current.textContent = '0:50';
+    });
+    pointer('pointerdown');
+    pointer('pointermove', 220);
+    expect(Number(range.value)).toBe(70);
+    expect(owner.ui.refs.current.textContent).toBe('1:10');
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBe(50);
+    expect(Number(range.value)).toBe(70);
+    expect(owner.ui.refs.current.textContent).toBe('1:10');
+  });
+
+  it('keeps keyboard input/change working while preventing duplicate native pointer writes', () => {
+    const input = vi.fn(() => owner.seekTo(Number(range.value)));
+    range.addEventListener('input', input);
+    range.addEventListener('change', input);
+    pointer('pointerdown');
+    range.value = '88';
+    range.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    range.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    expect(input).not.toHaveBeenCalled();
+    expect(Number(range.value)).toBe(50);
+    pointer('pointerup');
+    const key = new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    });
+    range.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+    range.value = '75';
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(input).toHaveBeenCalledOnce();
+    expect(owner.video.currentTime).toBe(75);
+  });
+
+  it('uses temporary window delivery when pointer capture is unavailable', () => {
+    range.setPointerCapture.mockImplementation(() => {
+      throw new Error('Capture unavailable');
+    });
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    pointer('pointerup', 190);
+    expect(owner.video.currentTime).toBe(60);
+    expect(scrubber.active).toBe(false);
+    expect(owner.play).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a second pointer without losing the current gesture', () => {
+    pointer('pointerdown');
+    pointer('pointerdown', 250, 122, 8, { isPrimary: false });
+    pointer('pointermove', 250, 122, 8);
+    pointer('pointerup', 250, 122, 8);
+    expect(scrubber.active).toBe(true);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    pointer('pointermove', 190);
+    pointer('pointerup', 190);
+    expect(owner.video.currentTime).toBe(60);
+    expect(owner.play).toHaveBeenCalledOnce();
+  });
+});

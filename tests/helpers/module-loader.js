@@ -14,6 +14,7 @@ export async function loadCoreModules() {
   await import('../../src/utils/dom-utils.js');
   await import('../../src/utils/event-manager.js');
   await import('../../src/utils/bridge-events.js');
+  await import('../../src/utils/video-load-diagnostics.js');
 
   // Site pattern matching — must come before settings.js (mirrors inject-entry.js).
   // The module self-registers on window.VSC.matchSiteRule.
@@ -45,6 +46,12 @@ export async function loadCoreModules() {
   await import('../../src/ui/controls.js');
   await import('../../src/ui/drag-handler.js');
   await import('../../src/ui/shadow-dom.js');
+  await import('../../src/ui/ios-player-view.js');
+  await import('../../src/ui/ios-player-scroll.js');
+  await import('../../src/ui/ios-player-frames.js');
+  await import('../../src/ui/ios-player-scrubber.js');
+  await import('../../src/ui/ios-player-gestures.js');
+  await import('../../src/ui/ios-player.js');
   await import('../../src/ui/vsc-controller-element.js');
 
   // Observers

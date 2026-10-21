@@ -14,6 +14,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  chromeMock,
   installChromeMock,
   cleanupChromeMock,
   resetMockStorage,
@@ -22,32 +23,37 @@ import {
 
 const docEl = document.documentElement;
 let bridgeTransport;
+const callbackStorageGet = chromeMock.storage.sync.get;
+const callbackStorageSet = chromeMock.storage.sync.set;
 
 // --- Minimal test infrastructure ---
 
 /** MV3 bridge uses `await chrome.storage.sync.get(null)` — wrap callback mock. */
 function promisifyChromeMock() {
-  const origGet = globalThis.chrome.storage.sync.get;
   globalThis.chrome.storage.sync.get = (keys, callback) => {
     if (typeof callback === 'function') {
-      return origGet(keys, callback);
+      return callbackStorageGet(keys, callback);
     }
-    return new Promise((resolve) => origGet(keys, resolve));
+    return new Promise((resolve) => callbackStorageGet(keys, resolve));
   };
-  const origSet = globalThis.chrome.storage.sync.set;
   globalThis.chrome.storage.sync.set = (items, callback) => {
     if (typeof callback === 'function') {
-      return origSet(items, callback);
+      return callbackStorageSet(items, callback);
     }
-    return new Promise((resolve) => origSet(items, resolve));
+    return new Promise((resolve) => callbackStorageSet(items, resolve));
   };
 }
 
 /** Track docEl listeners so afterEach can clean up bridge-registered ones. */
 function interceptDocEl() {
   const registered = [];
+  const lifecycleRegistered = [];
   const origAdd = docEl.addEventListener.bind(docEl);
   const origRemove = docEl.removeEventListener.bind(docEl);
+  const origWindowAdd = window.addEventListener;
+  const origWindowRemove = window.removeEventListener;
+  const origDocumentAdd = document.addEventListener;
+  const origDocumentRemove = document.removeEventListener;
   docEl.addEventListener = (type, handler, options) => {
     registered.push({ type, handler, options });
     return origAdd(type, handler, options);
@@ -59,13 +65,31 @@ function interceptDocEl() {
     }
     return origRemove(type, handler, options);
   };
+  window.addEventListener = (type, handler, options) => {
+    lifecycleRegistered.push({ target: 'window', type, handler, options });
+    return origWindowAdd.call(window, type, handler, options);
+  };
+  document.addEventListener = (type, handler, options) => {
+    lifecycleRegistered.push({ target: 'document', type, handler, options });
+    return origDocumentAdd.call(document, type, handler, options);
+  };
   return () => {
     for (const { type, handler, options } of registered) {
       origRemove(type, handler, options);
     }
+    for (const { target, type, handler, options } of lifecycleRegistered) {
+      if (target === 'window') {
+        origWindowRemove.call(window, type, handler, options);
+      } else {
+        origDocumentRemove.call(document, type, handler, options);
+      }
+    }
     registered.length = 0;
+    lifecycleRegistered.length = 0;
     docEl.addEventListener = origAdd;
     docEl.removeEventListener = origRemove;
+    window.addEventListener = origWindowAdd;
+    document.addEventListener = origDocumentAdd;
   };
 }
 
@@ -99,6 +123,22 @@ function collectEvents(...names) {
     cleanup: () =>
       handlers.forEach(({ name, handler }) => docEl.removeEventListener(name, handler)),
   };
+}
+
+function dispatchPersistedPageShow() {
+  const event = new Event('pageshow');
+  Object.defineProperty(event, 'persisted', { value: true });
+  window.dispatchEvent(event);
+}
+
+function dispatchVisible() {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+async function requestInitialSettings() {
+  docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+  await vi.advanceTimersByTimeAsync(20);
 }
 
 // --- Tests ---
@@ -211,6 +251,39 @@ describe('content-bridge', () => {
   // =========================================================================
 
   describe('settings handshake', () => {
+    it('announces bridge readiness after installing its request listener', async () => {
+      const { events, cleanup } = collectEvents('VSC_BRIDGE_READY');
+      eventCleanup = cleanup;
+
+      await loadBridge();
+
+      expect(events).toHaveLength(1);
+    });
+
+    it('announces Firefox readiness without passing an absent payload to cloneInto', async () => {
+      const clone = vi.fn((value) => {
+        if (value === null || typeof value !== 'object') {
+          throw new TypeError('cloneInto requires an object payload');
+        }
+        return structuredClone(value);
+      });
+      vi.stubGlobal('cloneInto', clone);
+      const { events, cleanup } = collectEvents('VSC_BRIDGE_READY', 'VSC_SETTINGS_READY');
+      eventCleanup = cleanup;
+
+      await loadBridge();
+      await requestInitialSettings();
+
+      expect(events.map((event) => event.type)).toEqual(['VSC_BRIDGE_READY', 'VSC_SETTINGS_READY']);
+      expect(events[0].detail).toBeNull();
+      expect(events[1].detail.settings).toBeDefined();
+      expect(clone).toHaveBeenCalledOnce();
+      expect(clone).toHaveBeenCalledWith(
+        expect.objectContaining({ settings: expect.any(Object) }),
+        document.defaultView
+      );
+    });
+
     it('responds to VSC_REQUEST_SETTINGS with settings payload', async () => {
       getMockStorage().lastSpeed = 2.5;
       getMockStorage().rememberSpeed = true;
@@ -285,6 +358,18 @@ describe('content-bridge', () => {
   // =========================================================================
 
   describe('VSC_WRITE_STORAGE trust boundary', () => {
+    it('preserves finite Safari speed requests above 16 across the isolated bridge', async () => {
+      vi.stubGlobal('__VSC_BROWSER__', 'safari');
+      try {
+        await loadBridge();
+        docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 64 } }));
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(getMockStorage().lastSpeed).toBe(64);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('writes valid lastSpeed to chrome.storage and clamps to range', async () => {
       await loadBridge();
       const storage = getMockStorage();
@@ -463,7 +548,372 @@ describe('content-bridge', () => {
     });
   });
 
+  describe('resume reconciliation', () => {
+    it('tears down when a suspended page missed enabled=false', async () => {
+      await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_MESSAGE');
+      eventCleanup = cleanup;
+
+      getMockStorage().enabled = false;
+      dispatchVisible();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(events.map((event) => event.detail?.type)).toEqual(['VSC_TEARDOWN']);
+    });
+
+    it('reinitializes when a suspended disabled page was re-enabled', async () => {
+      getMockStorage().enabled = false;
+      await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_MESSAGE');
+      eventCleanup = cleanup;
+
+      getMockStorage().enabled = true;
+      dispatchVisible();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(events.map((event) => event.detail?.type)).toEqual(['VSC_REINIT']);
+    });
+
+    it('relays settings removals missed while suspended', async () => {
+      getMockStorage().rememberSpeed = true;
+      await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_STORAGE_CHANGED');
+      eventCleanup = cleanup;
+
+      delete getMockStorage().rememberSpeed;
+      dispatchVisible();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].detail.rememberSpeed).toEqual({ oldValue: true });
+    });
+
+    it('tears down when restored site rules now disable the current page', async () => {
+      getMockStorage().siteRules = [];
+      await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_MESSAGE');
+      eventCleanup = cleanup;
+
+      getMockStorage().siteRules = [{ pattern: 'localhost', enabled: false }];
+      dispatchPersistedPageShow();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(events.map((event) => event.detail?.type)).toEqual(['VSC_TEARDOWN']);
+    });
+
+    it('fails closed when a resume settings read rejects', async () => {
+      await loadBridge();
+      await requestInitialSettings();
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      chrome.storage.sync.get = vi.fn(() => Promise.reject(new Error('invalidated')));
+      const { events, cleanup } = collectEvents('VSC_MESSAGE');
+      eventCleanup = cleanup;
+
+      dispatchPersistedPageShow();
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events.map((event) => event.detail?.type)).toEqual(['VSC_TEARDOWN']);
+      logError.mockRestore();
+    });
+
+    it('coalesces overlapping pageshow and visibility resume reads', async () => {
+      await loadBridge();
+      await requestInitialSettings();
+      const originalGet = chrome.storage.sync.get;
+      const get = vi.fn(originalGet);
+      chrome.storage.sync.get = get;
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+
+      dispatchPersistedPageShow();
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(get).toHaveBeenCalledOnce();
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('does not overwrite a newer onChanged value with a stale resume read', async () => {
+      const onChanged = await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_STORAGE_CHANGED');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveRead = resolve)));
+
+      dispatchPersistedPageShow();
+      getMockStorage().lastSpeed = 3;
+      onChanged({ lastSpeed: { oldValue: 1, newValue: 3 } }, 'sync');
+      resolveRead({ ...getMockStorage(), lastSpeed: 1 });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].detail.lastSpeed.newValue).toBe(3);
+      expect(chrome.storage.sync.get).toHaveBeenCalledOnce();
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('recovers a missed speed while merging an unrelated event during the read', async () => {
+      getMockStorage().lastSpeed = 1;
+      getMockStorage().rememberSpeed = false;
+      const onChanged = await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_STORAGE_CHANGED');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = vi.fn(() => new Promise((resolve) => (resolveRead = resolve)));
+
+      dispatchPersistedPageShow();
+      onChanged({ rememberSpeed: { oldValue: false, newValue: true } }, 'sync');
+      resolveRead({ ...getMockStorage(), lastSpeed: 2, rememberSpeed: false });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(chrome.storage.sync.get).toHaveBeenCalledOnce();
+      expect(events.map((event) => event.detail)).toEqual([
+        { rememberSpeed: { oldValue: false, newValue: true } },
+        { lastSpeed: { oldValue: 1, newValue: 2 } },
+      ]);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('keeps a concurrent key removal absent in the resumed snapshot', async () => {
+      getMockStorage().lastSpeed = 1;
+      const onChanged = await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_STORAGE_CHANGED');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = () => new Promise((resolve) => (resolveRead = resolve));
+
+      dispatchPersistedPageShow();
+      onChanged({ lastSpeed: { oldValue: 1 } }, 'sync');
+      resolveRead({ ...getMockStorage(), lastSpeed: 1 });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events.map((event) => event.detail)).toEqual([{ lastSpeed: { oldValue: 1 } }]);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('cancels a queued pre-suspension speed save when a missed reset is reconciled', async () => {
+      getMockStorage().lastSpeed = 1;
+      await loadBridge();
+      await requestInitialSettings();
+      docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 3 } }));
+      delete getMockStorage().lastSpeed;
+
+      dispatchPersistedPageShow();
+      await vi.advanceTimersByTimeAsync(1200);
+
+      expect(getMockStorage().lastSpeed).toBeUndefined();
+    });
+
+    it('preserves a recent user speed when resumed storage is unchanged', async () => {
+      getMockStorage().lastSpeed = 1;
+      await loadBridge();
+      await requestInitialSettings();
+      docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 2 } }));
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = () => new Promise((resolve) => (resolveRead = resolve));
+
+      dispatchVisible();
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(getMockStorage().lastSpeed).toBe(1);
+      resolveRead({ ...getMockStorage() });
+      await vi.advanceTimersByTimeAsync(1200);
+
+      expect(getMockStorage().lastSpeed).toBe(2);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('cancels speed writes arriving during a read when external storage replaced the speed', async () => {
+      getMockStorage().lastSpeed = 1;
+      await loadBridge();
+      await requestInitialSettings();
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = () => new Promise((resolve) => (resolveRead = resolve));
+
+      dispatchVisible();
+      docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 3 } }));
+      getMockStorage().lastSpeed = 2;
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(getMockStorage().lastSpeed).toBe(2);
+      resolveRead({ ...getMockStorage() });
+      await vi.advanceTimersByTimeAsync(1200);
+
+      expect(getMockStorage().lastSpeed).toBe(2);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('does not persist a pre-resume speed over a newer storage event during the read', async () => {
+      getMockStorage().lastSpeed = 1;
+      const onChanged = await loadBridge();
+      await requestInitialSettings();
+      docEl.dispatchEvent(new CustomEvent('VSC_WRITE_STORAGE', { detail: { lastSpeed: 3 } }));
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = () => new Promise((resolve) => (resolveRead = resolve));
+
+      dispatchVisible();
+      getMockStorage().lastSpeed = 2;
+      onChanged({ lastSpeed: { oldValue: 1, newValue: 2 } }, 'sync');
+      resolveRead({ ...getMockStorage(), lastSpeed: 1 });
+      await vi.advanceTimersByTimeAsync(1200);
+
+      expect(getMockStorage().lastSpeed).toBe(2);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('does not revive an enabled handshake read after a concurrent disable', async () => {
+      getMockStorage().enabled = true;
+      const onChanged = await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_SETTINGS_READY', 'VSC_MESSAGE');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      let resolveRead;
+      chrome.storage.sync.get = () => new Promise((resolve) => (resolveRead = resolve));
+
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      onChanged({ enabled: { oldValue: true, newValue: false } }, 'sync');
+      resolveRead({ enabled: true, lastSpeed: 1 });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events.map((event) => event.detail)).toEqual([
+        { type: 'VSC_TEARDOWN' },
+        { abort: true },
+      ]);
+      chrome.storage.sync.get = originalGet;
+      getMockStorage().enabled = false;
+      dispatchPersistedPageShow();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(events.filter((event) => event.detail?.type === 'VSC_REINIT')).toHaveLength(0);
+    });
+
+    it('keeps a disable arriving between the raw read and the handshake response', async () => {
+      const onChanged = await loadBridge();
+      const { events, cleanup } = collectEvents('VSC_SETTINGS_READY');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      chrome.storage.sync.get = () => {
+        const result = Promise.resolve({ ...getMockStorage(), enabled: true });
+        result.then(() =>
+          queueMicrotask(() => onChanged({ enabled: { oldValue: true, newValue: false } }, 'sync'))
+        );
+        return result;
+      };
+
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events.map((event) => event.detail)).toEqual([{ abort: true }]);
+      chrome.storage.sync.get = originalGet;
+    });
+
+    it('keeps a newer completed snapshot when an older handshake finishes later', async () => {
+      getMockStorage().enabled = true;
+      await loadBridge();
+      await requestInitialSettings();
+      const { events, cleanup } = collectEvents('VSC_SETTINGS_READY', 'VSC_MESSAGE');
+      eventCleanup = cleanup;
+      const originalGet = chrome.storage.sync.get;
+      let resolveOldRead;
+      chrome.storage.sync.get = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveOldRead = resolve)))
+        .mockResolvedValueOnce({ enabled: false, lastSpeed: 2 });
+
+      docEl.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));
+      dispatchPersistedPageShow();
+      await vi.advanceTimersByTimeAsync(20);
+      resolveOldRead({ enabled: true, lastSpeed: 1 });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(events.map((event) => event.detail)).toEqual([
+        { type: 'VSC_TEARDOWN' },
+        { abort: true },
+      ]);
+      expect(chrome.storage.sync.get).toHaveBeenCalledTimes(2);
+      chrome.storage.sync.get = originalGet;
+    });
+  });
+
   describe('runtime message relay', () => {
+    it.each([false, true])(
+      'sanitizes diagnostic replies before crossing the bridge (invalid=%s)',
+      async (invalid) => {
+        let onMessage;
+        const originalAdd = chrome.runtime.onMessage.addListener;
+        const originalSend = chrome.runtime.sendMessage;
+        chrome.runtime.onMessage.addListener = (listener) => {
+          onMessage = listener;
+        };
+        chrome.runtime.sendMessage = vi.fn();
+        const respond = (event) => {
+          event.stopImmediatePropagation();
+          docEl.dispatchEvent(
+            new CustomEvent('VSC_MESSAGE_RESULT', {
+              detail: {
+                requestId: event.detail.requestId,
+                ok: true,
+                pageText: 'private tweet',
+                diagnostics: {
+                  schema: 1,
+                  active: false,
+                  reason: 'popup',
+                  events: invalid ? Array.from({ length: 241 }, () => ({})) : [],
+                  url: 'https://x.com/private/path?secret=value',
+                },
+              },
+            })
+          );
+        };
+        docEl.addEventListener('VSC_MESSAGE', respond, true);
+        try {
+          await loadBridge();
+          const sendResponse = vi.fn();
+          onMessage(
+            { type: 'VSC_VIDEO_DIAGNOSTICS', commandId: 'diagnostic-popup' },
+            {},
+            sendResponse
+          );
+          const response = sendResponse.mock.calls[0][0];
+          expect(response.ok).toBe(!invalid);
+          expect(JSON.stringify(response)).not.toMatch(/private|secret|https:/);
+          if (invalid) {
+            expect(response.error).toBe('invalid-diagnostics');
+          } else {
+            expect(response.diagnostics).toEqual({
+              schema: 1,
+              active: false,
+              reason: 'popup',
+              events: [],
+            });
+          }
+          expect(chrome.runtime.sendMessage.mock.calls[0][0].response).toEqual(response);
+          await vi.advanceTimersByTimeAsync(300);
+          expect(sendResponse).toHaveBeenCalledOnce();
+        } finally {
+          chrome.runtime.onMessage.addListener = originalAdd;
+          if (originalSend) {
+            chrome.runtime.sendMessage = originalSend;
+          } else {
+            delete chrome.runtime.sendMessage;
+          }
+          docEl.removeEventListener('VSC_MESSAGE', respond, true);
+        }
+      }
+    );
+
     it.each([false, true])(
       'sends per-frame replies only for an opted-in popup request (%s)',
       async (collectFrames) => {

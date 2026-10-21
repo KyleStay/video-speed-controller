@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StayFast scrolled frame fixture</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f3f7fa;
+        color: #123;
+        font: 16px system-ui;
+      }
+      .lead,
+      .tail {
+        height: 900px;
+      }
+      .lead {
+        height: 740px;
+      }
+      h1 {
+        margin: 16px;
+        font-size: 24px;
+      }
+      #parent-scroll {
+        height: 500px;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+      .content {
+        width: 620px;
+        min-height: 1500px;
+        padding-top: 250px;
+        box-sizing: border-box;
+      }
+      iframe {
+        display: block;
+        width: 370px;
+        height: 650px;
+        margin-left: 110px;
+        border: 0;
+      }
+      .actions {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 2147483646;
+        display: grid;
+        gap: 4px;
+      }
+      button {
+        min-height: 44px;
+        font: inherit;
+      }
+      #parent-status {
+        position: fixed;
+        bottom: 8px;
+        left: 8px;
+        right: 8px;
+        z-index: 2147483647;
+        margin: 0;
+        padding: 4px;
+        background: #000c;
+        color: #fff;
+        font: 11px/1.2 monospace;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="lead" aria-hidden="true"></div>
+    <h1>Scrolled same-origin frame</h1>
+    <div id="parent-scroll">
+      <div class="content">
+        <iframe
+          title="Nested scrolled video"
+          src="/mobile.html?mp4&amp;owned&amp;scroll=nested"
+        ></iframe>
+      </div>
+    </div>
+    <div class="tail" aria-hidden="true"></div>
+    <div class="actions">
+      <button type="button" id="prepare-parent">Prepare parent scroll baseline</button>
+      <button type="button" id="remember-parent">Remember parent scroll position</button>
+    </div>
+    <p id="parent-status" role="status" aria-live="polite">Parent scroll state: loading</p>
+    <script>
+      const frame = document.querySelector('iframe');
+      const nested = document.querySelector('#parent-scroll');
+      const status = document.querySelector('#parent-status');
+      const errors = [];
+      const update = () => {
+        const saved = window.__stayfastParentScrollBaseline;
+        status.textContent =
+          'Parent scroll state: page: ' +
+          scrollX +
+          ',' +
+          scrollY +
+          '; nested: ' +
+          nested.scrollLeft +
+          ',' +
+          nested.scrollTop +
+          '; frame top: ' +
+          frame.getBoundingClientRect().top.toFixed(1) +
+          '; saved page: ' +
+          (saved ? saved.pageX + ',' + saved.pageY : 'none') +
+          '; saved nested: ' +
+          (saved ? saved.nestedX + ',' + saved.nestedY : 'none') +
+          '; saved frame top: ' +
+          (saved ? saved.frameTop.toFixed(1) : 'none') +
+          '; errors: ' +
+          errors.length;
+      };
+      const remember = () => {
+        window.__stayfastParentScrollBaseline = {
+          pageX: scrollX,
+          pageY: scrollY,
+          nestedX: nested.scrollLeft,
+          nestedY: nested.scrollTop,
+          frameTop: frame.getBoundingClientRect().top,
+        };
+        update();
+      };
+      document.querySelector('#prepare-parent').addEventListener('click', (event) => {
+        if (!event.isTrusted) return;
+        scrollTo({ left: 0, top: 720, behavior: 'instant' });
+        nested.scrollTo({ left: 70, top: 220, behavior: 'instant' });
+        remember();
+      });
+      document.querySelector('#remember-parent').addEventListener('click', (event) => {
+        if (event.isTrusted) remember();
+      });
+      addEventListener('scroll', update, true);
+      addEventListener('resize', update);
+      addEventListener('error', (event) => {
+        errors.push(event.message);
+        update();
+      });
+      addEventListener('unhandledrejection', (event) => {
+        errors.push(String(event.reason));
+        update();
+      });
+      new MutationObserver(update).observe(frame, { attributes: true, attributeFilter: ['style'] });
+      update();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,31 @@
+name: StayFastSafariQA
+options:
+  bundleIdPrefix: co.staytech.stayfast.qa
+  deploymentTarget:
+    iOS: '18.4'
+targets:
+  StayFastSafariQATests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - SafariQATests.swift
+      - OwnedPlayerQATests.swift
+      - ScrollQATests.swift
+      - InlinePlaybackQATests.swift
+      - FeedPlaybackQATests.swift
+      - LayoutFeedQATests.swift
+      - DiagnosticCaptureQATests.swift
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: co.staytech.stayfast.qa.ui
+      CODE_SIGNING_ALLOWED: YES
+      CODE_SIGN_IDENTITY: '-'
+schemes:
+  StayFastSafariQA:
+    build:
+      targets:
+        StayFastSafariQATests:
+          test: true
+    test:
+      targets:
+        - StayFastSafariQATests

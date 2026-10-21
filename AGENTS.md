@@ -10,7 +10,9 @@ A Manifest V3 browser extension that adds speed/seek controls to any HTML5
 `<video>`/`<audio>` element on any site. Pure browser extension — no backend.
 Source in `src/`, bundled by esbuild into a default Chrome `dist/` or explicit
 browser resource builds under `dist/<browser>/`. Chrome and Firefox are
-release-ready; Safari is experimental conversion input only.
+release-ready; Safari targets Safari 18.4+/iOS 18.4+ with a native containing app
+under `apple/`. Read `docs/safari.md` when changing Safari packaging, touch UI,
+or Safari verification; successful compilation alone is not runtime verification.
 
 ## Project priorities (in order)
 
@@ -66,6 +68,21 @@ with direct `chrome.*` access.
   enable-toggle/document-replacement reinitialization without stale defaults.
   The bridge fetches a **bounded** key set
   (`src/utils/setting-keys.js`), not `get(null)`.
+- Startup supports either script-world order: bridge announces
+  `VSC_BRIDGE_READY` after installing listeners; a pending MAIN settings request
+  retries on that event and removes both response listeners when settled.
+  MAIN also retains a lifecycle readiness listener so a bridge arriving after
+  the bounded settings timeout can restart failed startup; it does not restart
+  an initialized/pending instance or undo explicit teardown. Verify both orders
+  and arrival after timeout with `npm run test:e2e:startup` on macOS.
+  On visible-tab/persisted-history restoration, the bridge coalesces a fresh
+  bounded settings read to reconcile missed storage changes and enabled state.
+  Async reads merge newer storage events per key, preserve removals, and never
+  let a late older read replace a newer completed snapshot. Resume pauses queued
+  bridge speed persistence: unchanged stored speed preserves the pending user
+  choice; changed/removed speed cancels it before persistence restarts.
+  `npm run test:e2e:resume` exercises these races in real built worlds using a
+  disposable, instrumented bridge copy that drops notifications or holds reads.
 - Storage changes: bridge relays `VSC_STORAGE_CHANGED`; the `enabled` toggle
   alone drives lifecycle `VSC_MESSAGE` `VSC_TEARDOWN`/`VSC_REINIT`.
 - Popup/background → content: `chrome.runtime.onMessage` → `VSC_MESSAGE` →
@@ -90,6 +107,9 @@ with direct `chrome.*` access.
   SPA-navigation recovery (`setupSpaNavigationRecovery` re-scans on
   `yt-navigate-finish`/`popstate` so a media swap that drops the controller
   doesn't permanently surrender shortcut keys to the site).
+  Persisted `pageshow` and visible `visibilitychange` use the same coalesced,
+  media-gated deferred recovery path after tab suspension or history restoration;
+  teardown removes these listeners along with navigation listeners.
 - `core/`
   - `settings.js` — `VideoSpeedConfig`: load/save, debounced speed writes,
     migrations, self-echo guard.
@@ -119,10 +139,22 @@ with direct `chrome.*` access.
   listener bundled for all pages (must be robust on non-Netflix sites).
 - `ui/` — `controls`, `drag-handler`, `shadow-dom`, `vsc-controller-element`,
   `popup/`, `options/`.
+  `ios-player` owns iOS video presentation/lifecycle; `ios-player-view` builds its
+  accessible shadow-DOM dialog; `ios-player-scroll` preserves scroll around
+  presentation changes and loads before `ios-player-frames`, which expands permitted
+  same-origin iframe ancestors; `ios-player-scrubber` owns precision seeking;
+  `ios-player-gestures` owns touch pinch Fit/Fill. Read `docs/safari.md` before
+  changing these.
   `popup/tab-command.js` aggregates frame replies in the popup extension context
   only; it is not part of the MAIN-world module loader.
 - `utils/` — `constants` (+ `key-maps`), `logger`, `dom-utils`, `event-manager`,
   `blacklist`, `site-pattern`, `setting-keys`, `debug-helper`.
+  `video-load-diagnostics` owns bounded, opt-in in-memory load/scroll traces;
+  `diagnostic-report` projects their schema at the ISOLATED and popup boundaries.
+  Read `docs/safari.md` before changing capture or diagnostic export. MAIN still
+  writes only `lastSpeed`; diagnostic reports travel through request/reply and
+  remain in memory until the user explicitly copies or shares them. Automatic
+  X/Twitter capture requires the separate `STAYFAST_DIAGNOSTICS=1` build flag.
 - `styles/` — `inject.css`, `controller-css-defaults.js`.
 
 ## Conventions & invariants
@@ -193,10 +225,116 @@ with direct `chrome.*` access.
   position, visibility and listeners. Detached media is disposed instead. Each
   document owns only its own media; YouTube embeds use their own `all_frames`
   instance, never a parent controller.
+- **Touch controls**: coarse pointers or a touch on the pill select explicit
+  expand/collapse state with 44px targets; hover does not control mobile state.
+  Position the compact controller from the current media bounds; clamp its
+  popover to the visual viewport. Measure inline geometry only when the host is
+  connected. `VideoController.positionControls()` finishes generic coordinates
+  and inline placement after insertion, before returning to target readiness
+  handlers; waiting for ResizeObserver exposes transient overflow, demonstrated
+  in Chrome and native WebKit. iOS placement repair repositions the same
+  controller after reparenting; desktop manual drag positions remain intact.
+  Regression checks must measure inside the readiness handler as well as after
+  observer settling. Inline speed/fullscreen targets are at least 44px, with a
+  default 92px-wide pair including its gap. Compact labels retain the accepted
+  numeric rate in `dataset.speed` and full accessible text. Bounds account for
+  scaled hidden/clip ancestors (at most 24 hops), stopping at scrolling ports.
+  Available width <180px or height <96px selects fullscreen-only; either axis
+  <52px hides the surface and closes its popover. Visible placement uses at most
+  three hit-test passes to avoid covering page chrome while staying within the
+  clipped media/viewport; it does not escape blocking modals. Passive captured
+  window scroll and visual-viewport scroll share one coalesced animation frame
+  per window across known iOS controllers. Scroll work uses IO-intersecting
+  entries, falling back to known entries without IO; resize/intersection events
+  also refresh placement. Cleanup removes each entry and the last group's
+  listeners/frame through its original window, including after document adoption.
+  This schedules layout from events, without polling or page-scroll writes.
+  Popovers anchor beside the primary controls, clamp text to 13–18px, and make
+  child buttons inherit that font rather than the configured global button size.
+  While playing, touch-idle collapse uses 2.5s;
+  paused media and keyboard interaction keep controls available. Size changes
+  preserve minimum touch targets. Popover height/block-size stays intrinsic and
+  grid rows use non-stretching 44px minima; narrow panels can use one column.
+  Cleanup clears idle timers through the original scheduling window even after
+  media adoption into an inert document, and releases placement listeners.
+  The shared 1× preset and Pref buttons set absolute speeds through `SET_SPEED`;
+  Pref reads the first `fast` binding at click time, falling back to 1× if absent.
+  Route controller speed updates through `ShadowDOMManager.updateSpeedDisplay`
+  so the pill label and preset pressed states stay synchronized.
+  Expanded-panel viewport/outside listeners and media presentation listeners
+  belong to `ControlsManager.cleanup()`, called by `VideoController.remove()`.
+  Native fullscreen/PiP hides the on-page wrapper and returns it on exit;
+  test these transitions in Safari. iOS owned-player behavior is below.
+- **iOS presentation**: attachment separately owns the presence of `playsinline`
+  and `webkit-playsinline`, including when the site originally omitted them, so
+  ordinary Play stays inline. Attachment leaves the site's controls and native
+  fullscreen APIs unchanged.
+  A per-media observer watches only these two attributes; after a bounded eight
+  conflicts it hands back to the site. Cleanup/Use site player restores the
+  latest site intent; a new source or explicit Custom Player re-enables inline
+  ownership. Custom close and native exit retain inline policy. The primary Full screen
+  action calls the original media's native fullscreen API in the trusted tap,
+  without creating the custom-player portal. Native presentation must not
+  trigger automatic custom-player takeover or fullscreen exit/reentry loops.
+  Custom Player is an explicit secondary choice. `prepareMedia()` owns native
+  controls only for that session; native fullscreen methods remain unchanged.
+  Inline-attribute ownership is separate and begins at attachment.
+- **Recycled media sources**: both `emptied` and `loadstart` invalidate the old
+  presentation generation, PiP/history resume flags and native/queued scroll
+  snapshots. Close an active custom view using the current scroll position,
+  then re-arm inline policy for the new resource. Deferred native failures must
+  match the current generation; deferred play failures must match the active
+  custom session/UI. A reused element must not inherit another source's view
+  or scroll target. Native-begin events only observe presentation; they never
+  create or refresh a post-entry scroll snapshot. Only an explicit native
+  fullscreen request captures scrolling before invoking the browser API.
+- **Presentation scroll**: `IOSPlayerScrollState` captures page and composed
+  nested-scroller offsets around native/custom entry and exit. Native transitions
+  include accessible same-origin parents; frame expansion uses the validated
+  same-origin protocol. Custom close preserves the current intentional page
+  position rather than replaying a stale entry snapshot. Restore synchronously
+  with at most two follow-up animation frames; wheel/touch/pointer/key input,
+  pagehide/popstate, navigation/document changes, a new session and cleanup end
+  correction. Cancel the original scheduling window's frames/listeners and
+  retain cross-origin boundaries. This is bounded presentation repair, not
+  scroll ownership or ongoing polling.
+- **iOS player ownership**: retain the original media, source/srcObject,
+  MediaSource/MediaKeys, and tracks. A synchronous same-document portal move
+  preserves known single-video player containers when possible; an anchor and
+  placeholder own restoration. `repairDOMPlacement()` yields while active.
+  Caption selection changes only subtitles/captions, preserving metadata tracks.
+  Attribute enforcement has a bounded conflict budget and hands back to a
+  competing site instead of sustaining a mutation loop. PiP temporarily closes
+  ownership; cleanup cancels callbacks, restores owned attributes/styles/methods,
+  and removes the view. Removed media stays removed; replacement media survives
+  shell cleanup. Connected site reparenting releases presentation ownership while
+  retaining the same controller/rate. Reopening remains explicit. Missing
+  origins dispose the stale controller.
+  Frame expansion accepts only a validated direct same-origin child; cross-origin
+  and opaque frames remain local. A child token alone grants no parent authority.
+- **iOS player interaction**: precision seeking captures one pointer and applies
+  incremental horizontal movement at normal/half/quarter/tenth sensitivity as
+  vertical distance from the timeline increases in either direction. It pauses
+  during the gesture, clamps to current seek bounds, coalesces decoder writes,
+  restores the starting time on cancellation, and resumes only an originally
+  playing, still-current visible session. Close/cleanup cancels capture, timers,
+  and gesture listeners without a stale resume. Pinch Fit/Fill owns stage touches
+  separately. Stage touch capture stops site-player handlers while preserving
+  Safari's default synthesized click; cleanup removes these guards. More/Escape
+  stays inside the dialog; keyboard range input remains usable. Native audio
+  selection and captions stay separate; volume, PiP and
+  AirPlay are capability-gated and honor the media's restriction flags.
 - **Rate state**: cooldown, fight count and timers are per-media in
   `EventManager.mediaRateStates`. Arm cooldown before writing `playbackRate`;
   synchronous ratechange must not recurse. `VideoController.remove()` releases
   that media's state; manager cleanup cancels every remaining timer.
+  `utils/speed-limits.js` selects browser limits at build time. All browsers
+  retain the 0.07× minimum. Safari accepts finite requests up to the largest
+  finite Float32 value, an AVPlayer numeric bound rather than a decoding limit;
+  Chrome/Firefox retain 16×.
+  Accepted playback state drives display/persistence; requested-rate readback
+  alone does not prove high-rate decoded playback. Keep Safari acceptance
+  media/device-specific and record decoded progress before claiming support.
 - **Mutation budget**: deferred work coalesces repeated target/attribute records
   and deduplicates overlapping subtrees per mutation delivery with TreeWalker,
   including open roots. Later deliveries must rediscover reinserted media even
@@ -236,7 +374,7 @@ with direct `chrome.*` access.
 ```sh
 npm run build          # dev build → dist/
 npm run build:browsers # Chrome + Firefox builds → dist/<browser>/
-npm run build:safari   # experimental conversion input → dist/safari/
+npm run build:safari   # Safari 18.4+ resources → dist/safari/
 npm run watch          # rebuild on change (dev)
 npm run build:release  # minified release build
 npm run release:browsers # minified Chrome + Firefox builds and ZIPs
@@ -244,6 +382,7 @@ npm test               # full vitest suite (unit + integration)
 npm run test:unit      # unit only
 npm run test:integration
 npm run test:e2e       # builds, then Puppeteer E2E (needs Chrome)
+npm run test:e2e:ios-player # built owned iOS player in disposable mobile-emulated Chrome
 npm run test:e2e:isolated # release build, disposable macOS Chrome fixtures + live YouTube
 npm run test:e2e:browsers # deterministic Chrome + Firefox regression matrix
 npm run test:performance # paired enabled/disabled Chrome measurements

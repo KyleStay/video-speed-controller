@@ -78,6 +78,25 @@ body {
   padding: 0 20px 40px;
 }
 
+section,
+[role='tabpanel'],
+.row,
+.css-editor {
+  min-width: 0;
+}
+
+p,
+label,
+#status,
+.css-validation {
+  overflow-wrap: anywhere;
+}
+
+#site-rules-container {
+  width: 100%;
+  min-width: 0;
+}
+
 header {
   position: sticky;
   top: 0;
@@ -953,30 +972,49 @@ button:active {
 
 /* Responsive adjustments */
 @media (max-width: 640px) {
+  html {
+    padding: 0 12px;
+  }
+
+  body {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
   header {
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 8px;
-    padding: 0 12px 8px;
+    margin-right: -12px;
+    margin-left: -12px;
+    padding: 8px 12px 0;
   }
 
   .header-tabs {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     width: 100%;
     min-width: 0;
-    overflow-x: auto;
   }
 
   .header-brand-copy {
-    display: none;
+    min-width: 0;
+    white-space: normal;
   }
 
   .header-tab {
-    flex: 1 1 auto;
-    padding: 14px 12px;
+    min-width: 0;
+    padding: 12px 4px;
+    font-size: 13px;
+    overflow-wrap: anywhere;
   }
 
   .split-button {
-    align-self: flex-end;
+    grid-row: 1;
+    grid-column: 2;
   }
 
   .row {
@@ -991,13 +1029,30 @@ button:active {
   }
 
   .row.customs {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 75px 44px;
     padding-left: 0;
   }
 
-  .row.customs > * {
-    margin-bottom: 8px;
+  .row.customs:has(input[style*='display: none']) {
+    grid-template-columns: minmax(0, 1fr) 75px 44px;
+  }
+
+  .row.customs .customDo {
+    grid-column: 1 / -1;
+  }
+
+  .row.customs .customKey {
+    min-width: 0;
+  }
+
+  .row.customs .customValue {
+    grid-column: 2;
+  }
+
+  .row.customs .removeParent {
+    grid-column: 3;
+    justify-self: end;
   }
 
   label {
@@ -1015,7 +1070,7 @@ button:active {
 
   .site-rules-header,
   .row.site-rule {
-    grid-template-columns: minmax(0, 1fr) 50px 70px 32px;
+    grid-template-columns: minmax(0, 1fr) 44px 70px 44px;
   }
 
   .site-rules-header {
@@ -1047,6 +1102,89 @@ button:active {
 
   .secondary-buttons button {
     flex: 1;
+  }
+
+  .about-hero {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  #faq,
+  .about-card {
+    padding: 16px;
+  }
+}
+
+@media (any-pointer: coarse) {
+  button,
+  #add,
+  #add-site-rule,
+  .removeParent,
+  .split-button button.split-primary,
+  .split-button button.split-arrow,
+  input[type='text'],
+  input[type='number'],
+  input[type='checkbox'],
+  select,
+  textarea,
+  .about-links a,
+  .faq-toc a {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  button,
+  input[type='checkbox'] {
+    min-width: 44px;
+  }
+
+  input[type='text'],
+  input[type='number'],
+  input[type='checkbox'],
+  select,
+  textarea,
+  .css-editor textarea,
+  .css-editor .css-highlight {
+    font-size: 16px;
+  }
+
+  .removeParent,
+  input[type='checkbox'] {
+    width: 44px;
+    height: 44px;
+  }
+
+  #controllerOpacity,
+  #controllerButtonSize {
+    width: 88px;
+  }
+
+  .about-links a,
+  .faq-toc a {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .row.customs {
+    grid-template-columns: 180px auto 75px 44px;
+  }
+
+  .site-rules-header,
+  .row.site-rule {
+    grid-template-columns: minmax(0, 1fr) 50px 80px 44px;
+  }
+}
+
+@media (any-pointer: coarse) and (max-width: 640px) {
+  .row.customs,
+  .row.customs:has(input[style*='display: none']) {
+    grid-template-columns: minmax(0, 1fr) 75px 44px;
+  }
+
+  .site-rules-header,
+  .row.site-rule {
+    grid-template-columns: minmax(0, 1fr) 44px 70px 44px;
   }
 }
 

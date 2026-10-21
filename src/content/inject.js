@@ -1,3 +1,4 @@
+/* global __VSC_DIAGNOSTICS__ */
 import { bridgeEvents } from '../utils/bridge-events.js';
 
 /**
@@ -25,6 +26,55 @@ class VideoSpeedExtension {
     this.initializationInProgress = false;
     this.readyCleanup = null;
     this.spaRecoveryScheduled = false;
+    this.videoDiagnostics = null;
+    this.diagnosticsAutoStarted = false;
+  }
+
+  ensureVideoDiagnostics() {
+    if (!this.videoDiagnostics || this.videoDiagnostics.document !== document) {
+      this.videoDiagnostics?.cleanup();
+      this.videoDiagnostics = new window.VSC.VideoLoadDiagnostics(document);
+    }
+    return this.videoDiagnostics;
+  }
+
+  startAutomaticVideoDiagnostics() {
+    try {
+      if (
+        !this.diagnosticsAutoStarted &&
+        typeof __VSC_DIAGNOSTICS__ !== 'undefined' &&
+        __VSC_DIAGNOSTICS__ &&
+        window.VSC.EventManager.isTwitterHost(window.location.hostname)
+      ) {
+        this.diagnosticsAutoStarted = true;
+        this.ensureVideoDiagnostics().start({ reason: 'diagnostic-build' });
+      }
+    } catch {
+      // Diagnostic startup must never stop ordinary playback controls.
+    }
+  }
+
+  handleVideoDiagnostics(action) {
+    if (!['start', 'stop', 'clear', 'report'].includes(action)) {
+      return null;
+    }
+    try {
+      const recorder = this.ensureVideoDiagnostics();
+      if (action === 'start') {
+        recorder.start({ reason: 'popup' });
+        for (const root of this.mutationObserver?.shadowObservers.keys() || []) {
+          recorder.observeRoot(root);
+        }
+      } else if (action === 'stop') {
+        recorder.stop();
+      } else if (action === 'clear') {
+        recorder.stop();
+        recorder.clear();
+      }
+      return recorder.snapshot();
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -61,11 +111,20 @@ class VideoSpeedExtension {
       }
 
       if (this.config.settings._abort) {
+        this.videoDiagnostics?.cleanup();
         this.logger.debug('Extension disabled on this site — aborting init');
         return;
       }
 
       this.setupEventPipeline(document);
+
+      if (window.VSC.IOSPlayer?.isIOS(window)) {
+        this.iosPlayerFrames = new window.VSC.IOSPlayerFrames(document);
+        window.VSC.iosPlayerFrames = this.iosPlayerFrames;
+        this.iosPlayerFrames.start();
+        this.resumePlayerFrames = () => this.iosPlayerFrames?.start();
+        window.addEventListener('pageshow', this.resumePlayerFrames);
+      }
 
       // Defer DOM work so page frameworks finish init before we mutate.
       this.initialized = true;
@@ -232,10 +291,9 @@ class VideoSpeedExtension {
           const comprehensiveMedia = this.mediaObserver.scanAll(document);
 
           comprehensiveMedia.forEach((media) => {
-            // Skip if already has controller
-            if (!media.vsc) {
-              this.onVideoFound(media, media.parentElement || media.parentNode);
-            }
+            // Rediscovery also repairs an existing wrapper removed while a tab
+            // was suspended, including media inside an open shadow root.
+            this.onVideoFound(media, media.parentElement || media.parentNode);
           });
 
           this.logger.info(
@@ -454,7 +512,12 @@ class VideoSpeedExtension {
    * shortcut keys, so the site (e.g. YouTube) reclaims keys like `s`. Re-scanning
    * on navigation re-attaches the controller and restores shortcut claiming.
    *
-   * No polling: we react to navigation events and defer the scan to idle so the
+   * Safari can freeze a background tab or preserve it in the back/forward cache.
+   * On restoration the page may have moved/replaced its player without a new
+   * navigation event, so also recover when the document becomes visible or a
+   * persisted pageshow restores it. A normal initial pageshow needs no extra scan.
+   *
+   * No polling: we react to navigation/restoration and defer the scan to idle so the
    * media-less common case stays cheap. onVideoFound is idempotent (skips media
    * that already has a controller), so a redundant scan is harmless.
    */
@@ -463,7 +526,13 @@ class VideoSpeedExtension {
       return;
     }
 
-    this.spaNavigationHandler = () => {
+    this.spaNavigationHandler = (event) => {
+      if (event?.type === 'pageshow' && !event.persisted) {
+        return;
+      }
+      if (event?.type === 'visibilitychange' && document.visibilityState !== 'visible') {
+        return;
+      }
       if (this.teardownRequested || !this.mediaObserver || this.spaRecoveryScheduled) {
         return;
       }
@@ -474,7 +543,7 @@ class VideoSpeedExtension {
       if (!this.mediaObserver.hasMediaIndicators(document)) {
         return;
       }
-      this.logger.debug('SPA navigation detected — rescanning for media');
+      this.logger.debug('Navigation or tab restoration detected — rescanning for media');
       // Defer: let the framework swap in the new player before we scan.
       this.spaRecoveryScheduled = true;
       this.scheduleDeferredWork(
@@ -497,6 +566,8 @@ class VideoSpeedExtension {
     this.spaNavigationDocument.addEventListener('yt-navigate-finish', this.spaNavigationHandler);
     // Generic SPA fallback (history navigation) for other sites.
     window.addEventListener('popstate', this.spaNavigationHandler);
+    window.addEventListener('pageshow', this.spaNavigationHandler);
+    this.spaNavigationDocument.addEventListener('visibilitychange', this.spaNavigationHandler);
   }
 
   /**
@@ -664,6 +735,9 @@ class VideoSpeedExtension {
    * Counterpart to initialize() — leaves the page as if VSC was never active.
    */
   teardown() {
+    // Keep the bounded report available to the popup after disable/replacement.
+    this.videoDiagnostics?.mark('extension-teardown');
+    this.videoDiagnostics?.cleanup();
     if (
       !this.initialized &&
       !this.eventListenersInitialized &&
@@ -695,6 +769,16 @@ class VideoSpeedExtension {
       }
     }
 
+    this.iosPlayerFrames?.cleanup();
+    if (window.VSC.iosPlayerFrames === this.iosPlayerFrames) {
+      window.VSC.iosPlayerFrames = null;
+    }
+    this.iosPlayerFrames = null;
+    if (this.resumePlayerFrames) {
+      window.removeEventListener('pageshow', this.resumePlayerFrames);
+      this.resumePlayerFrames = null;
+    }
+
     // Stop observing DOM for new videos
     if (this.mutationObserver) {
       this.mutationObserver.stop();
@@ -706,7 +790,9 @@ class VideoSpeedExtension {
     if (this.spaNavigationHandler) {
       const navDoc = this.spaNavigationDocument || document;
       navDoc.removeEventListener('yt-navigate-finish', this.spaNavigationHandler);
+      navDoc.removeEventListener('visibilitychange', this.spaNavigationHandler);
       window.removeEventListener('popstate', this.spaNavigationHandler);
+      window.removeEventListener('pageshow', this.spaNavigationHandler);
       this.spaNavigationHandler = null;
       this.spaNavigationDocument = null;
     }
@@ -792,6 +878,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
       // Use state manager for complete media element discovery (includes shadow DOM)
       const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
       let handled = true;
+      let diagnostics;
 
       switch (message.type) {
         case window.VSC.Constants.MESSAGE_TYPES.SET_SPEED:
@@ -856,6 +943,11 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
           break;
         }
 
+        case window.VSC.Constants.MESSAGE_TYPES.VIDEO_DIAGNOSTICS:
+          diagnostics = extension.handleVideoDiagnostics(message.payload?.action);
+          handled = diagnostics !== null;
+          break;
+
         case window.VSC.Constants.MESSAGE_TYPES.TEARDOWN:
           extension.teardown();
           break;
@@ -878,10 +970,24 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
               mediaCount: status.mediaCount,
               currentSpeed: status.currentSpeed,
               speeds: status.speeds,
+              ...(diagnostics ? { diagnostics } : {}),
             },
           })
         );
       }
+    }
+  });
+
+  // A cold/late ISOLATED world can arrive after the bounded settings request
+  // timed out. Resume startup on its one-shot signal, but never undo teardown
+  // or start a second initialization while the original request is pending.
+  bridgeEvents.addEventListener('VSC_BRIDGE_READY', () => {
+    if (
+      !extension.initialized &&
+      !extension.initializationInProgress &&
+      !extension.teardownRequested
+    ) {
+      extension.initialize();
     }
   });
 
@@ -892,6 +998,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
   }
 
   // Auto-initialize
+  extension.startAutomaticVideoDiagnostics();
   extension.initialize().catch((error) => {
     window.VSC.logger.error(`Extension initialization failed: ${error.message}`);
   });

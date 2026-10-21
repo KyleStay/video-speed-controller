@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StayFast local X feed fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px system-ui;
+        background: #eff5f9;
+      }
+      h1 {
+        margin: 16px;
+        font-size: 24px;
+      }
+      article {
+        box-sizing: border-box;
+        height: 350px;
+        position: relative;
+      }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+      }
+      .gap {
+        height: 850px;
+      }
+      .tail {
+        height: 1500px;
+      }
+    </style>
+    <script>
+      window.__feedNativeCalls = [];
+      for (const name of ['webkitEnterFullscreen', 'webkitEnterFullScreen']) {
+        HTMLVideoElement.prototype[name] = function () {
+          window.__feedNativeCalls.push({ name, media: this.id });
+        };
+      }
+      HTMLVideoElement.prototype.webkitSetPresentationMode = function (mode) {
+        if (mode === 'fullscreen')
+          window.__feedNativeCalls.push({ name: 'presentation', media: this.id });
+      };
+      const originalRequestFullscreen = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen = function (...args) {
+        window.__feedNativeCalls.push({ name: 'requestFullscreen', media: this.id });
+        return originalRequestFullscreen.apply(this, args);
+      };
+    </script>
+  </head>
+  <body>
+    <h1>Local X feed regression</h1>
+    <article data-testid="tweet">
+      <video
+        id="older-video"
+        muted
+        loop
+        controls
+        preload="auto"
+        src="/__stayfast_sample.webm?older"
+      ></video>
+    </article>
+    <div class="gap"></div>
+    <article id="feed-slot" data-testid="tweet"></article>
+    <div class="tail"></div>
+    <script>
+      window.__feed = {
+        append() {
+          const video = document.createElement('video');
+          video.id = 'new-video';
+          video.muted = true;
+          video.loop = true;
+          video.controls = true;
+          video.src = '/__stayfast_sample.webm?new';
+          document.querySelector('#feed-slot').append(video);
+          window.__feedOriginal = video;
+          return video.play();
+        },
+        recycle() {
+          const video = window.__feedOriginal;
+          video.pause();
+          video.removeAttribute('playsinline');
+          video.removeAttribute('webkit-playsinline');
+          video.src = '/__stayfast_sample.webm?recycled';
+          video.load();
+          return video.play();
+        },
+        rerender() {
+          const before = document.querySelector('#feed-slot');
+          const next = document.createElement('article');
+          next.id = 'feed-slot';
+          next.dataset.testid = 'tweet';
+          next.append(window.__feedOriginal);
+          before.replaceWith(next);
+        },
+      };
+    </script>
+  </body>
+</html>

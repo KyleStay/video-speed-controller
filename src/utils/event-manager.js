@@ -667,6 +667,14 @@ class EventManager {
 
     const mediaRateState = this.getMediaRateState(video);
 
+    // The setter may synchronously report a source-specific clamp. Let the
+    // explicit extension write finish and establish its accepted readback before
+    // cooldown fight-back compares it with the provisional requested rate.
+    if (mediaRateState?.applyingSpeed) {
+      event.stopImmediatePropagation();
+      return;
+    }
+
     if (mediaRateState?.coolDown) {
       window.VSC.logger.debug('Rate change event blocked by cooldown');
 

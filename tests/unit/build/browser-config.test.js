@@ -64,7 +64,26 @@ describe('browser manifest generation', () => {
     expect(manifest.minimum_chrome_version).toBeUndefined();
     expect(manifest.browser_specific_settings).toBeUndefined();
     expect(manifest.background).toEqual({ service_worker: 'background.js' });
-    expect(getBuildTarget('safari')).toBe('safari18');
+    expect(getBuildTarget('safari')).toBe('safari18.4');
+  });
+
+  it('removes only Safari’s unsupported options-tab preference', () => {
+    const base = { ...baseManifest, options_ui: { page: 'options.html', open_in_tab: true } };
+    expect(createBrowserManifest(base, 'safari', '1.2.3').options_ui).toEqual({
+      page: 'options.html',
+    });
+    expect(createBrowserManifest(base, 'chrome', '1.2.3').options_ui.open_in_tab).toBe(true);
+    expect(base.options_ui.open_in_tab).toBe(true);
+  });
+
+  it('keeps Safari descriptions within Apple’s 112-character limit', () => {
+    const source = JSON.parse(readFileSync(resolve(process.cwd(), 'manifest.json'), 'utf8'));
+    const safari = createBrowserManifest(source, 'safari', '0.11.3');
+
+    expect(safari.description).toContain('video and audio speed controls');
+    expect(safari.description.length).toBeLessThanOrEqual(112);
+    expect(createBrowserManifest(source, 'chrome', '0.11.3').description).toBe(source.description);
+    expect(createBrowserManifest(source, 'firefox', '0.11.3').description).toBe(source.description);
   });
 
   it('keeps experimental Safari out of release-ready aggregate builds', () => {

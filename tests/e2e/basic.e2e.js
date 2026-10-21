@@ -96,6 +96,32 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
       assert.true(newSpeed < initialSpeed, 'Speed should decrease');
     });
 
+    await runTest('Overlay buttons set normal and preferred speeds without toggling', async () => {
+      const previous = await page.evaluate(() => {
+        const config = window.VSC_controller.config;
+        const value = config.getKeyBinding('fast');
+        config.setKeyBinding('fast', 2.25);
+        return value;
+      });
+      try {
+        for (const [action, expected] of [
+          ['preferredSpeed', 2.25],
+          ['preferredSpeed', 2.25],
+          ['setSpeed', 1],
+          ['setSpeed', 1],
+        ]) {
+          assert.true(await controlVideo(page, action), `${action} should be clickable`);
+          assert.equal(await getVideoSpeed(page), expected);
+          assert.equal(Number(await getControllerSpeedDisplay(page)), expected);
+        }
+        await takeScreenshot(page, 'overlay-speed-buttons.png');
+      } finally {
+        await page.evaluate((value) => {
+          window.VSC_controller.config.setKeyBinding('fast', value);
+        }, previous);
+      }
+    });
+
     await runTest('Reset key should restore normal speed', async () => {
       // First change speed
       await controlVideo(page, 'faster');
