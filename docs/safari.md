@@ -99,6 +99,24 @@ and nested scroll positions throughout its bounded observation. Run it with
 built resources. These controlled Chrome checks do not establish Safari's native
 policy before controller attachment or reproduce the signed-in X feed incident.
 
+## Playback above 2×
+
+A rate accepted by Safari is not a guarantee that every frame can be decoded or
+presented at that speed. Apple documents choppy playback above 2× when the source's
+processing requirements exceed AVFoundation's capacity; playback may fall back
+to fewer frames. See [Apple QA1772](https://developer.apple.com/library/archive/qa/qa1772/_index.html).
+StayFast keeps higher rates available and preserves the original source, tracks
+and pitch policy. It avoids reassigning an unchanged native rate and does not
+fight a source-specific initialization clamp.
+
+The native `/rate-probe.html` fixture compares 1×, 2×, 2.5×, 3× and 4× using
+1.5-second samples of actual presented frames and media-time progress. Add
+`?controlled` to measure an extension-controlled video; the default closed-root
+video measures Safari without controller ownership. Higher setter-acceptance
+probes remain separate. Frame counts, cadence gaps, readiness, errors and actual
+rate readback must be inspected together; simulator results do not establish
+physical-device or streaming-site performance.
+
 ## Inline control fit
 
 On iPhone/iPad, inline controls use two separate 44px targets for speed and

@@ -216,11 +216,13 @@ const mobileHtml = `<!doctype html>
   </body>
 </html>`;
 
-// A visible closed-root video measures Safari itself without extension rate guards.
+// Compare a closed-root native baseline with an explicitly controlled visible video.
 const rateProbeHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Native rate probe</title></head><body style="font:16px system-ui;margin:16px">
 <h1>Native playback rate probe</h1><div id="native-player"></div><button id="start-probe" style="min-height:44px;font:inherit">Start rate probe</button><p id="rate-results" role="status" aria-live="polite">Rate probe ready</p>
 <script>
-const root = document.querySelector('#native-player').attachShadow({mode:'closed'});
+const controlled = new URLSearchParams(location.search).has('controlled');
+const host = document.querySelector('#native-player');
+const root = controlled ? host : host.attachShadow({mode:'closed'});
 const video = document.createElement('video');
 video.src = '/probe.mp4'; video.muted = true; video.playsInline = true; video.controls = true; video.preload = 'auto'; video.style.cssText = 'width:100%;max-height:180px'; root.append(video);
 const status = document.querySelector('#rate-results');
@@ -252,30 +254,40 @@ button.addEventListener('click', async () => {
     // Establish media activation synchronously in this real user gesture.
     const activation = video.play();
     await activation;
-    for (const requested of [1,16,32,64]) {
+    for (const requested of [1,2,2.5,3,4,16,32,64]) {
       video.pause(); video.loop = false;
       await seek(2);
-      try { video.playbackRate = requested; } catch(error) { results.push({requested,error:String(error)}); continue; }
+      try {
+        if (controlled) {
+          if (!video.vsc?.actionHandler) throw new Error('Extension controller unavailable');
+          video.vsc.actionHandler.setSpeed(video, requested, 'user');
+        } else video.playbackRate = requested;
+      } catch(error) { results.push({requested,error:String(error)}); continue; }
       await video.play();
       const firstFrame = await firstPresentedFrame();
       if (firstFrame === 'timedOut') { results.push({requested,readback:video.playbackRate,firstFrame,duration:video.duration,ended:video.ended,paused:video.paused,time:video.currentTime,error:video.error?.code || 0}); video.pause(); continue; }
       let presentedFrames = typeof video.requestVideoFrameCallback === 'function' ? 0 : null;
-      let frameToken, sampling = true;
-      const countPresented = () => { presentedFrames++; if (sampling) frameToken = video.requestVideoFrameCallback(countPresented); };
+      let frameToken, sampling = true, lastFrameClock = null, maxFrameGapMs = 0;
+      const countPresented = (clock) => {
+        presentedFrames++;
+        if (lastFrameClock !== null) maxFrameGapMs = Math.max(maxFrameGapMs, clock-lastFrameClock);
+        lastFrameClock = clock;
+        if (sampling) frameToken = video.requestVideoFrameCallback(countPresented);
+      };
       if (presentedFrames !== null) frameToken = video.requestVideoFrameCallback(countPresented);
       const startTime = video.currentTime, startClock = performance.now(), startFrames = frameCount();
-      await delay(400);
+      await delay(requested <= 4 ? 1500 : 400);
       sampling = false;
       if (frameToken !== undefined) video.cancelVideoFrameCallback?.(frameToken);
       const seconds = (performance.now() - startClock) / 1000;
       const endFrames = frameCount();
-      results.push({requested,readback:video.playbackRate,firstFrame,presentedFrames,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
+      results.push({requested,readback:video.playbackRate,firstFrame,presentedFrames,presentedFps:presentedFrames === null ? null : presentedFrames/seconds,maxFrameGapMs,extensionControlled:!!video.vsc,duration:video.duration,measuredTimeRate:(video.currentTime-startTime)/seconds,decodedFrames:startFrames === null || endFrames === null ? null : endFrames-startFrames,elapsed:seconds,time:video.currentTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0});
       video.pause();
       status.textContent = 'Rate probe results: ' + JSON.stringify({setterAcceptance,results});
     }
   } catch(error) { results.push({error:String(error)}); }
   finally { video.pause(); video.playbackRate = 1; button.disabled = false; }
-  window.__nativeRateResults = {setterAcceptance,results};
+  window.__nativeRateResults = {mode:controlled ? 'extension' : 'native-baseline',setterAcceptance,results};
   status.textContent = 'Rate probe complete: ' + JSON.stringify(window.__nativeRateResults);
 });
 </script></body></html>`;

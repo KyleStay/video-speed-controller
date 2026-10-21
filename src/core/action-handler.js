@@ -565,20 +565,26 @@ class ActionHandler {
       if (source !== 'external' && source !== 'init') {
         this.config.settings.lastSpeed = numericSpeed;
       }
+      if (mediaRateState) {
+        // A remembered preference can exceed this source's accepted rate.
+        // Keep its local authority without replacing the saved preference.
+        mediaRateState.acceptedSpeed = numericSpeed;
+        mediaRateState.speedPreference = this.config.settings.lastSpeed;
+      }
     } catch (error) {
       let restoredSpeed = previousSpeed;
       try {
         const actual = video.playbackRate;
-        if (
-          source !== 'external' &&
-          source !== 'init' &&
-          Number.isFinite(actual) &&
-          actual > 0 &&
-          actual !== previousPlaybackRate
-        ) {
-          // A custom site setter can mutate the media and then throw. Do not
-          // leave cooldown fighting a previous rate the media no longer has.
-          restoredSpeed = actual;
+        if (Number.isFinite(actual) && actual > 0 && actual !== previousPlaybackRate) {
+          // A custom setter can mutate then throw. Retain its local readback
+          // even during init, without replacing an existing saved preference.
+          if (source !== 'external' && source !== 'init') {
+            restoredSpeed = actual;
+          }
+          if (mediaRateState) {
+            mediaRateState.acceptedSpeed = actual;
+            mediaRateState.speedPreference = restoredSpeed;
+          }
         }
       } catch {
         // Preserve the last established authority when the page getter fails.
@@ -628,7 +634,7 @@ class ActionHandler {
     }
 
     // 6. Persist to storage only if rememberSpeed is enabled
-    if (source !== 'external' && this.config.settings.rememberSpeed) {
+    if (source !== 'external' && source !== 'init' && this.config.settings.rememberSpeed) {
       this.config.save({ lastSpeed: numericSpeed });
     }
 

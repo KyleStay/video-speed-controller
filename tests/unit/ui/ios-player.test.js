@@ -782,6 +782,31 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(video.playsInline).toBe(true);
   });
 
+  it('leaves native controls intact when a PiP return is refused by another custom player', () => {
+    const first = makeController();
+    const second = makeController();
+    first.player.attach();
+    second.player.attach();
+    first.player.open();
+    first.video.webkitPresentationMode = 'picture-in-picture';
+    first.video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+    expect(first.video.controls).toBe(true);
+    expect(first.player.active).toBe(false);
+    second.player.open();
+    const descriptor = Object.getOwnPropertyDescriptor(first.video, 'webkitEnterFullscreen');
+    first.video.webkitPresentationMode = 'inline';
+    first.video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+    expect(first.player.active).toBe(false);
+    expect(first.player.mediaPrepared).toBe(false);
+    expect(first.player.attributeObserver).toBeFalsy();
+    expect(first.video.controls).toBe(true);
+    expect(first.video.parentNode).toBe(first.parent);
+    expect(Object.getOwnPropertyDescriptor(first.video, 'webkitEnterFullscreen')).toEqual(
+      descriptor
+    );
+    expect(second.player.active).toBe(true);
+  });
+
   it('allows only one active owned player per document and restores the previous video', async () => {
     const first = makeController();
     const second = makeController();

@@ -457,6 +457,11 @@ class IOSPlayer {
     if (automatic && IOSPlayer.siteRelinquished.has(this.video)) {
       return false;
     }
+    const previous = IOSPlayer.activePlayers.get(this.doc);
+    // Refusing a background return must not acquire controls or attributes.
+    if (previous && previous !== this && automatic) {
+      return false;
+    }
     if (!automatic) {
       IOSPlayer.siteRelinquished.delete(this.video);
       this.inlineRelinquished = false;
@@ -468,11 +473,6 @@ class IOSPlayer {
         this.play();
       }
       return true;
-    }
-    const previous = IOSPlayer.activePlayers.get(this.doc);
-    // Background autoplay must not displace an already selected player.
-    if (previous && previous !== this && automatic) {
-      return false;
     }
     previous?.close();
     this.scrollRestore?.cancel();

@@ -1465,6 +1465,93 @@ describe('ActionHandler', () => {
       }
     });
 
+    it.each(['synchronous', 'deferred'])(
+      'retains a source-specific initialization clamp without retrying or saving it (%s events)',
+      (timing) => {
+        vi.useFakeTimers();
+        const { video, actionHandler, config, save } = setup();
+        config.settings.lastSpeed = 8;
+        const eventManager = new window.VSC.EventManager(config, actionHandler);
+        actionHandler.eventManager = eventManager;
+        const forward = (event) => eventManager.handleRateChange(event);
+        video.addEventListener('ratechange', forward);
+        let writes = 0;
+        const handler = vi
+          .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+          .mockImplementation((media, requested) => {
+            if (++writes > 4) {
+              throw new Error('Recursive rate restoration');
+            }
+            media.playbackRate = media === video ? 2 : requested;
+            const dispatch = () => media.dispatchEvent(new Event('ratechange'));
+            if (timing === 'synchronous') {
+              dispatch();
+            } else {
+              setTimeout(dispatch, 0);
+            }
+          });
+        try {
+          expect(actionHandler.setSpeed(video, 8, 'init')).toBe(true);
+          vi.advanceTimersByTime(10);
+          expect(handler).toHaveBeenCalledTimes(1);
+          expect(video.playbackRate).toBe(2);
+          expect(config.settings.lastSpeed).toBe(8);
+          expect(save).not.toHaveBeenCalled();
+          expect(video.vsc.speedIndicator.textContent).toBe('2.00');
+          // An unrelated media element must keep its own requested authority.
+          const other = createTestVideoWithController(config, actionHandler);
+          expect(actionHandler.setSpeed(other, 8, 'init')).toBe(true);
+          expect(eventManager.getMediaRateState(video).acceptedSpeed).toBe(2);
+          expect(eventManager.getMediaRateState(other).acceptedSpeed).toBe(8);
+          expect(eventManager.getMediaRateState(other)).not.toBe(
+            eventManager.getMediaRateState(video)
+          );
+          other.vsc.remove();
+        } finally {
+          video.removeEventListener('ratechange', forward);
+          eventManager.cleanup();
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it('retains local initialization readback when a site mutates the rate and then throws', () => {
+      const { video, actionHandler, config, save } = setup();
+      config.settings.lastSpeed = 8;
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media) => {
+          media.playbackRate = 2;
+          throw new Error('Partial write');
+        });
+      try {
+        expect(actionHandler.setSpeed(video, 8, 'init')).toBe(false);
+        eventManager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(config.settings.lastSpeed).toBe(8);
+        expect(video.playbackRate).toBe(2);
+        expect(save).not.toHaveBeenCalled();
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
+    it('does not establish initialization authority when no user preference exists', () => {
+      const { video, actionHandler, config, save } = setup();
+      config.settings.lastSpeed = null;
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      try {
+        expect(actionHandler.setSpeed(video, 1.5, 'init')).toBe(true);
+        expect(config.settings.lastSpeed).toBeNull();
+        expect(save).not.toHaveBeenCalled();
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
     it('handles a null rejection and retains actual authority after a partial site write', () => {
       const { video, actionHandler, config, save } = setup();
       const handler = vi

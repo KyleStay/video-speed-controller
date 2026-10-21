@@ -1,8 +1,31 @@
 # StayFast Video — iOS TestFlight
 
-Release packet updated October 19, 2026. Target: iPhone and iPad on iOS/iPadOS
+Release packet updated October 21, 2026. Target: iPhone and iPad on iOS/iPadOS
 18.4+. This packet distinguishes local artifacts, Apple upload/processing, and
 tester availability; a successful build alone does not complete the latter two.
+
+## Current release preparation — October 21, 2026
+
+The next iOS candidate is **0.11.4 (10)**, combining the Safari/player work with
+startup-order and suspended-tab settings recovery. Initialization now retains a
+source's accepted speed without retrying an unsupported remembered rate or
+rewriting the saved preference. A refused PiP return leaves native controls intact.
+Unchanged native playback rates are no longer reassigned; this removes avoidable
+writes without claiming smoother decoding above 2×.
+
+App Store Connect inspection confirmed that builds 4–9 processed successfully but
+were not assigned to Personal. Build 9 was assigned on October 21, and Apple now
+records it installed. The new **Personal Auto** internal group contains the same
+two existing testers and is verified as **Automatic for Xcode Builds**. The
+original Personal group and its history remain. Future eligible Xcode uploads
+are assigned automatically after processing; Xcode Cloud builds still need manual
+assignment. Apple locks this choice when a group is created.
+
+Build 10 must be archived from the reviewed, merged source. Record its source SHA,
+resource hashes, signing/export checks, upload outcome and actual Testing status
+in the local release ledger under `build/safari/testflight/0.11.4-build10/`.
+An accepted upload alone does not prove tester availability. Never re-upload
+accepted builds 1–9. The evidence below is historical and does not verify build 10.
 
 ## Delivery status — October 19, 2026
 
