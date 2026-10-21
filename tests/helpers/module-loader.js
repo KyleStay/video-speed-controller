@@ -51,6 +51,7 @@ export async function loadCoreModules() {
   await import('../../src/ui/ios-player-frames.js');
   await import('../../src/ui/ios-player-scrubber.js');
   await import('../../src/ui/ios-player-gestures.js');
+  await import('../../src/ui/ios-player-fullscreen.js');
   await import('../../src/ui/ios-player.js');
   await import('../../src/ui/vsc-controller-element.js');
 

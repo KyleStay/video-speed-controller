@@ -47,6 +47,13 @@ export function validateRateProbeReport(report) {
   const finite = (value) => typeof value === 'number' && Number.isFinite(value);
   const nonnegative = (value) => finite(value) && value >= 0;
   const modes = ['native-baseline', 'extension'];
+  const presentation = report?.presentation === undefined ? 'inline' : report.presentation;
+  if (
+    !['inline', 'owned'].includes(presentation) ||
+    (presentation === 'owned' && report?.mode !== 'extension')
+  ) {
+    failures.push('Invalid probe presentation or owned player without extension control');
+  }
   if (!report || !modes.includes(report.mode) || !Array.isArray(report.results)) {
     failures.push('Missing probe mode or results');
   }
@@ -106,6 +113,20 @@ export function validateRateProbeReport(report) {
         item.readyState > 4
       ) {
         errors.push('Insufficient headroom, invalid playback state, or wrong controller ownership');
+      }
+      if (
+        presentation === 'owned' &&
+        [
+          'ownedPresentation',
+          'originalIdentityAtStart',
+          'originalIdentityAtEnd',
+          'originalSourceAtStart',
+          'originalSourceAtEnd',
+        ].some((key) => item[key] !== true)
+      ) {
+        errors.push(
+          'Owned presentation closed or original media identity/source was not preserved'
+        );
       }
       if (
         !item.events ||

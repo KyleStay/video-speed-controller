@@ -68,7 +68,15 @@ final class SafariQATests: XCTestCase {
         // Restart Settings: a detail page retained across ad hoc app replacement
         // can refer to the old plugin and show a disabled, blank extension.
         let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.terminate()
         settings.launch()
+        // Settings restores its navigation stack across launches. Return through
+        // observed back controls before looking for the root Apps row.
+        for _ in 0..<6 {
+            let back = settings.buttons["BackButton"]
+            if !back.exists { break }
+            back.tap()
+        }
         for _ in 0..<5 {
             if settings.buttons["Apps"].isHittable { break }
             settings.swipeUp()
@@ -79,6 +87,11 @@ final class SafariQATests: XCTestCase {
             settings.swipeUp()
         }
         settings.buttons["Safari"].tap()
+        if !settings.navigationBars["Safari"].waitForExistence(timeout: 5),
+           settings.navigationBars["Apps"].exists {
+            settings.buttons["Safari"].tap()
+        }
+        XCTAssertTrue(settings.navigationBars["Safari"].waitForExistence(timeout: 10))
         let extensions = settings.cells["WEB_EXTENSIONS"]
         for _ in 0..<4 {
             if extensions.isHittable { break }
@@ -108,6 +121,59 @@ final class SafariQATests: XCTestCase {
         settings.cells["1"].tap()
         XCTAssertTrue(settings.cells["1"].isSelected)
         capture(settings, "all-websites-allowed")
+    }
+
+    func testTouchDelivery() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        let probe = safari.buttons["Touch delivery probe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 15))
+        probe.tap(withNumberOfTaps: 2, numberOfTouches: 1)
+        let count = safari.staticTexts["Touch deliveries: 2"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        capture(safari, "native-double-tap-delivery")
+    }
+
+    func testTouchSeekAndLock() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
+        safari.buttons["Play test video"].tap()
+        waitForStatus(safari, ["ready: 4", "paused: false", "owner active: false"])
+        safari.buttons["Pause test video"].tap()
+        waitForStatus(safari, ["paused: true"])
+        safari.buttons["Open video fullscreen"].tap()
+        waitForStatus(safari, ["owner active: true", "native fullscreen: false", "paused: true"])
+        func position() -> Double {
+            let value = waitForStatus(safari, ["owner active: true"]).label
+            let parts = value.components(separatedBy: "; time: ")
+            return parts.count > 1 ? Double(parts[1].components(separatedBy: ";")[0]) ?? -1 : -1
+        }
+        safari.buttons["Forward 10 seconds"].tap()
+        let before = position()
+        XCTAssertGreaterThanOrEqual(before, 9)
+        let stage = safari.otherElements["Video display"]
+        XCTAssertTrue(stage.waitForExistence(timeout: 10))
+        stage.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.45)).doubleTap()
+        waitForStatus(safari, ["seek feedback: −", "paused: true", "owner active: true"])
+        XCTAssertLessThan(position(), before - 5)
+        capture(safari, "owned-touch-seek-feedback")
+        safari.switches["Lock playback controls"].tap()
+        waitForStatus(safari, ["controls locked: true", "paused: true"])
+        let lockedPosition = position()
+        stage.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.45)).doubleTap()
+        XCTAssertEqual(position(), lockedPosition, accuracy: 0.15)
+        XCTAssertFalse(safari.buttons["Forward 10 seconds"].exists)
+        XCTAssertFalse(safari.buttons["Close StayFast video player"].exists)
+        XCTAssertGreaterThanOrEqual(safari.buttons["Unlock playback controls"].frame.height, 44)
+        capture(safari, "locked-touch-does-not-seek")
+        safari.buttons["Unlock playback controls"].tap()
+        waitForStatus(safari, ["controls locked: false", "paused: true"])
+        safari.buttons["Forward 10 seconds"].tap()
+        waitForStatus(safari, ["seek feedback: +", "owner active: true"])
+        safari.buttons["Close StayFast video player"].tap()
+        waitForStatus(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "native controls: true"])
+        capture(safari, "enhanced-controls-inline-return")
     }
 
     /// Diagnostic, not a universal speed guarantee. Open /rate-probe.html first.
@@ -143,7 +209,7 @@ final class SafariQATests: XCTestCase {
         safari.activate()
         XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
         // Normal playback remains inline; the primary fullscreen target must
-        // enter the native video presentation without an owned-player portal.
+        // open StayFast with its controls; Apple player remains an explicit choice.
         safari.buttons["Play test video"].tap()
         waitForStatus(safari, ["ready: 4; errors: 0;", "native fullscreen: false", "owner active: false", "owned hosts: 0", "native controls: true"])
         XCTAssertFalse(safari.buttons["Close StayFast video player"].exists)
@@ -188,6 +254,28 @@ final class SafariQATests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fullscreen.frame.height, 44)
         XCTAssertTrue(fullscreen.isEnabled)
         fullscreen.tap()
+        waitForStatus(safari, ["native fullscreen: false", "owner active: true", "owned hosts: 1", "source preserved: true", "original identity: true"])
+        XCTAssertTrue(safari.buttons["Close StayFast video player"].exists)
+        capture(safari, "primary-owned-fullscreen")
+        let lock = safari.switches["Lock playback controls"]
+        if !lock.isHittable {
+            safari.otherElements["Video display"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        }
+        XCTAssertTrue(lock.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(lock.frame.height, 44)
+        lock.tap()
+        waitForStatus(safari, ["controls locked: true", "paused: false", "Playback rate: 1.5;"])
+        let unlock = safari.buttons["Unlock playback controls"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(unlock.frame.height, 44)
+        XCTAssertFalse(safari.buttons["Close StayFast video player"].exists)
+        capture(safari, "owned-controls-locked")
+        unlock.tap()
+        waitForStatus(safari, ["controls locked: false", "paused: false", "owner active: true"])
+        safari.buttons["More video options"].tap()
+        let apple = safari.buttons["Open Apple fullscreen player"]
+        XCTAssertTrue(apple.waitForExistence(timeout: 10))
+        apple.tap()
         waitForStatus(safari, ["native fullscreen: true", "Playback rate: 1.5; controllers: 1;"])
         XCTAssertEqual(pills.count, 0)
         capture(safari, "native-fullscreen")
@@ -215,4 +303,59 @@ final class SafariQATests: XCTestCase {
         XCTAssertTrue(pills.firstMatch.isHittable)
         capture(safari, "app-switch-restored")
     }
+    /// Open a fresh /mobile.html?mp4 fixture without the owned diagnostic mirror.
+    func testPlayerAppearance() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
+        safari.buttons["Play test video"].tap()
+        waitForStatus(safari, ["ready: 4", "paused: false", "errors: 0", "native fullscreen: false"])
+        safari.buttons["Pause test video"].tap()
+        waitForStatus(safari, ["paused: true", "errors: 0"])
+        safari.buttons["Open video fullscreen"].tap()
+
+        let done = safari.buttons["Close StayFast video player"]
+        let lock = safari.switches["Lock playback controls"]
+        let speed = safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Playback speed'")).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        for control in [done, lock] {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        }
+        // WebKit's native select AX proxy can be 42px. The owned-runtime
+        // diagnostics separately require its actual DOM target to be at least 44px.
+        XCTAssertTrue(speed.isHittable)
+        XCTAssertTrue(safari.buttons["Play video"].isHittable)
+        capture(safari, "clean-owned-player-portrait")
+
+        lock.tap()
+        let unlock = safari.buttons["Unlock playback controls"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 10))
+        XCTAssertTrue(unlock.isHittable)
+        XCTAssertGreaterThanOrEqual(unlock.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(unlock.frame.height, 44)
+        XCTAssertFalse(done.exists)
+        XCTAssertFalse(lock.exists)
+        XCTAssertFalse(speed.exists)
+        for label in ["Play video", "Rewind 10 seconds", "Forward 10 seconds", "More video options"] {
+            XCTAssertFalse(safari.buttons[label].exists)
+        }
+        XCTAssertFalse(safari.sliders["Seek video"].exists)
+        capture(safari, "clean-owned-player-locked")
+
+        unlock.tap()
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertTrue(done.isHittable)
+        XCTAssertTrue(lock.isHittable)
+        XCTAssertTrue(speed.isHittable)
+        done.tap()
+        waitForStatus(safari, ["controllers: 1", "ready: 4", "paused: true", "errors: 0", "native fullscreen: false"])
+        XCTAssertFalse(done.exists)
+        XCTAssertTrue(safari.buttons["Open video fullscreen"].isHittable)
+        capture(safari, "clean-owned-player-inline-return")
+    }
+
 }

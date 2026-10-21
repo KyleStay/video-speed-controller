@@ -9,9 +9,10 @@ const iphoneUA =
 
 async function tapPlayer(page, ref, context = page) {
   if (
-    await context.evaluate(() =>
+    ref !== 'unlock' &&
+    (await context.evaluate(() =>
       document.querySelector('vsc-ios-player')?.hasAttribute('data-controls-hidden')
-    )
+    ))
   ) {
     await page.touchscreen.tap(20, 260);
   }
@@ -29,16 +30,19 @@ async function tapPlayer(page, ref, context = page) {
   ) {
     await tapPlayer(page, 'more', context);
   }
-  await context.waitForFunction(() => {
-    const host = document.querySelector('vsc-ios-player');
-    const play = host?.shadowRoot?.querySelector('[data-ref="play"]');
-    return (
-      host &&
-      !host.hasAttribute('data-controls-hidden') &&
-      play &&
-      getComputedStyle(play).visibility !== 'hidden'
-    );
-  });
+  await context.waitForFunction(
+    (name) => {
+      const host = document.querySelector('vsc-ios-player');
+      const target = host?.shadowRoot?.querySelector(`[data-ref="${name}"]`);
+      return (
+        target?.getClientRects().length &&
+        (name === 'unlock' || !host.hasAttribute('data-controls-hidden')) &&
+        getComputedStyle(target).visibility !== 'hidden'
+      );
+    },
+    {},
+    ref
+  );
   const bounds = await context.evaluate((name) => {
     const target = document
       .querySelector('vsc-ios-player')
@@ -182,6 +186,25 @@ async function painted(page) {
   );
 }
 
+async function waitForExpandedFrame(frame) {
+  await frame.waitForFunction(() => {
+    const element = window.frameElement;
+    if (!element || element.style.position !== 'fixed') {
+      return false;
+    }
+    const bounds = element.getBoundingClientRect();
+    return (
+      Math.abs(bounds.width - parent.innerWidth) < 1 &&
+      Math.abs(bounds.height - parent.innerHeight) < 1 &&
+      Math.abs(innerWidth - bounds.width) < 1 &&
+      Math.abs(innerHeight - bounds.height) < 1
+    );
+  });
+  // Style assignment happens before the child's resize/layout delivery. Settle
+  // both documents before mapping a genuine touch to an owned control.
+  await painted(frame);
+}
+
 async function scrollPosition(page) {
   return page.evaluate(() => {
     const container = document.querySelector('#scroll-container, #parent-scroll');
@@ -213,14 +236,49 @@ async function assertScrollPosition(page, expected, label) {
 async function exitBrowserFullscreen(page) {
   await page.touchscreen.tap(318, 796);
   try {
-    await page.waitForFunction(() => !document.fullscreenElement, { timeout: 1500 });
+    await page.waitForFunction(() => !document.fullscreenElement, { timeout: 1500, polling: 100 });
   } catch {
-    console.log(
-      '   Genuine browser fullscreen entry verified; using exitFullscreen for cleanup after the native exit tap was unavailable.'
-    );
-    await page.evaluate(() => document.exitFullscreen());
-    await page.waitForFunction(() => !document.fullscreenElement);
+    const state = await page.evaluate(() => {
+      const element = document.fullscreenElement;
+      let frame;
+      if (element?.tagName === 'IFRAME') {
+        try {
+          const child = element.contentDocument;
+          frame = { url: child?.URL, fullscreen: child?.fullscreenElement?.tagName || null };
+        } catch {
+          frame = { inaccessible: true };
+        }
+      }
+      return {
+        url: document.URL,
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+        fullscreen: element
+          ? {
+              tag: element.tagName,
+              id: element.id,
+              originalMedia: element === window.__ownedOriginal,
+            }
+          : null,
+        frame,
+      };
+    });
+    console.log(`   Browser fullscreen exit cleanup state: ${JSON.stringify(state)}`);
+    if (state.fullscreen) {
+      console.log(
+        '   Genuine browser fullscreen entry verified; using exitFullscreen for cleanup after the native exit tap was unavailable.'
+      );
+    }
+    // A timeout can outlive native exit or a suspended animation-frame poll.
+    // Recheck the current document in the same evaluation as the request;
+    // preserve any rejection when a still-fullscreen document refuses to exit.
+    await page.evaluate(() => {
+      if (document.fullscreenElement) {
+        return document.exitFullscreen();
+      }
+    });
   }
+  await page.waitForFunction(() => !document.fullscreenElement, { polling: 100 });
 }
 
 export default async function runIOSPlayer({ launch = launchChromeWithExtension } = {}) {
@@ -643,6 +701,239 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       await page.waitForFunction((before) => window.__ownedOriginal.muted !== before, {}, muted);
     });
     await check(
+      'genuine edge touch double taps seek once with clamped feedback; center taps never seek',
+      async () => {
+        if (!(await page.evaluate(() => window.__ownedOriginal.paused))) {
+          await tapPlayer(page, 'play');
+        }
+        await page.waitForFunction(() => window.__ownedOriginal.paused);
+        const stageHandle = await page.evaluateHandle(
+          () => window.__ownedOriginal.vsc.iosPlayer.ui.stage
+        );
+        let stage;
+        try {
+          stage = await stageHandle.asElement()?.boundingBox();
+        } finally {
+          await stageHandle.dispose();
+        }
+        assert.exists(stage, 'The original player stage must have browser-mapped touch bounds');
+        // Keep both taps above the transport row so HUD visibility changes cannot
+        // turn the second tap into a button press. Both calls send genuine input.
+        const doubleTap = async (fraction) => {
+          const x = stage.x + stage.width * fraction;
+          const y = stage.y + stage.height * 0.25;
+          await page.touchscreen.tap(x, y);
+          await page.touchscreen.tap(x, y);
+        };
+        const duration = await page.evaluate(() => window.__ownedOriginal.duration);
+        for (const [side, start, expected, feedback] of [
+          [0.15, 30, 20, '−10s'],
+          [0.85, 30, 40, '+10s'],
+          [0.15, 2, 0, '−2s'],
+          [0.85, duration - 3, duration, '+3s'],
+        ]) {
+          await page.waitForFunction(
+            () => window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden
+          );
+          await page.evaluate((time) => {
+            window.__ownedOriginal.currentTime = time;
+          }, start);
+          await page.waitForFunction(
+            (time) => Math.abs(window.__ownedOriginal.currentTime - time) < 0.05,
+            {},
+            start
+          );
+          await doubleTap(side);
+          await page.waitForFunction(
+            (time, text) => {
+              const video = window.__ownedOriginal;
+              const player = video.vsc.iosPlayer;
+              return (
+                video.paused &&
+                Math.abs(video.currentTime - time) < 0.05 &&
+                !player.ui.refs.seekFeedback.hidden &&
+                player.ui.refs.seekFeedback.textContent === text
+              );
+            },
+            {},
+            expected,
+            feedback
+          );
+          // Let any synthesized click/dblclick finish before judging the result.
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          const state = await page.evaluate(() => ({
+            time: window.__ownedOriginal.currentTime,
+            paused: window.__ownedOriginal.paused,
+            feedback: window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.textContent,
+          }));
+          assert.true(
+            state.paused && Math.abs(state.time - expected) < 0.05 && state.feedback === feedback,
+            `A touch pair must seek exactly once: ${JSON.stringify({ start, expected, feedback, state })}`
+          );
+        }
+        await page.waitForFunction(
+          () => window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden
+        );
+        await page.evaluate(() => {
+          window.__ownedOriginal.currentTime = 30;
+        });
+        await doubleTap(0.5);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        assert.true(
+          await page.evaluate(
+            () =>
+              window.__ownedOriginal.paused &&
+              Math.abs(window.__ownedOriginal.currentTime - 30) < 0.05 &&
+              window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden
+          ),
+          'A genuine center touch pair must leave paused playback and seek feedback unchanged'
+        );
+      }
+    );
+    await check('seek feedback shows actual clamped skips, accumulates and expires', async () => {
+      await page.evaluate(() => {
+        window.__ownedOriginal.currentTime = 2;
+      });
+      await tapPlayer(page, 'back');
+      await page.waitForFunction(() => {
+        const player = window.__ownedOriginal.vsc.iosPlayer;
+        return (
+          window.__ownedOriginal.currentTime < 0.1 &&
+          !player.ui.refs.seekFeedback.hidden &&
+          player.ui.refs.seekFeedback.textContent === '−2s' &&
+          player.ui.refs.seekFeedback.dataset.side === 'left'
+        );
+      });
+      await tapPlayer(page, 'forward');
+      await tapPlayer(page, 'forward');
+      await page.waitForFunction(() => {
+        const feedback = window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback;
+        return (
+          Math.abs(window.__ownedOriginal.currentTime - 20) < 0.1 &&
+          !feedback.hidden &&
+          feedback.textContent === '+20s' &&
+          feedback.dataset.side === 'right'
+        );
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      assert.equal(
+        await page.evaluate(() => window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden),
+        false,
+        'Accumulated seek feedback must remain visible during its 800ms window'
+      );
+      await page.waitForFunction(
+        () => window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden,
+        { timeout: 1000 }
+      );
+      await page.evaluate(() => {
+        window.__ownedOriginal.currentTime = window.__ownedOriginal.duration - 3;
+      });
+      await tapPlayer(page, 'forward');
+      await page.waitForFunction(() => {
+        const feedback = window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback;
+        return (
+          Math.abs(window.__ownedOriginal.currentTime - window.__ownedOriginal.duration) < 0.1 &&
+          !feedback.hidden &&
+          feedback.textContent === '+3s'
+        );
+      });
+      await page.waitForFunction(
+        () => window.__ownedOriginal.vsc.iosPlayer.ui.refs.seekFeedback.hidden,
+        { timeout: 2000 }
+      );
+      await page.evaluate(() => {
+        window.__ownedOriginal.currentTime = 30;
+      });
+    });
+    await check(
+      'Lock blocks transport, stage taps and pinches; standalone Unlock and Escape restore controls',
+      async () => {
+        const before = await page.evaluate(() => {
+          const player = window.__ownedOriginal.vsc.iosPlayer;
+          const { x, y, width, height } = player.ui.refs.play.getBoundingClientRect();
+          return {
+            time: window.__ownedOriginal.currentTime,
+            paused: window.__ownedOriginal.paused,
+            rate: window.__ownedOriginal.playbackRate,
+            fit: player.fit,
+            playX: x + width / 2,
+            playY: y + height / 2,
+          };
+        });
+        assert.equal(
+          await page.evaluate(() =>
+            window.__ownedOriginal.vsc.iosPlayer.ui.refs.lock.getAttribute('aria-label')
+          ),
+          'Lock playback controls'
+        );
+        await tapPlayer(page, 'lock');
+        await page.waitForFunction(() => {
+          const player = window.__ownedOriginal.vsc.iosPlayer;
+          return (
+            player.controlsLocked &&
+            player.ui.shadow.querySelector('.hud').inert &&
+            player.ui.host.hasAttribute('data-controls-locked') &&
+            player.ui.refs.unlock.getAttribute('aria-label') === 'Unlock playback controls' &&
+            !player.ui.refs.unlock.hidden
+          );
+        });
+        await page.touchscreen.tap(before.playX, before.playY);
+        await page.touchscreen.tap(20, 260);
+        const session = await page.createCDPSession();
+        try {
+          const points = (left, right) => [
+            { x: left, y: 260, radiusX: 1, radiusY: 1, force: 1, id: 1 },
+            { x: right, y: 260, radiusX: 1, radiusY: 1, force: 1, id: 2 },
+          ];
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: points(160, 230),
+          });
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: points(100, 290),
+          });
+          await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        } finally {
+          await session.detach();
+        }
+        const locked = await page.evaluate(() => {
+          const player = window.__ownedOriginal.vsc.iosPlayer;
+          return {
+            time: window.__ownedOriginal.currentTime,
+            paused: window.__ownedOriginal.paused,
+            rate: window.__ownedOriginal.playbackRate,
+            fit: player.fit,
+            locked: player.controlsLocked,
+            hidden: player.ui.host.hasAttribute('data-controls-hidden'),
+          };
+        });
+        assert.true(
+          locked.locked &&
+            locked.hidden &&
+            locked.paused === before.paused &&
+            Math.abs(locked.time - before.time) < 0.1 &&
+            locked.rate === before.rate &&
+            locked.fit === before.fit,
+          `Locked touches must preserve playback: ${JSON.stringify({ before, locked })}`
+        );
+        await tapPlayer(page, 'unlock');
+        await page.waitForFunction(
+          () =>
+            !window.__ownedOriginal.vsc.iosPlayer.controlsLocked &&
+            !window.__ownedOriginal.vsc.iosPlayer.ui.shadow.querySelector('.hud').inert
+        );
+        await tapPlayer(page, 'lock');
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(
+          () =>
+            window.__ownedOriginal.vsc.iosPlayer.active &&
+            !window.__ownedOriginal.vsc.iosPlayer.controlsLocked &&
+            !window.__ownedOriginal.vsc.iosPlayer.ui.host.hasAttribute('data-controls-hidden')
+        );
+      }
+    );
+    await check(
       'genuine distance-based scrubbing has four precise levels without vertical jumps',
       async () => {
         const session = await page.createCDPSession();
@@ -970,13 +1261,37 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       }
     );
     await check(
-      'direct fullscreen invokes the saved native API without opening custom playback',
+      'primary fullscreen opens owned playback and Apple player remains an explicit More choice',
       async () => {
         await tapPlayer(page, 'done');
         const before = await page.evaluate(
           () => window.__stayfastOwnedFixture.nativeFullscreenCalls
         );
         await tapInline(page, '.inline-fullscreen');
+        await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.active);
+        assert.true(
+          await page.evaluate(() => {
+            const video = window.__ownedOriginal;
+            return (
+              document.querySelector('vsc-ios-player video') === video &&
+              video.currentSrc === window.__stayfastOwnedFixture.source &&
+              video.vsc === window.__ownedController &&
+              !video.vsc.iosPlayer.nativeSession
+            );
+          }),
+          'Primary fullscreen must retain owned controls, original media and source'
+        );
+        assert.equal(
+          await page.evaluate(() => window.__stayfastOwnedFixture.nativeFullscreenCalls),
+          before
+        );
+        assert.equal(
+          await page.evaluate(() =>
+            window.__ownedOriginal.vsc.iosPlayer.ui.refs.native.getAttribute('aria-label')
+          ),
+          'Open Apple fullscreen player'
+        );
+        await tapPlayer(page, 'native');
         await page.waitForFunction(
           (count) => window.__stayfastOwnedFixture.nativeFullscreenCalls === count + 1,
           {},
@@ -1216,35 +1531,57 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       }
     );
     await check(
-      'direct entry uses actual browser video fullscreen without an owned intermediate',
+      'primary fullscreen retains owned controls in actual browser fullscreen and the header toggles it',
       async () => {
         await navigate('&standard-fullscreen');
         await tapInline(page, '.inline-fullscreen');
-        await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
-        assert.equal(
-          await page.evaluate(() => document.querySelectorAll('vsc-ios-player').length),
-          0
+        await page.waitForFunction(() => {
+          const player = window.__ownedOriginal.vsc.iosPlayer;
+          return (
+            player.active && document.fullscreenElement === player.ui.host && !player.nativeSession
+          );
+        });
+        assert.true(
+          await page.evaluate(
+            () =>
+              document.querySelector('vsc-ios-player video') === window.__ownedOriginal &&
+              window.__ownedOriginal.currentSrc === window.__stayfastOwnedFixture.source
+          )
         );
         await page.screenshot({ path: resolve('tests/e2e/screenshots/ios-direct-fullscreen.png') });
-        // Observed native Chrome fullscreen-exit control in the390x844 viewport.
-        await page.touchscreen.tap(318, 796);
-        try {
-          await page.waitForFunction(() => !document.fullscreenElement, { timeout: 1500 });
-        } catch {
-          console.log(
-            '   Chrome native fullscreen entry verified; using exitFullscreen solely for cleanup after the native exit tap was unavailable.'
-          );
-          await page.evaluate(() => document.exitFullscreen());
-          await page.waitForFunction(() => !document.fullscreenElement);
-        }
+        await tapPlayer(page, 'fullscreen');
+        await page.waitForFunction(
+          () => !document.fullscreenElement && window.__ownedOriginal.vsc.iosPlayer.active
+        );
+        await tapPlayer(page, 'fullscreen');
+        await page.waitForFunction(
+          () => document.fullscreenElement === document.querySelector('vsc-ios-player')
+        );
+        await tapPlayer(page, 'done');
+        await page.waitForFunction(
+          () => !document.fullscreenElement && !document.querySelector('vsc-ios-player')
+        );
         assert.true(
           await page.evaluate(
             () =>
               window.__ownedOriginal.controls &&
               window.__ownedOriginal.parentNode === window.__stayfastOwnedFixture.parent &&
-              !window.__ownedOriginal.vsc.iosPlayer.active
+              !window.__ownedOriginal.vsc.iosPlayer.nativeSession
           )
         );
+      }
+    );
+    await check(
+      'More Apple player requests genuine original-video browser fullscreen',
+      async () => {
+        await openCustom(page);
+        await tapPlayer(page, 'native');
+        await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
+        assert.equal(
+          await page.evaluate(() => document.querySelectorAll('vsc-ios-player').length),
+          0
+        );
+        await exitBrowserFullscreen(page);
       }
     );
     const prepareScrolledFixture = async (mode, extra = '') => {
@@ -1297,23 +1634,24 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           );
         }
       );
-      await check(
-        `${mode} scroll survives genuine direct browser fullscreen and return`,
-        async () => {
-          await prepareScrolledFixture(mode, '&standard-fullscreen');
-          // Let controller geometry settle before capturing the transaction's baseline.
-          await painted(page);
-          const before = await scrollPosition(page);
-          await tapInline(page, '.inline-fullscreen');
-          await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
-          assert.equal(
-            await page.evaluate(() => document.querySelectorAll('vsc-ios-player').length),
-            0
-          );
-          await exitBrowserFullscreen(page);
-          await assertScrollPosition(page, before, `${mode} direct fullscreen return`);
-        }
-      );
+      await check(`${mode} scroll survives primary owned browser fullscreen and Done`, async () => {
+        await prepareScrolledFixture(mode, '&standard-fullscreen');
+        // Let controller geometry settle before capturing the transaction's baseline.
+        await painted(page);
+        const before = await scrollPosition(page);
+        await tapInline(page, '.inline-fullscreen');
+        await page.waitForFunction(
+          () =>
+            document.fullscreenElement === document.querySelector('vsc-ios-player') &&
+            window.__ownedOriginal.vsc.iosPlayer.active
+        );
+        assert.true(await page.evaluate(() => !window.__ownedOriginal.vsc.iosPlayer.nativeSession));
+        await tapPlayer(page, 'done');
+        await page.waitForFunction(
+          () => !document.fullscreenElement && !document.querySelector('vsc-ios-player')
+        );
+        await assertScrollPosition(page, before, `${mode} primary fullscreen Done`);
+      });
     }
     await check(
       'same-origin frame Done and Custom-to-native return preserve both documents and nested scroll positions',
@@ -1396,9 +1734,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         });
         await tapInline(page, '[aria-label="Open StayFast player"]', 'mobile-video', frame);
         await frame.waitForFunction(() => document.querySelector('video').vsc.iosPlayer.active);
-        await page.waitForFunction(
-          () => document.querySelector('iframe').style.position === 'fixed'
-        );
+        await waitForExpandedFrame(frame);
         if (!(await frame.evaluate(() => document.querySelector('video').paused))) {
           await tapPlayer(page, 'play', frame);
           await frame.waitForFunction(() => document.querySelector('video').paused);
@@ -1414,9 +1750,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           'Frame release must preserve original video identity'
         );
         await openCustom(page, 'mobile-video', frame);
-        await page.waitForFunction(
-          () => document.querySelector('iframe').style.position === 'fixed'
-        );
+        await waitForExpandedFrame(frame);
         if (!(await frame.evaluate(() => document.querySelector('video').paused))) {
           await tapPlayer(page, 'play', frame);
           await frame.waitForFunction(() => document.querySelector('video').paused);
@@ -1425,7 +1759,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           console.log(
             `   Active frame before native: ${JSON.stringify({ parent: await scrollPosition(page), child: await scrollPosition(frame), parentOverflow: await page.$eval('#parent-scroll', (node) => getComputedStyle(node).overflow) })}`
           );
-          await tapPlayer(page, 'fullscreen', frame);
+          await tapPlayer(page, 'native', frame);
           await frame.waitForFunction(() => document.fullscreenElement === window.__scrollOriginal);
           await page.waitForFunction(
             () => document.querySelector('iframe').style.position !== 'fixed'
@@ -1535,14 +1869,23 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       async () => {
         await navigate('&no-playsinline&standard-fullscreen');
         await tapInline(page, '.inline-fullscreen');
-        await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
-        assert.equal(
-          await page.evaluate(() => document.querySelectorAll('vsc-ios-player').length),
-          0
+        await page.waitForFunction(
+          () =>
+            window.__ownedOriginal.vsc.iosPlayer.active &&
+            !window.__ownedOriginal.vsc.iosPlayer.nativeSession
         );
+        await tapPlayer(page, 'done');
+        await page.waitForFunction(
+          () => !document.querySelector('vsc-ios-player') && !document.fullscreenElement
+        );
+        await page.tap('#play');
+        await assertPlayingInline('primary owned fullscreen Done return');
+        await openCustom(page);
+        await tapPlayer(page, 'native');
+        await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
         await exitBrowserFullscreen(page);
         await page.tap('#play');
-        await assertPlayingInline('native fullscreen return');
+        await assertPlayingInline('explicit Apple fullscreen return');
         await openCustom(page);
         if (!(await page.evaluate(() => window.__ownedOriginal.paused))) {
           await tapPlayer(page, 'play');

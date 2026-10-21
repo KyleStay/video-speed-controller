@@ -107,6 +107,7 @@ const mobileHtml = `<!doctype html>
           '; abort: ' + window.VSC?.videoSpeedConfig?.settings?._abort +
           '; lastSpeed: ' + window.VSC?.videoSpeedConfig?.settings?.lastSpeed;
         if (ownedDiagnostics) {
+          text += '; touch trace: ' + JSON.stringify(window.__stayfastTouchTrace || []);
           const speedSelect = document.querySelector('vsc-ios-player')?.shadowRoot?.querySelector('[aria-label="Playback speed"]');
           const inlineHost = video.vsc?.div;
           const inlinePanel = inlineHost?.shadowRoot?.querySelector('#controls');
@@ -134,7 +135,9 @@ const mobileHtml = `<!doctype html>
             '; video top: ' + video.getBoundingClientRect().top.toFixed(1) +
             '; saved scroll: ' + (baseline ? baseline.pageX + ',' + baseline.pageY : 'none') +
             '; saved nested: ' + (baseline ? baseline.nestedX + ',' + baseline.nestedY : 'none') +
-            '; saved video top: ' + (baseline ? baseline.videoTop.toFixed(1) : 'none');
+            '; saved video top: ' + (baseline ? baseline.videoTop.toFixed(1) : 'none') +
+            '; saved entry: ' + (baseline?.entry?.sequence || 0) +
+            '; saved entry kind: ' + (baseline?.entry?.kind || 'none');
           text += '; original identity: ' + (document.getElementById('mobile-video') === video) +
             '; currentSrc: ' + (video.currentSrc || video.src) +
             '; source preserved: ' + ((video.currentSrc || video.src) === window.__stayfastOwnedFixture.source) +
@@ -142,7 +145,11 @@ const mobileHtml = `<!doctype html>
             '; muted: ' + video.muted + '; native controls: ' + video.controls +
             '; inline restored: ' + (video.parentNode === window.__stayfastOwnedFixture.parent) +
             '; owned hosts: ' + document.querySelectorAll('vsc-ios-player').length +
-            '; controls hidden: ' + !!document.querySelector('vsc-ios-player')?.hasAttribute('data-controls-hidden');
+            '; controls hidden: ' + !!document.querySelector('vsc-ios-player')?.hasAttribute('data-controls-hidden') +
+            '; controls locked: ' + !!video.vsc?.iosPlayer?.controlsLocked +
+            '; seek feedback: ' + (video.vsc?.iosPlayer?.ui?.refs.seekFeedback?.textContent || 'none') +
+            '; owned fullscreen: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.owns?.() +
+            '; fullscreen available: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.available?.();
           for (const host of document.querySelectorAll('vsc-ios-player')) {
             controllerObserver.observe(host, { attributes: true, attributeFilter: ['data-controls-hidden'] });
             const dialog = host.shadowRoot?.querySelector('dialog');
@@ -153,7 +160,7 @@ const mobileHtml = `<!doctype html>
               status.id = 'owned-player-status';
               status.setAttribute('role', 'status');
               status.style.cssText = 'position:absolute;top:64px;left:8px;right:8px;z-index:5;margin:0;padding:4px;color:#67e8f9;background:#000b;font:10px/1.2 monospace;overflow-wrap:anywhere;max-height:24dvh;overflow:hidden;pointer-events:none;';
-              dialog.append(status);
+              (host.shadowRoot.querySelector('.player') || dialog).append(status);
             }
             if (status.textContent !== text) status.textContent = text;
           }
@@ -165,15 +172,46 @@ const mobileHtml = `<!doctype html>
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
         const actions = document.createElement('div');
         actions.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483646;display:grid;gap:4px;';
-        const remember = () => {
+        const remember = (entry = null) => {
           const node = document.querySelector('#scroll-container');
           window.__stayfastScrollBaseline = {
             pageX: scrollX, pageY: scrollY,
             nestedX: node?.scrollLeft || 0, nestedY: node?.scrollTop || 0,
-            videoTop: video.getBoundingClientRect().top,
+            videoTop: video.getBoundingClientRect().top, entry,
           };
           updateStatus();
         };
+        window.__stayfastRememberScroll = remember;
+        if (ownedDiagnostics) {
+          let entrySequence = 0;
+          // XCTest can scroll a clipped target into view before delivering its tap.
+          // Capture the real transaction boundary before any owned-player action.
+          window.addEventListener('click', (event) => {
+            const owner = video.vsc?.iosPlayer;
+            if (!event.isTrusted || !owner || owner.active) return;
+            const path = event.composedPath();
+            const primary = video.vsc.div?.shadowRoot?.querySelector('.inline-fullscreen');
+            const custom = owner.button;
+            const kind = custom?.getAttribute('aria-label') === 'Open StayFast player' && path.includes(custom)
+              ? 'custom'
+              : primary?.getAttribute('aria-label') === 'Open video fullscreen' &&
+                primary.dataset.action === 'ownedFullscreen' && path.includes(primary)
+                ? 'primary' : null;
+            if (!kind) return;
+            const entry = { sequence: ++entrySequence, kind };
+            remember(entry);
+            try {
+              const frame = window.frameElement;
+              if (frame && parent !== window && frame.contentWindow === window &&
+                  frame.ownerDocument === parent.document && location.origin !== 'null' &&
+                  parent.location.origin === location.origin) {
+                parent.__stayfastRememberParentScroll?.(window, entry);
+              }
+            } catch {
+              // QA measurement never crosses an inaccessible parent boundary.
+            }
+          }, true);
+        }
         for (const label of ['Prepare scroll baseline', 'Remember scroll position']) {
           const button = document.createElement('button');
           button.type = 'button';
@@ -192,10 +230,31 @@ const mobileHtml = `<!doctype html>
         document.body.append(actions);
         addEventListener('scroll', updateStatus, true);
       }
+      if (ownedDiagnostics && new URLSearchParams(location.search).has('touchtrace')) {
+        window.__stayfastTouchTrace = [];
+        let touchTraceTimer;
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'lostpointercapture', 'touchstart', 'touchend']) {
+          window.addEventListener(type, (event) => {
+            const stage = video.vsc?.iosPlayer?.ui?.stage;
+            if (!stage) return;
+            const rect = stage.getBoundingClientRect();
+            const point = event.changedTouches?.[0] || event;
+            const entry = [type, event.pointerType || 'touch', Math.round((point.clientX - rect.left) / rect.width * 100), Math.round(performance.now()), event.target.tagName, event.composedPath().includes(stage)];
+            queueMicrotask(() => {
+              const gestures = video.vsc?.iosPlayer?.gestures;
+              entry.push(gestures?.points.size, !!gestures?.tap, gestures?.lastTap?.zone || '-');
+              window.__stayfastTouchTrace.push(entry);
+              window.__stayfastTouchTrace.splice(0, Math.max(0, window.__stayfastTouchTrace.length - 16));
+              clearTimeout(touchTraceTimer);
+              touchTraceTimer = setTimeout(updateStatus, 500);
+            });
+          }, true);
+        }
+      }
       for (const type of ['loadedmetadata', 'loadeddata', 'ratechange', 'playing', 'pause', 'timeupdate', 'error', 'webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged']) {
         video.addEventListener(type, updateStatus);
       }
-      new MutationObserver(updateStatus).observe(ownedDiagnostics ? document : document.querySelector('.player'), { childList: true, subtree: true });
+      new MutationObserver(updateStatus).observe(ownedDiagnostics ? document : document.querySelector('.player'), { childList: true, subtree: true, ...(ownedDiagnostics ? {attributes:true,attributeFilter:['data-controls-locked','data-controls-hidden','hidden','inert']} : {}) });
       addEventListener('error', (event) => { errors.push(event.message); updateStatus(); });
       addEventListener('unhandledrejection', (event) => { errors.push(String(event.reason)); updateStatus(); });
       for (const type of ['VSC_SETTINGS_READY', 'VSC_BRIDGE_READY', 'VSC_MESSAGE']) {
@@ -229,6 +288,8 @@ const rates = ${JSON.stringify(RATE_PROBE_RATES)};
 const summarizeFrameCadence = ${summarizeFrameCadence.toString()};
 const validateRateProbeReport = ${validateRateProbeReport.toString()};
 const controlled = new URLSearchParams(location.search).has('controlled');
+const owned = new URLSearchParams(location.search).has('owned');
+const presentation = owned ? 'owned' : 'inline';
 const pageErrors = [];
 addEventListener('error', event => pageErrors.push(String(event.message)));
 addEventListener('unhandledrejection', event => pageErrors.push(String(event.reason)));
@@ -267,6 +328,15 @@ button.addEventListener('click', async () => {
   button.disabled = true;
   const results = [];
   const setterAcceptance = [];
+  const originalVideo = video;
+  const originalSrc = video.src;
+  const originalSource = video.currentSrc || video.src;
+  const originalSrcObject = video.srcObject;
+  let ownedPlayer;
+  let ownedSession;
+  const identityPreserved = () => originalVideo.isConnected && originalVideo.ownerDocument === document && (!owned || ownedPlayer?.video === originalVideo);
+  const sourcePreserved = () => video.src === originalSrc && video.srcObject === originalSrcObject && (video.currentSrc || video.src) === originalSource;
+  const ownedActive = () => !!(ownedPlayer?.active && ownedPlayer.session === ownedSession && video.vsc?.iosPlayer === ownedPlayer && ownedPlayer.ui?.host.isConnected);
   for (const media of ['video','audio']) {
     const detached = document.createElement(media);
     for (const requested of [16,32,64,128,256,1024]) { try { detached.playbackRate = requested; setterAcceptance.push({media,requested,readback:detached.playbackRate}); } catch(error) { setterAcceptance.push({media,requested,error:String(error)}); } }
@@ -275,6 +345,13 @@ button.addEventListener('click', async () => {
   try {
     // Establish media activation synchronously in this real user gesture.
     const activation = video.play();
+    if (owned) {
+      if (!controlled) throw new Error('Owned probing requires an extension-controlled video');
+      ownedPlayer = video.vsc?.iosPlayer;
+      if (!ownedPlayer || ownedPlayer.open({fullscreen:true}) !== true) throw new Error('Owned player unavailable');
+      ownedSession = ownedPlayer.session;
+      if (!ownedActive() || !identityPreserved() || !sourcePreserved()) throw new Error('Owned player did not preserve the original media session');
+    }
     await activation;
     for (const requested of rates) {
       video.pause(); video.loop = false;
@@ -327,7 +404,13 @@ button.addEventListener('click', async () => {
         });
         listen(document, 'visibilitychange', () => { if (document.visibilityState !== 'visible') events.hidden++; });
         const ownershipAtStart = !!video.vsc;
+        const ownedAtStart = ownedActive();
+        const originalIdentityAtStart = identityPreserved();
+        const originalSourceAtStart = sourcePreserved();
         let ownershipChanged = false;
+        if (owned) {
+          for (const type of ['emptied','loadstart']) listen(video, type, () => { ownershipChanged = true; });
+        }
         const qualityStart = frameCounters();
         const startTime = video.currentTime;
         const startClock = performance.now();
@@ -337,7 +420,7 @@ button.addEventListener('click', async () => {
           if (!sampling) return;
           // Measure callback delivery on the same clock as the window edges.
           callbackTimes.push(performance.now() - startClock);
-          ownershipChanged = ownershipChanged || ownershipAtStart !== !!video.vsc;
+          ownershipChanged = ownershipChanged || ownershipAtStart !== !!video.vsc || (owned && (!ownedActive() || !identityPreserved() || !sourcePreserved()));
           frameToken = video.requestVideoFrameCallback(countPresented);
         };
         frameToken = video.requestVideoFrameCallback(countPresented);
@@ -353,7 +436,7 @@ button.addEventListener('click', async () => {
         const webkitDecodedFrames = qualityStart.webkitDecodedFrameCount === null || qualityEnd.webkitDecodedFrameCount === null ? null : qualityEnd.webkitDecodedFrameCount - qualityStart.webkitDecodedFrameCount;
         results.push({requested,readback:video.playbackRate,setterAccepted,firstFrame,...cadence,callbackFps:cadence?.callbackHz ?? null,qualityStart,qualityEnd,
           // Legacy field now means only the actual WebKit decoded counter.
-          decodedFrames:webkitDecodedFrames,webkitDecodedFrames,duration:video.duration,warmupElapsed,startTime,measuredTimeRate:(endTime-startTime)/seconds,elapsed:seconds,time:endTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0,readyState:video.readyState,visibility:document.visibilityState,events,eventStates,eventStatesTruncated,extensionControlled:!!video.vsc,ownershipChanged:ownershipChanged || ownershipAtStart !== !!video.vsc});
+          decodedFrames:webkitDecodedFrames,webkitDecodedFrames,duration:video.duration,warmupElapsed,startTime,measuredTimeRate:(endTime-startTime)/seconds,elapsed:seconds,time:endTime,ended:video.ended,paused:video.paused,error:video.error?.code || 0,readyState:video.readyState,visibility:document.visibilityState,events,eventStates,eventStatesTruncated,extensionControlled:!!video.vsc,ownedPresentation:ownedAtStart && ownedActive(),originalIdentityAtStart,originalIdentityAtEnd:identityPreserved(),originalSourceAtStart,originalSourceAtEnd:sourcePreserved(),ownershipChanged:ownershipChanged || ownershipAtStart !== !!video.vsc || (owned && !ownedActive())});
       } catch(error) {
         results.push({requested,error:String(error),readback:video.playbackRate,paused:video.paused,ended:video.ended,extensionControlled:!!video.vsc});
       } finally {
@@ -364,8 +447,16 @@ button.addEventListener('click', async () => {
       status.textContent = 'Rate probe results: ' + JSON.stringify({setterAcceptance,results});
     }
   } catch(error) { results.push({error:String(error)}); }
-  finally { video.pause(); video.playbackRate = 1; button.disabled = false; }
-  window.__nativeRateResults = {mode:controlled ? 'extension' : 'native-baseline',setterAcceptance,results,pageErrors};
+  finally {
+    video.pause();
+    try {
+      ownedPlayer?.close();
+      if (ownedPlayer?.active || ownedPlayer?.ui?.host.isConnected) throw new Error('Owned player remained open after probing');
+    } catch(error) { pageErrors.push('Owned player cleanup failed: ' + String(error)); }
+    video.playbackRate = 1;
+    button.disabled = false;
+  }
+  window.__nativeRateResults = {mode:controlled ? 'extension' : 'native-baseline',presentation,setterAcceptance,results,pageErrors};
   window.__nativeRateResults.validation = validateRateProbeReport(window.__nativeRateResults);
   status.textContent = 'Rate probe complete: ' + JSON.stringify(window.__nativeRateResults);
 });

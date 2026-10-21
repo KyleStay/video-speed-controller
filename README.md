@@ -31,9 +31,8 @@ advertising, analytics, or StayTech backend.
 - **Touch controls** — on devices with a coarse pointer, tap the speed pill to
   open large speed/seek controls, 1×/1.25×/1.5×/2× presets, and an explicit close
   button. Touch interaction does not require hover.
-- **iPhone/iPad presentation** — inline playback, direct native fullscreen,
-  and a separate custom StayFast player
-  offering precision seeking, speed, Fit/Fill, and language/system controls.
+- **iPhone/iPad presentation** — inline playback and an explicit StayFast player
+  offering precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
   The original video and its media source stay in use.
 - **Private by design** — playback and page processing stay in your browser.
   See the [privacy policy](PRIVACY.md) for details.
@@ -130,15 +129,18 @@ for builds, activation, verification status, and device testing.
 StayFast prepares videos for inline playback even when a site
 omits its inline flags. Ordinary Play keeps the original video on the page,
 with the site's controls and native fullscreen APIs available. A compact speed
-pill and 44px **Full screen** action provide explicit entry to Apple's native
-video fullscreen. **Custom Player** opens StayFast's separate viewing surface.
+pill and 44px **Full screen** action open StayFast's player around the original
+video. **Custom Player** remains another explicit entry. Where Safari permits it,
+the player can also expand its container using webpage fullscreen. On iPhone,
+Safari's browser bars may remain visible. **More → Apple player** explicitly
+opens Apple's native video fullscreen when available.
 StayFast also clears old presentation and scroll state when a
 feed reuses a video for a new source, so PiP/history return and old fullscreen
 callbacks cannot reopen the previous view or replay its scroll position. See the
 [Safari guide](docs/safari.md) for current evidence and release status.
 
 StayFast preserves the page and nested scrolling positions when
-entering or leaving native fullscreen or Custom Player. It keeps intentional
+entering or leaving the StayFast player or Apple player. It keeps intentional
 page movement made while the custom view is open. Verification and release
 status are tracked in the [Safari guide](docs/safari.md).
 
@@ -154,14 +156,21 @@ and current site issues are recorded in the
 The custom player includes **1×** and **Pref** quick actions alongside speed selection,
 play/pause, ten-second skips, scrubbing, and mute. While dragging the timeline,
 move your finger farther above or below it for half, quarter, or tenth-speed
-precision. Use the primary Fit/Fill button or pinch the video to change its fit.
-**More** contains available captions/audio languages, system controls, and
+precision. Double-tap the left or right edge to skip back or forward ten seconds;
+center taps keep their ordinary controls behavior. Native Safari double-tap
+verification remains incomplete; see the [Safari acceptance record](docs/safari.md#build-12-presentation-policy-and-source-freeze-acceptance).
+Skips show brief seek feedback.
+Use the primary Fit/Fill button or pinch the video to change its fit. **Lock**
+hides the controls and blocks playback gestures/keys; **Unlock** restores them.
+**More** contains available captions/audio languages, **Apple player**, system controls, and
 **Use site player**. Tap the duration to show remaining time. Live streams offer
 **Go live** when a seek window exists.
 **Done** returns to the page; **Use site player** hands that video back to its
-original controls. The custom player fills Safari's webpage viewport, where
-browser bars can remain visible. Direct native fullscreen uses Apple's controls;
-webpage buttons cannot appear inside it or Picture in Picture.
+original controls. StayFast's player fills the webpage viewport, with optional
+container fullscreen where supported. Apple player uses Apple's controls;
+StayFast cannot change that interface or add buttons inside it or Picture in Picture.
+If an explicit Apple-player request is refused, StayFast can restore its viewing
+surface for the same video when no newer input, navigation or player session intervenes.
 
 Same-origin embedded players can expand their owning iframe; cross-origin
 players remain inside their frame. Website permissions, player behavior, and

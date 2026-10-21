@@ -46,14 +46,15 @@ import XCTest
     }
     private func reveal(_ safari: XCUIApplication) {
         let done = safari.buttons["Close StayFast video player"]
-        if !done.isHittable {
-            let dialog = safari.otherElements["StayFast video player, web dialog"]
-            XCTAssertTrue(dialog.waitForExistence(timeout: 10))
-            // Observed dialog center is the media stage when the HUD is hidden.
-            dialog.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
-        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: done)
-        XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 5), .completed)
+        let stage = safari.otherElements["Video display"]
+        XCTAssertTrue(stage.waitForExistence(timeout: 10))
+        // Start with genuine stage input so a previously visible HUD cannot
+        // expire between an old hit-test and a delayed predicate's first poll.
+        // This blank center point avoids transport and the edge seek zones.
+        let point = stage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        point.tap()
+        if !done.isHittable { point.tap() }
+        XCTAssertTrue(done.isHittable)
     }
     private func openAndVerifyPlayback() {
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
@@ -308,6 +309,10 @@ import XCTest
         let fullscreen = safari.buttons["Open video fullscreen"]
         target(fullscreen)
         fullscreen.tap()
+        wait(safari, ["owner active: true", "owned hosts: 1", "native fullscreen: false", "original identity: true", "source preserved: true", "errors: 0"])
+        showMore(safari)
+        target(safari.buttons["Open Apple fullscreen player"])
+        safari.buttons["Open Apple fullscreen player"].tap()
         wait(safari, ["native fullscreen: true", "owner active: false", "owned hosts: 0", "errors: 0"])
         capture(safari, "native-fullscreen-after-site-handback")
         let close = safari.buttons["Close Button"]

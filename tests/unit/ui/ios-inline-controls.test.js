@@ -712,14 +712,15 @@ describe('compact iOS inline controls', () => {
     });
   });
 
-  it('offers direct fullscreen beside the pill without expanding or opening custom playback', () => {
+  it('opens owned fullscreen beside the pill without expanding or entering Apple playback', () => {
     expect(host.hasAttribute('data-vsc-ios-inline')).toBe(true);
     expect(host.hasAttribute('data-vsc-touch')).toBe(true);
     const fullscreen = shadow.querySelector('.inline-fullscreen');
-    expect(fullscreen.getAttribute('aria-label')).toBe('Open video fullscreen');
+    expect(fullscreen.dataset.action).toBe('ownedFullscreen');
+    expect(fullscreen.getAttribute('aria-label')).toMatch(/fullscreen/i);
     fullscreen.click();
-    expect(video.vsc.iosPlayer.enterNativeFullscreen).toHaveBeenCalledOnce();
-    expect(video.vsc.iosPlayer.open).not.toHaveBeenCalled();
+    expect(video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith({ fullscreen: true });
+    expect(video.vsc.iosPlayer.enterNativeFullscreen).not.toHaveBeenCalled();
     expect(host.classList.contains('vsc-touch-open')).toBe(false);
   });
 
@@ -1118,19 +1119,18 @@ describe('compact iOS inline controls', () => {
     expect(host.hasAttribute('data-vsc-inline-tiny')).toBe(false);
   });
 
-  it('refreshes native capability on readiness and surfaces synchronous request refusal', () => {
+  it('keeps owned fullscreen available without Apple fullscreen capability', () => {
     video.vsc.iosPlayer.canEnterNativeFullscreen = vi.fn(() => false);
+    video.vsc.iosPlayer.nativeFullscreenError = 'Apple player unavailable';
     video.dispatchEvent(new Event('loadedmetadata'));
-    expect(shadow.querySelector('.inline-fullscreen').disabled).toBe(true);
-    video.vsc.iosPlayer.canEnterNativeFullscreen.mockReturnValue(true);
+    const fullscreen = shadow.querySelector('.inline-fullscreen');
+    expect(fullscreen.disabled).toBe(false);
     video.dispatchEvent(new Event('canplay'));
-    expect(shadow.querySelector('.inline-fullscreen').disabled).toBe(false);
-    video.vsc.iosPlayer.nativeFullscreenError = 'Fullscreen unavailable';
-    video.vsc.iosPlayer.enterNativeFullscreen.mockReturnValue(false);
-    shadow.querySelector('.inline-fullscreen').click();
-    expect(shadow.querySelector('.inline-fullscreen').getAttribute('aria-description')).toBe(
-      'Fullscreen unavailable'
-    );
+    expect(fullscreen.disabled).toBe(false);
+    fullscreen.click();
+    expect(video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith({ fullscreen: true });
+    expect(video.vsc.iosPlayer.enterNativeFullscreen).not.toHaveBeenCalled();
+    expect(fullscreen.hasAttribute('aria-description')).toBe(false);
   });
 
   it('keeps readable touch columns when large configured fonts are clamped for inline controls', () => {

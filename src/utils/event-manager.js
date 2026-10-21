@@ -216,6 +216,38 @@ class EventManager {
       // dedup → typing → binding → claim/run block and act on this keypress.
     }
 
+    // The active owned player is frame-local. Keep this lookup after the
+    // no-media path, and leave Escape available to its dialog even when the
+    // user has bound Escape to a playback action.
+    const ownedPlayer = window.VSC.IOSPlayer?.activePlayers?.get(document);
+    const controlsLocked = Boolean(ownedPlayer?.active && ownedPlayer.controlsLocked);
+
+    if (controlsLocked) {
+      if (
+        event.key === 'Escape' ||
+        event.key === 'Tab' ||
+        event.key === 'Shift' ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey
+      ) {
+        return false;
+      }
+
+      // A custom binding must not steal the focused Unlock button's native
+      // activation or Tab navigation. Shadow retargeting hides the button from
+      // event.target at window capture, so check the composed path as well.
+      const unlock = ownedPlayer.ui?.refs?.unlock;
+      const unlockKey = event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar';
+      if (
+        unlockKey &&
+        unlock &&
+        (event.target === unlock || event.composedPath?.().includes(unlock))
+      ) {
+        return false;
+      }
+    }
+
     // Event deduplication — include code+key to handle empty-code cases
     const eventSignature = `${event.code}_${event.key}_${event.timeStamp}_${event.type}`;
 
@@ -225,9 +257,13 @@ class EventManager {
 
     this.lastKeyEventSignature = eventSignature;
 
-    // Ignore keydown event if typing in an input box
+    // Preserve page text entry, but an inert field inside the locked owned
+    // dialog must not let playback keys escape through shadow retargeting.
     if (this.isTypingContext(event)) {
-      return false;
+      const host = controlsLocked && ownedPlayer.ui?.host;
+      if (!host || (event.target !== host && !event.composedPath?.().includes(host))) {
+        return false;
+      }
     }
 
     if (window.VSC.logger.canLog(window.VSC.Constants.LOG_LEVELS.VERBOSE)) {
@@ -237,13 +273,13 @@ class EventManager {
     // Find matching key binding using the three-tier algorithm
     const keyBinding = this.findMatchingBinding(event);
 
-    if (keyBinding) {
+    if (keyBinding || controlsLocked) {
       // Focus Peek handles its own zoom/pan key later at document capture.
       // Yield without consuming the key or running a seek action.
       if (this.focusPeekOwnsZoomShortcut(event)) {
         return false;
       }
-      if (this.shouldClaimShortcutEvent()) {
+      if (controlsLocked || this.shouldClaimShortcutEvent()) {
         // X/Twitter may also handle keypress/keyup. Remember the key that VSC
         // actually claimed so those follow-up events can be suppressed without
         // running the action again.
@@ -260,7 +296,12 @@ class EventManager {
         }
       }
 
-      this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
+      // A locked player also blocks unbound site keys (k/arrows/< >), which
+      // otherwise bypass VSC bindings and can still seek, pause or change rate.
+      // Focus Peek negotiation above still gets the first opportunity to own it.
+      if (!controlsLocked) {
+        this.actionHandler.runAction(keyBinding.action, keyBinding.value, event);
+      }
     } else {
       // Unhandled key — could be a site shortcut (e.g. YouTube's < > speed keys).
       // Page-dispatched keys do not establish user intent.

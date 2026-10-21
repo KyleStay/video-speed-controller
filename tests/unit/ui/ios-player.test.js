@@ -128,6 +128,29 @@ describe('iOS player ownership, playback, and restoration', () => {
     observer.disconnect();
   });
 
+  it('leaves locked controls untouched during playback and synchronizes them on unlock', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    player.setControlsLocked(true);
+    const { refs } = player.ui;
+    const before = refs.current.textContent;
+    const observer = new MutationObserver(() => {});
+    observer.observe(player.ui.shadow.querySelector('.hud'), {
+      subtree: true,
+      childList: true,
+      attributes: true,
+    });
+    video.currentTime = 34;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(refs.current.textContent).toBe(before);
+    expect(observer.takeRecords()).toEqual([]);
+    player.setControlsLocked(false);
+    expect(refs.current.textContent).toBe('0:34');
+    expect(Number(refs.seek.value)).toBe(34);
+    observer.disconnect();
+  });
+
   const flushEvents = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   beforeEach(() => {
@@ -341,6 +364,47 @@ describe('iOS player ownership, playback, and restoration', () => {
       await flushEvents();
       expect(scroll.read()).toEqual([70, 970]);
       expect(player.nativeSession).toBe(false);
+    });
+
+    it('preserves newer scrolling after genuine wheel input cancels held Apple recovery', async () => {
+      const { player, video, parent } = makeController();
+      const scroll = scrollingWindow();
+      parent.scrollTop = 230;
+      let reject;
+      video.webkitEnterFullscreen = vi.fn(
+        () =>
+          new Promise((_resolve, rejectPromise) => {
+            reject = rejectPromise;
+          })
+      );
+      player.attach();
+      player.open();
+      const add = vi.spyOn(window, 'addEventListener');
+      expect(player.enterNativeFullscreen()).toBe(true);
+      const recovery = player.nativeRecovery;
+      const wheel = add.mock.calls.find(
+        ([type, , options]) => type === 'wheel' && options === true
+      )?.[1];
+      expect(wheel).toBe(recovery.cancel);
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+      expect(player.nativeRecovery).toBe(recovery);
+      // jsdom cannot synthesize trusted input; invoke the actual registered guard.
+      wheel({ type: 'wheel', isTrusted: true });
+      expect(player.nativeRecovery).toBeNull();
+      scroll.move(70, 970);
+      parent.scrollTop = 900;
+      scroll.write.mockClear();
+      const reopen = vi.spyOn(player, 'open');
+      reject(new Error('Apple denied after scrolling'));
+      await flushEvents();
+      expect(reopen).not.toHaveBeenCalled();
+      expect(player.active).toBe(false);
+      expect(player.nativeSession).toBe(false);
+      expect(player.nativeScroll).toBeNull();
+      expect(scroll.read()).toEqual([70, 970]);
+      expect(parent.scrollTop).toBe(900);
+      expect(scroll.write).not.toHaveBeenCalled();
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
     });
 
     it('restores a synchronous denied native attempt and cancels all scroll callbacks on cleanup', () => {
@@ -778,6 +842,52 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(video.style.paddingLeft).toBe('10px');
   });
 
+  it.each([
+    ['close', false],
+    ['cleanup', false],
+    ['close', true],
+    ['cleanup', true],
+  ])(
+    'owns touch-action only during presentation and restores it on %s (container=%s)',
+    (end, container) => {
+      const { player, video, parent } = makeController();
+      if (container) {
+        parent.classList.add('plyr');
+      }
+      video.style.setProperty('touch-action', 'pan-y', 'important');
+      parent.style.setProperty('touch-action', 'manipulation');
+      player.attach();
+      expect(video.style.getPropertyValue('touch-action')).toBe('pan-y');
+      player.open();
+      expect(player.portalNode).toBe(container ? parent : video);
+      expect(video.style.getPropertyValue('touch-action')).toBe('none');
+      expect(video.style.getPropertyPriority('touch-action')).toBe('important');
+      expect(parent.style.getPropertyValue('touch-action')).toBe(
+        container ? 'none' : 'manipulation'
+      );
+      expect(parent.style.getPropertyPriority('touch-action')).toBe(container ? 'important' : '');
+      player[end]();
+      expect(video.style.getPropertyValue('touch-action')).toBe('pan-y');
+      expect(video.style.getPropertyPriority('touch-action')).toBe('important');
+      expect(parent.style.getPropertyValue('touch-action')).toBe('manipulation');
+      expect(parent.style.getPropertyPriority('touch-action')).toBe('');
+    }
+  );
+
+  it.each(['close', 'cleanup'])('preserves later site touch-action edits on %s', (end) => {
+    const { player, video, parent } = makeController();
+    parent.classList.add('plyr');
+    player.attach();
+    player.open();
+    video.style.setProperty('touch-action', 'manipulation');
+    parent.style.setProperty('touch-action', 'pan-y', 'important');
+    player[end]();
+    expect(video.style.getPropertyValue('touch-action')).toBe('manipulation');
+    expect(video.style.getPropertyPriority('touch-action')).toBe('');
+    expect(parent.style.getPropertyValue('touch-action')).toBe('pan-y');
+    expect(parent.style.getPropertyPriority('touch-action')).toBe('important');
+  });
+
   it('ignores a rejected playback promise belonging to a closed presentation', async () => {
     const { player, video } = makeController();
     let rejectOldPlay;
@@ -861,6 +971,82 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(second.video.vsc).toBe(second.controller);
   });
 
+  it('opens fullscreen in the owned viewport without calling a captured Apple API', () => {
+    const { player, video, stream, controller } = makeController();
+    const native = vi.fn();
+    const enter = vi
+      .spyOn(window.VSC.IOSPlayerFullscreen.prototype, 'enter')
+      .mockReturnValue(false);
+    video.webkitEnterFullscreen = native;
+    player.attach();
+    expect(player.open({ fullscreen: true })).toBe(true);
+    expect(player.active).toBe(true);
+    expect(player.ui.host.isConnected).toBe(true);
+    expect(player.ui.host.contains(video)).toBe(true);
+    expect(video.vsc).toBe(controller);
+    expect(video.srcObject).toBe(stream);
+    expect(video.currentTime).toBe(12.5);
+    expect(video.playbackRate).toBe(1.5);
+    expect(native).not.toHaveBeenCalled();
+    expect(player.nativeSession).not.toBe(true);
+    expect(enter).toHaveBeenCalledExactlyOnceWith(expect.any(window.VSC.IOSPlayerScrollState));
+  });
+
+  it('opens owned fullscreen without native APIs or loaded metadata', () => {
+    const { player, video } = makeController();
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 0 });
+    Object.defineProperty(video, 'webkitSupportsFullscreen', { configurable: true, value: false });
+    player.attach();
+    expect(player.canEnterNativeFullscreen()).toBe(false);
+    expect(player.open({ fullscreen: true })).toBe(true);
+    expect(player.active).toBe(true);
+    expect(player.ui.refs.native.hidden).toBe(true);
+    expect(player.ui.host.contains(video)).toBe(true);
+  });
+
+  it('reveals the explicit Apple player when metadata makes native fullscreen available', () => {
+    const { player, video, stream } = makeController();
+    const native = vi.fn();
+    video.webkitEnterFullscreen = native;
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 0 });
+    Object.defineProperty(video, 'webkitSupportsFullscreen', { configurable: true, value: true });
+    player.attach();
+    player.open();
+    const ui = player.ui;
+    expect(ui.refs.native.hidden).toBe(true);
+    expect(player.canEnterNativeFullscreen()).toBe(false);
+
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 });
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(player.ui).toBe(ui);
+    expect(ui.refs.native.hidden).toBe(false);
+    expect(player.canEnterNativeFullscreen()).toBe(true);
+    expect(native).not.toHaveBeenCalled();
+    expect(video.srcObject).toBe(stream);
+    player.toggleMore(true);
+    ui.refs.native.click();
+    expect(native).toHaveBeenCalledOnce();
+    expect(player.active).toBe(false);
+    expect(video.currentTime).toBe(12.5);
+    expect(video.playbackRate).toBe(1.5);
+    expect(video.srcObject).toBe(stream);
+  });
+
+  it('keeps the owned session when its Full screen control has no container API', () => {
+    const { player, video } = makeController();
+    video.webkitEnterFullscreen = vi.fn();
+    player.attach();
+    player.open();
+    const host = player.ui.host;
+    const toggle = vi.spyOn(player.ownedFullscreen, 'toggle').mockReturnValue(false);
+    expect(player.requestFullscreen()).toBe(false);
+    expect(toggle).toHaveBeenCalledOnce();
+    expect(player.active).toBe(true);
+    expect(player.ui.host).toBe(host);
+    expect(video.webkitEnterFullscreen).not.toHaveBeenCalled();
+    expect(player.nativeSession).not.toBe(true);
+  });
+
   it('enters original native fullscreen synchronously without an intermediate custom presentation', () => {
     const { player, video, parent, stream, controller } = makeController();
     const original = vi.fn(function () {
@@ -902,10 +1088,11 @@ describe('iOS player ownership, playback, and restoration', () => {
     video.webkitEnterFullscreen = original;
     player.attach();
     player.open();
-    expect(player.ui.refs.fullscreen.hidden).toBe(false);
+    expect(player.ui.refs.native.hidden).toBe(false);
     const laterSiteMethod = vi.fn();
     video.webkitEnterFullscreen = laterSiteMethod;
-    player.ui.refs.fullscreen.click();
+    player.toggleMore(true);
+    player.ui.refs.native.click();
     expect(original).toHaveBeenCalledOnce();
     expect(laterSiteMethod).not.toHaveBeenCalled();
     expect(video.webkitEnterFullscreen).toBe(laterSiteMethod);
@@ -918,7 +1105,7 @@ describe('iOS player ownership, playback, and restoration', () => {
       const { player, video } = makeController();
       video[name] = vi.fn();
       player.attach();
-      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.enterNativeFullscreen()).toBe(true);
       expect(video[name]).toHaveBeenCalledWith(
         ...(name === 'webkitSetPresentationMode' ? ['fullscreen'] : [])
       );
@@ -926,7 +1113,61 @@ describe('iOS player ownership, playback, and restoration', () => {
     }
   );
 
-  it('leaves inline playback usable after denied native entry and ignores late events after cleanup', async () => {
+  it.each(['unsupported', 'throw', 'reject'])(
+    'keeps owned entry labels and availability after an explicit Apple failure (%s)',
+    async (mode) => {
+      const { player, video, div, stream } = makeController();
+      const src = video.src;
+      const primary = document.createElement('button');
+      primary.type = 'button';
+      primary.className = 'inline-fullscreen';
+      primary.dataset.action = 'ownedFullscreen';
+      primary.title = 'Open StayFast fullscreen player';
+      primary.setAttribute('aria-label', 'Open video fullscreen');
+      div.shadowRoot.querySelector('#controls').append(primary);
+      if (mode !== 'unsupported') {
+        video.webkitEnterFullscreen = vi.fn(() => {
+          if (mode === 'throw') {
+            throw new Error('Apple player denied');
+          }
+          return Promise.reject(new Error('Apple player denied'));
+        });
+      }
+      player.attach();
+      const attributes = Object.fromEntries(
+        [...primary.attributes].map(({ name, value }) => [name, value])
+      );
+      const ownedEntryTitle = player.button.getAttribute('title');
+      player.open();
+      player.enterNativeFullscreen();
+      await flushEvents();
+      expect(player.nativeFullscreenError).toMatch(/Apple fullscreen is unavailable/);
+      expect(player.active).toBe(true);
+      expect(player.ui.host.isConnected).toBe(true);
+      expect(player.ui.refs.status.textContent).toBe(player.nativeFullscreenError);
+      expect(player.ui.refs.status.getAttribute('role')).toBe('status');
+      expect(player.ui.host.contains(video)).toBe(true);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.srcObject).toBe(stream);
+      expect(video.src).toBe(src);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      if (mode !== 'unsupported') {
+        expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce();
+      }
+      expect(
+        Object.fromEntries([...primary.attributes].map(({ name, value }) => [name, value]))
+      ).toEqual(attributes);
+      expect(primary.disabled).toBe(false);
+      expect(primary.getAttribute('aria-description')).toBeNull();
+      expect(player.button.getAttribute('title')).toBe(ownedEntryTitle);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.active).toBe(true);
+      expect(player.ui.host.contains(video)).toBe(true);
+    }
+  );
+
+  it('leaves an inline-origin native denial inline and ignores late events after cleanup', async () => {
     const { player, video, parent } = makeController();
     let reject;
     video.requestFullscreen = vi.fn(
@@ -936,7 +1177,6 @@ describe('iOS player ownership, playback, and restoration', () => {
         })
     );
     player.attach();
-    player.open();
     expect(player.enterNativeFullscreen()).toBe(true);
     reject(new Error('NotAllowedError'));
     await flushEvents();
@@ -950,6 +1190,201 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.active).toBe(false);
   });
 
+  it.each([
+    'close',
+    'reopen',
+    'reopen-close',
+    'other-player',
+    'other-player-close',
+    'cleanup',
+    'pagehide',
+    'popstate',
+    'pushState',
+    'replaceState',
+    'root',
+    'emptied',
+    'loadstart',
+    'src',
+    'srcObject',
+    'currentSrc',
+    'source-getter',
+    'detach',
+    'native-begin',
+  ])(
+    'does not recover a denied Apple request after newer intent or source ownership: %s',
+    async (change) => {
+      const originalRoot = document.documentElement;
+      const originalURL = document.URL;
+      const { player, video } = makeController();
+      const other = makeController();
+      other.player.attach();
+      let reject;
+      video.webkitEnterFullscreen = vi.fn(
+        () =>
+          new Promise((_resolve, rejectPromise) => {
+            reject = rejectPromise;
+          })
+      );
+      player.attach();
+      player.open();
+      const session = player.session;
+      expect(player.enterNativeFullscreen()).toBe(true);
+      expect(player.active).toBe(false);
+      if (change === 'close') {
+        player.close();
+      } else if (change === 'reopen' || change === 'reopen-close') {
+        player.open();
+        if (change === 'reopen-close') {
+          player.close();
+        }
+      } else if (change === 'other-player' || change === 'other-player-close') {
+        other.player.open();
+        if (change === 'other-player-close') {
+          other.player.close();
+        }
+      } else if (change === 'cleanup') {
+        player.cleanup();
+      } else if (change === 'pagehide' || change === 'popstate') {
+        window.dispatchEvent(new Event(change));
+      } else if (change === 'pushState' || change === 'replaceState') {
+        window.history[change]({}, '', `${window.location.pathname}?native-recovery=${change}`);
+      } else if (change === 'root') {
+        const replacement = document.createElement('html');
+        replacement.append(document.head, document.body);
+        document.replaceChild(replacement, document.documentElement);
+      } else if (change === 'emptied' || change === 'loadstart') {
+        video.dispatchEvent(new Event(change));
+      } else if (change === 'src') {
+        video.src = 'https://media.example.test/new.mp4';
+      } else if (change === 'srcObject') {
+        video.srcObject = { replacement: true };
+      } else if (change === 'currentSrc') {
+        Object.defineProperty(video, 'currentSrc', {
+          configurable: true,
+          value: 'https://media.example.test/new.mp4',
+        });
+      } else if (change === 'source-getter') {
+        Object.defineProperty(video, 'srcObject', {
+          configurable: true,
+          get() {
+            throw new Error('unavailable');
+          },
+        });
+      } else if (change === 'detach') {
+        video.remove();
+      } else if (change === 'native-begin') {
+        video.dispatchEvent(new Event('webkitbeginfullscreen'));
+      }
+      const open = vi.spyOn(player, 'open');
+      const fullscreen = vi.spyOn(window.VSC.IOSPlayerFullscreen.prototype, 'enter');
+      const activePlayer = window.VSC.IOSPlayer.activePlayers.get(document);
+      reject(new Error('late Apple denial'));
+      await flushEvents();
+      expect(open).not.toHaveBeenCalled();
+      expect(fullscreen).not.toHaveBeenCalled();
+      expect(window.VSC.IOSPlayer.activePlayers.get(document)).toBe(activePlayer);
+      expect(player.session).toBe(change.startsWith('reopen') ? session + 1 : session);
+      expect(player.nativeFullscreenError).toBe('');
+      expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce();
+      expect(video.play).not.toHaveBeenCalled();
+      if (change === 'pushState' || change === 'replaceState') {
+        window.history.replaceState({}, '', originalURL);
+      } else if (change === 'root') {
+        originalRoot.append(document.head, document.body);
+        document.replaceChild(originalRoot, document.documentElement);
+      }
+    }
+  );
+
+  it.each(['pointerdown', 'touchstart', 'keydown', 'wheel'])(
+    'releases pending recovery guards after genuine %s intent',
+    async (type) => {
+      const { player, video } = makeController();
+      let reject;
+      video.webkitEnterFullscreen = vi.fn(
+        () =>
+          new Promise((_resolve, rejectPromise) => {
+            reject = rejectPromise;
+          })
+      );
+      player.attach();
+      player.open();
+      const add = vi.spyOn(window, 'addEventListener');
+      const remove = vi.spyOn(window, 'removeEventListener');
+      player.enterNativeFullscreen();
+      const cancel = player.nativeRecovery.cancel;
+      expect(add).toHaveBeenCalledWith(type, cancel, true);
+      // Programmatically dispatched events cannot stand in for fresh user intent.
+      window.dispatchEvent(new Event(type));
+      expect(player.nativeRecovery).not.toBeNull();
+      // jsdom cannot construct trusted DOM events; exercise the registered handler.
+      cancel({ isTrusted: true });
+      expect(player.nativeRecovery).toBeNull();
+      for (const input of ['pointerdown', 'touchstart', 'keydown', 'wheel']) {
+        expect(remove).toHaveBeenCalledWith(input, cancel, true);
+      }
+      reject(new Error('denied after newer input'));
+      await flushEvents();
+      expect(player.active).toBe(false);
+      expect(player.nativeSession).toBe(false);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    }
+  );
+
+  it.each(['resolve', 'reject', 'cleanup'])(
+    'removes pending recovery input listeners on %s',
+    async (settle) => {
+      const { player, video } = makeController();
+      let resolve;
+      let reject;
+      video.webkitEnterFullscreen = vi.fn(
+        () =>
+          new Promise((resolvePromise, rejectPromise) => {
+            resolve = resolvePromise;
+            reject = rejectPromise;
+          })
+      );
+      player.attach();
+      player.open();
+      const remove = vi.spyOn(window, 'removeEventListener');
+      player.enterNativeFullscreen();
+      const cancel = player.nativeRecovery.cancel;
+      if (settle === 'resolve') {
+        resolve();
+      } else if (settle === 'reject') {
+        reject(new Error('denied'));
+      } else {
+        player.cleanup();
+      }
+      await flushEvents();
+      expect(player.nativeRecovery).toBeNull();
+      for (const input of ['pointerdown', 'touchstart', 'keydown', 'wheel']) {
+        expect(remove).toHaveBeenCalledWith(input, cancel, true);
+        expect(
+          remove.mock.calls.filter(([type, listener]) => type === input && listener === cancel)
+        ).toHaveLength(1);
+      }
+      if (settle === 'reject') {
+        expect(player.active).toBe(true);
+        expect(player.ui.refs.status.textContent).toMatch(/Apple fullscreen is unavailable/);
+      } else {
+        expect(player.active).toBe(false);
+      }
+    }
+  );
+
+  it('does not let a native begin observer take over the owned viewport', async () => {
+    const { player, video } = makeController();
+    player.attach();
+    const open = vi.spyOn(player, 'open');
+    video.dispatchEvent(new Event('webkitbeginfullscreen'));
+    video.dispatchEvent(new Event('webkitendfullscreen'));
+    await flushEvents();
+    expect(open).not.toHaveBeenCalled();
+    expect(player.active).toBe(false);
+    expect(document.querySelector('vsc-ios-player')).toBeNull();
+  });
+
   it('handles missing, throwing or detached native fullscreen APIs without opening a modal', () => {
     const missing = makeController();
     missing.player.attach();
@@ -959,7 +1394,6 @@ describe('iOS player ownership, playback, and restoration', () => {
       throw new Error('denied');
     });
     failing.player.attach();
-    failing.player.open();
     expect(failing.player.enterNativeFullscreen()).toBe(false);
     expect(failing.video.controls).toBe(true);
     failing.video.remove();
@@ -1449,6 +1883,444 @@ describe('iOS player ownership, playback, and restoration', () => {
     video.dispatchEvent(new Event('touchend', { bubbles: true }));
     expect(siteVideoTouch).toHaveBeenCalledOnce();
     expect(siteContainerTouch).toHaveBeenCalledOnce();
+  });
+
+  describe('seek feedback', () => {
+    it('reports actual clamped movement and resets the total when direction changes', () => {
+      vi.useFakeTimers();
+      try {
+        const { player, video } = makeController();
+        player.attach();
+        player.open();
+        const { forward, back, seekFeedback } = player.ui.refs;
+        video.currentTime = 118;
+        forward.click();
+        expect(video.currentTime).toBe(120);
+        expect(seekFeedback.textContent).toBe('+2s');
+        expect(seekFeedback.dataset.side).toBe('right');
+        expect(seekFeedback.hidden).toBe(false);
+        forward.click();
+        expect(video.currentTime).toBe(120);
+        expect(seekFeedback.textContent).toBe('+2s');
+        back.click();
+        expect(video.currentTime).toBe(110);
+        expect(seekFeedback.textContent).toBe('−10s');
+        expect(seekFeedback.dataset.side).toBe('left');
+        back.click();
+        expect(seekFeedback.textContent).toBe('−20s');
+        expect(video.playbackRate).toBe(1.5);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+        player.cleanup();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('accumulates consecutive seeks and restarts its bounded dismissal timer', () => {
+      vi.useFakeTimers();
+      try {
+        const { player } = makeController();
+        player.attach();
+        player.open();
+        const { forward, seekFeedback } = player.ui.refs;
+        forward.click();
+        expect(seekFeedback.textContent).toBe('+10s');
+        vi.advanceTimersByTime(600);
+        forward.click();
+        expect(seekFeedback.textContent).toBe('+20s');
+        vi.advanceTimersByTime(799);
+        expect(seekFeedback.hidden).toBe(false);
+        vi.advanceTimersByTime(1);
+        expect(seekFeedback.hidden).toBe(true);
+        expect(player.seekFeedbackTimer).toBeNull();
+        player.cleanup();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('clears feedback on lock and close without carrying totals into a new session', () => {
+      vi.useFakeTimers();
+      try {
+        const { player, video, controller } = makeController();
+        player.attach();
+        player.open();
+        let refs = player.ui.refs;
+        refs.forward.click();
+        refs.lock.click();
+        expect(refs.seekFeedback.hidden).toBe(true);
+        expect(player.seekFeedbackTimer).toBeNull();
+        const before = video.currentTime;
+        controller.actionHandler.seek.mockClear();
+        refs.forward.click();
+        expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+        expect(video.currentTime).toBe(before);
+        expect(refs.seekFeedback.hidden).toBe(true);
+        refs.unlock.click();
+        refs.forward.click();
+        expect(refs.seekFeedback.textContent).toBe('+10s');
+        player.close();
+        expect(player.seekFeedbackTimer).toBeNull();
+        expect(refs.seekFeedback.hidden).toBe(true);
+        player.open();
+        refs = player.ui.refs;
+        refs.forward.click();
+        expect(refs.seekFeedback.textContent).toBe('+10s');
+        vi.advanceTimersByTime(800);
+        expect(refs.seekFeedback.hidden).toBe(true);
+        player.cleanup();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('playback control lock', () => {
+    function touch(stage, type, id, x, y) {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerType: 'touch', pointerId: id, clientX: x, clientY: y });
+      stage.dispatchEvent(event);
+    }
+
+    it.each([180, 220])(
+      'does not reinterpret center touch pairs at x=%s as browser double-click seeks',
+      (x) => {
+        const { player, video, controller } = makeController();
+        const now = vi.spyOn(window.performance, 'now').mockReturnValue(100);
+        player.attach();
+        player.open();
+        const { stage } = player.ui;
+        stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 });
+        for (const id of [1, 2]) {
+          now.mockReturnValue(id * 100);
+          touch(stage, 'pointerdown', id, x, 100);
+          touch(stage, 'pointerup', id, x, 100);
+          // Safari may synthesize both ordinary clicks before the dblclick.
+          stage.dispatchEvent(
+            new MouseEvent('click', { bubbles: true, composed: true, clientX: x })
+          );
+        }
+        stage.dispatchEvent(
+          new MouseEvent('dblclick', {
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+            clientX: x,
+          })
+        );
+        expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+        expect(video.currentTime).toBe(12.5);
+        expect(video.playbackRate).toBe(1.5);
+        expect(player.active).toBe(true);
+      }
+    );
+
+    it('locks the HUD and stage gestures without pausing, seeking, changing rate or replacing media', async () => {
+      const { player, controller, video, stream } = makeController();
+      player.attach();
+      player.open({ play: true });
+      await Promise.resolve();
+      const { host, stage, refs, shadow } = player.ui;
+      const pause = video.pause;
+      const play = video.play;
+      const fit = vi.spyOn(player, 'setFit');
+      const ratechange = vi.fn();
+      video.addEventListener('ratechange', ratechange);
+      pause.mockClear();
+      play.mockClear();
+      refs.lock.click();
+      expect(player.controlsLocked).toBe(true);
+      expect(host.hasAttribute('data-controls-locked')).toBe(true);
+      expect(shadow.querySelector('.hud').inert).toBe(true);
+      expect(refs.unlock.hidden).toBe(false);
+      const hidden = host.hasAttribute('data-controls-hidden');
+      stage.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+      stage.dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, composed: true, clientX: 300 })
+      );
+      touch(stage, 'pointerdown', 1, 50, 50);
+      touch(stage, 'pointerdown', 2, 150, 50);
+      touch(stage, 'pointermove', 2, 250, 50);
+      touch(stage, 'pointerup', 1, 50, 50);
+      touch(stage, 'pointerup', 2, 250, 50);
+      expect(player.controlsLocked).toBe(true);
+      expect(host.hasAttribute('data-controls-hidden')).toBe(hidden);
+      expect(fit).not.toHaveBeenCalled();
+      expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+      expect(controller.actionHandler.setSpeed).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      expect(ratechange).not.toHaveBeenCalled();
+      expect(video.paused).toBe(false);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      expect(video.srcObject).toBe(stream);
+      expect(video.vsc).toBe(controller);
+      video.removeEventListener('ratechange', ratechange);
+    });
+
+    it('cancels an active queued scrub on Lock and accepts a fresh scrub after Unlock', async () => {
+      window.VSC_controller.teardown();
+      vi.useFakeTimers();
+      const { player, video, controller } = makeController();
+      try {
+        player.attach();
+        player.open();
+        await video.play();
+        const { refs } = player.ui;
+        const scrubber = player.scrubber;
+        refs.seek.getBoundingClientRect = () => ({
+          left: 0,
+          top: 0,
+          width: 120,
+          height: 44,
+        });
+        refs.seek.setPointerCapture = vi.fn();
+        refs.seek.releasePointerCapture = vi.fn((pointerId) => {
+          touch(refs.seek, 'lostpointercapture', pointerId, 32.5, 22);
+        });
+        video.play.mockClear();
+        video.pause.mockClear();
+        controller.actionHandler.seek.mockClear();
+        touch(refs.seek, 'pointerdown', 7, 12.5, 22);
+        touch(window, 'pointermove', 7, 32.5, 22);
+        expect(video.pause).toHaveBeenCalledOnce();
+        expect(video.paused).toBe(true);
+        expect(scrubber.active).toBe(true);
+        expect(scrubber.pending).toBe(32.5);
+        expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+
+        refs.lock.click();
+        expect(player.controlsLocked).toBe(true);
+        expect(scrubber.active).toBe(false);
+        expect(refs.seek.releasePointerCapture).toHaveBeenCalledWith(7);
+        vi.advanceTimersByTime(60);
+        touch(window, 'pointermove', 7, 82.5, 22);
+        touch(window, 'pointerup', 7, 82.5, 22);
+        // A delayed native range event also cannot bypass the locked seek path.
+        refs.seek.value = '90';
+        refs.seek.dispatchEvent(new Event('input', { bubbles: true }));
+        refs.seek.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+        expect(video.currentTime).toBe(12.5);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.paused).toBe(true);
+
+        refs.unlock.click();
+        touch(window, 'pointerup', 7, 82.5, 22);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(controller.actionHandler.seek).not.toHaveBeenCalled();
+        // Playback and a new pointer establish fresh intent after unlocking.
+        await video.play();
+        video.play.mockClear();
+        touch(refs.seek, 'pointerdown', 8, 12.5, 22);
+        touch(window, 'pointermove', 8, 22.5, 22);
+        vi.advanceTimersByTime(50);
+        expect(video.currentTime).toBe(22.5);
+        expect(controller.actionHandler.seek).toHaveBeenCalledExactlyOnceWith(video, 10);
+        touch(window, 'pointerup', 8, 22.5, 22);
+        expect(video.play).toHaveBeenCalledOnce();
+        expect(video.paused).toBe(false);
+        expect(video.playbackRate).toBe(1.5);
+      } finally {
+        player.cleanup();
+        vi.useRealTimers();
+      }
+    });
+
+    it('focuses the separate unlock target and returns focus without scrolling before Done restores the page', () => {
+      const { player, parent } = makeController();
+      const previous = document.createElement('button');
+      parent.append(previous);
+      previous.focus();
+      const pageFocus = vi.spyOn(previous, 'focus');
+      player.attach();
+      player.open();
+      const { refs, shadow } = player.ui;
+      const unlockFocus = vi.spyOn(refs.unlock, 'focus');
+      const lockFocus = vi.spyOn(refs.lock, 'focus');
+      refs.lock.click();
+      expect(unlockFocus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(shadow.activeElement).toBe(refs.unlock);
+      refs.unlock.click();
+      expect(player.controlsLocked).toBe(false);
+      expect(shadow.querySelector('.hud').inert).toBe(false);
+      expect(refs.unlock.hidden).toBe(true);
+      expect(lockFocus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(shadow.activeElement).toBe(refs.lock);
+      refs.done.click();
+      expect(player.active).toBe(false);
+      expect(player.controlsLocked).toBe(false);
+      expect(document.activeElement).toBe(previous);
+      expect(pageFocus).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    it('unlocks through window shortcut capture even when Escape is a custom playback binding', () => {
+      window.VSC_controller.teardown();
+      const { player, video, controller } = makeController();
+      player.attach();
+      player.open();
+      player.ui.refs.lock.click();
+      const runAction = vi.fn();
+      const manager = new window.VSC.EventManager(
+        {
+          settings: {
+            ...controller.config.settings,
+            exclusiveKeys: true,
+            keyBindings: [{ code: 'Escape', action: 'reset', value: 1 }],
+          },
+        },
+        { runAction }
+      );
+      const media = vi
+        .spyOn(window.VSC.stateManager, 'getControlledElements')
+        .mockReturnValue([video]);
+      const keydown = vi.spyOn(manager, 'handleKeydown');
+      manager.setupKeyboardShortcuts(document);
+      try {
+        const event = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        });
+        player.ui.refs.unlock.dispatchEvent(event);
+        expect(keydown).toHaveBeenCalledOnce();
+        expect(event.defaultPrevented).toBe(true);
+        expect(player.controlsLocked).toBe(false);
+        expect(player.active).toBe(true);
+        expect(player.ui.shadow.activeElement).toBe(player.ui.refs.lock);
+        expect(runAction).not.toHaveBeenCalled();
+        expect(video.currentTime).toBe(12.5);
+        expect(video.playbackRate).toBe(1.5);
+      } finally {
+        manager.cleanup();
+        media.mockRestore();
+        keydown.mockRestore();
+      }
+    });
+
+    it.each([
+      ['Enter', 'Enter'],
+      [' ', 'Space'],
+      ['Tab', 'Tab'],
+    ])('preserves Unlock keyboard activation/navigation for a custom %s binding', (key, code) => {
+      window.VSC_controller.teardown();
+      const { player, video, controller } = makeController();
+      player.attach();
+      player.open();
+      player.ui.refs.lock.click();
+      const { refs, shadow } = player.ui;
+      expect(shadow.activeElement).toBe(refs.unlock);
+      const runAction = vi.fn();
+      const manager = new window.VSC.EventManager(
+        {
+          settings: {
+            ...controller.config.settings,
+            exclusiveKeys: true,
+            keyBindings: [{ code, action: 'reset', value: 1 }],
+          },
+        },
+        { runAction }
+      );
+      const media = vi
+        .spyOn(window.VSC.stateManager, 'getControlledElements')
+        .mockReturnValue([video]);
+      const keydown = vi.spyOn(manager, 'handleKeydown');
+      const targetKey = vi.fn();
+      refs.unlock.addEventListener('keydown', targetKey);
+      manager.setupKeyboardShortcuts(document);
+      try {
+        const event = new KeyboardEvent('keydown', {
+          key,
+          code,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        });
+        expect(refs.unlock.dispatchEvent(event)).toBe(true);
+        expect(keydown).toHaveBeenCalledOnce();
+        expect(targetKey).toHaveBeenCalledOnce();
+        expect(event.defaultPrevented).toBe(false);
+        expect(runAction).not.toHaveBeenCalled();
+        expect(player.controlsLocked).toBe(true);
+        refs.unlock.dispatchEvent(
+          new KeyboardEvent('keyup', { key, code, bubbles: true, composed: true })
+        );
+        // jsdom omits the browser's keyboard default activation/focus steps.
+        // The uncanceled event above leaves them available; exercise the same
+        // native button activation path to verify the resulting owned unlock.
+        refs.unlock.click();
+        expect(player.controlsLocked).toBe(false);
+        expect(player.active).toBe(true);
+        expect(shadow.activeElement).toBe(refs.lock);
+        expect(video.currentTime).toBe(12.5);
+        expect(video.playbackRate).toBe(1.5);
+      } finally {
+        manager.cleanup();
+        media.mockRestore();
+        keydown.mockRestore();
+      }
+    });
+
+    it.each(['Escape', 'cancel'])(
+      'unlocks first on %s and keeps the owned player open',
+      (method) => {
+        const { player } = makeController();
+        player.attach();
+        player.open();
+        player.ui.refs.lock.click();
+        const event =
+          method === 'Escape'
+            ? new KeyboardEvent('keydown', {
+                key: 'Escape',
+                bubbles: true,
+                composed: true,
+                cancelable: true,
+              })
+            : new Event('cancel', { cancelable: true });
+        (method === 'Escape' ? player.ui.refs.unlock : player.ui.dialog).dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(player.controlsLocked).toBe(false);
+        expect(player.active).toBe(true);
+        expect(player.ui.host.hasAttribute('data-controls-locked')).toBe(false);
+      }
+    );
+
+    it.each(['close', 'cleanup', 'emptied', 'loadstart', 'picture-in-picture'])(
+      'clears lock ownership on %s',
+      (method) => {
+        const { player, video } = makeController();
+        player.attach();
+        player.open();
+        player.ui.refs.lock.click();
+        expect(player.controlsLocked).toBe(true);
+        if (method === 'close' || method === 'cleanup') {
+          player[method]();
+        } else if (method === 'picture-in-picture') {
+          video.webkitPresentationMode = 'picture-in-picture';
+          video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+        } else {
+          video.dispatchEvent(new Event(method));
+        }
+        expect(player.active).toBe(false);
+        expect(player.controlsLocked).toBe(false);
+        if (method !== 'cleanup') {
+          if (method === 'picture-in-picture') {
+            video.webkitPresentationMode = 'inline';
+            video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+          } else {
+            player.open();
+          }
+          expect(player.active).toBe(true);
+          expect(player.controlsLocked).toBe(false);
+          expect(player.ui.host.hasAttribute('data-controls-locked')).toBe(false);
+          expect(player.ui.shadow.querySelector('.hud').inert).toBeFalsy();
+        }
+      }
+    );
   });
 
   it('keeps the HUD hidden through a delayed control blur and lets a subsequent stage tap wake it', () => {
