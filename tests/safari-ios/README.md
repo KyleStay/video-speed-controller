@@ -5,9 +5,45 @@ native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 P
 simulator running iOS 26.2. It does not establish compatibility with every OS,
 physical iPhone/iPad, or live video site.
 
-## Build 12 source-freeze acceptance
+## Build 13 takeover acceptance — r4
 
-The next candidate, **0.11.4 (12)**, changes the primary **Full screen** action
+The unreleased build 13 candidate owns iOS inline controls by default and routes
+supported synchronous video/container fullscreen API requests during the active
+trusted click/keydown into StayFast, once per event. Test
+plain video and recognized single-video YouTube/Video.js/Plyr/JW/X fixtures;
+require 44px responsive play/pause, skip, mute, timeline, speed and fullscreen
+controls, preserved captions/unknown buttons, and original media/source/DRM state.
+Attachment must leave playback, source, parent and scroll unchanged while
+replacing native controls. Test readiness/source reuse, nested/frame scrolling,
+Done returning inline, explicit Apple bypass, Use site player passthrough, and
+cleanup/toggle restoring only StayFast-owned hooks, attributes and chrome.
+Loading, playback and API requests without current trusted user input must not
+open the owned fullscreen view. A prior click, later task or microtask must not
+provide carried authorization. Test synchronous trusted video/container requests plus
+missing/throwing/previously patched APIs and newer site patches at cleanup.
+Actual clipped media below 52px on either axis must restore native/site controls;
+opening owned fullscreen must acquire controls independently of inline fit.
+
+Frozen r4 resources passed native inline/site fullscreen (38.999s), primary
+entry (71.567s) and full owned-player acceptance (230.672s) on the dedicated
+iPhone 17 Pro/iOS 26.2 simulator. Additional scroll, missing-inline-attribute and
+appearance phases are recorded in [the result record](../../test-results/takeover/r4-native-acceptance.json)
+and local release ledger; only completed phases count as passed.
+Chrome passed owned **43/43**, mobile **11/11**, basic
+**22/22**, dynamic-player ambiguity/class recovery and 0.75×/2× target-scaling
+checks. Native physical-device double-tap remains unverified; Chrome/units do
+not close the simulator touch-delivery gap. A separate genuine YouTube content
+playback check passed; the original **11/12** suite and initial ad-gate failure
+remain recorded. See [the r4 scope and remaining gates](../../docs/safari.md#build-13-takeover-candidate--r4-verification).
+Build 12 results below do not verify takeover.
+Chrome/Firefox behavior must remain unchanged. Extension-inaccessible media,
+closed shadow trees, private/unsupported embeds, captured APIs and unknown CSS
+fullscreen may bypass takeover; asynchronous site routing is not guaranteed.
+Apple's protected UI cannot be modified.
+
+## Build 12 source-freeze acceptance — historical
+
+**0.11.4 (12)** is Testing for two existing testers. It changed the primary **Full screen** action
 to open StayFast's owned player around the original video. **Custom Player**
 remains an explicit alternate entry. The player may request container DOM
 fullscreen where supported; iPhone Safari bars may remain. Apple's native video
@@ -123,7 +159,9 @@ and deliberate Support link opening the system browser:
 xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/links.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 240 -only-testing:StayFastSafariQATests/SafariQATests/testContainingAppLinks test
 ```
 
-Then activate the extension and exercise media:
+Then activate the extension and exercise media. These runners have build 12
+history; build 13 assertions must use StayFast's owned inline transport before
+claiming takeover acceptance:
 
 ```sh
 xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/activation.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 240 -only-testing:StayFastSafariQATests/SafariQATests/testActivation test
@@ -138,8 +176,8 @@ controller, and zero page/media errors. It checks play/pause, range and 10-secon
 seeking, distance-based fine scrubbing with genuine near/far finger drags, mute,
 fit/fill buttons and pinch, remaining/total time, repeated absolute 1×, default
 preferred speed 1.8×, native speed-menu selections through 16×, rejection above 16×, and a custom 12× entry, 44px controls, landscape layout, app switching, Done,
-explicit reopen, and More → Use site player. Done restores the original position while
-restoring native controls and keeping the explicit Custom player entry available; Use site player restores native controls
+explicit reopen, and More → Use site player. In build 13, Done restores the original
+position with owned inline controls and the Custom player entry; Use site player restores native controls
 and leaves playback in the site player. The flow then verifies native fullscreen
 and explicit custom-player reopening after this handback. Use default key bindings for this test;
 the preferred-speed assertion deliberately expects the default 1.8× binding.
@@ -157,7 +195,7 @@ attributes. Kept attachments remain available with verbose system diagnostics
 disabled, avoiding lengthy collection after a failed exploratory assertion.
 
 For the primary-entry harness, open another fresh fixture document, then run
-this mode. Build 12 acceptance requires ordinary inline playback, the compact
+this mode. Build 13 acceptance requires owned inline playback, the responsive
 44px Full screen target opening StayFast, and return to the original inline
 video. Older results from this harness checked direct Apple fullscreen and must
 retain their original labels:
@@ -171,7 +209,7 @@ For scroll restoration, run the same test on three fresh fixture documents after
 activation. The test first uses genuine Play/Pause taps to require decoded readiness.
 The trusted fixture buttons prepare and remember nonzero document
 and nested scroll offsets; assertions never scroll the page. The frame case adds
-both parent-document and parent-container offsets. Build 12 coverage must check
+both parent-document and parent-container offsets. Build 13 coverage must check
 Full screen → Done, optional container fullscreen → return, and More → Apple
 player → return, including the original video's visible position within two CSS
 pixels. Historical runs used the previous direct-native entry; rerun matching
@@ -199,8 +237,8 @@ xcrun simctl openurl "$STAYFAST_SIMULATOR_UDID" "http://127.0.0.1:62938/mobile.h
 xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/safari-ios/inline-playback.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 300 -collect-test-diagnostics never -only-testing:StayFastSafariQATests/InlinePlaybackQATests/testInlineUntilExplicitFullscreen test
 ```
 
-Require ordinary Play and genuine native-control Play to stay inline, with decoded
-time advancing without an owned host. Explicit Full screen must open StayFast;
+Require StayFast inline Play to advance decoded time without a fullscreen-owned
+host. Test native-control Play separately after Use site player. Explicit Full screen must open StayFast;
 More → Apple player must hand off where supported. Both returns must retain
 inline flags and the measured scroll position.
 Explicit Use site player restores the original absent attributes. The response

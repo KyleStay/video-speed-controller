@@ -93,6 +93,18 @@ describe('compact iOS inline controls', () => {
     vi.restoreAllMocks();
   });
 
+  it('hands actual tiny media back and reacquires it after resize without treating viewport clipping as tiny', () => {
+    const availability = vi.fn();
+    video.vsc.iosPlayer.setInlineAvailability = availability;
+    media = { left: 20, top: 40, width: 40, height: 68, right: 60, bottom: 108 };
+    manager.positionInlineControls(shadow, video);
+    expect(availability.mock.calls).toEqual([[false]]);
+    // Only 20px is on screen, but the actual media is wide enough after resize.
+    media = { left: -100, top: 40, width: 120, height: 68, right: 20, bottom: 108 };
+    manager.positionInlineControls(shadow, video);
+    expect(availability.mock.calls).toEqual([[false], [true]]);
+  });
+
   it('does not read layout or write position for a detached controller, including early readiness/resize', () => {
     manager.cleanup();
     host.remove();

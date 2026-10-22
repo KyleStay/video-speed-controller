@@ -483,6 +483,15 @@ class VideoController {
     if (!parent) {
       return false;
     }
+    // A moved ancestor can leave the direct media parent unchanged.
+    try {
+      const siteContainer = this.iosPlayer?.siteControls?.container;
+      if (siteContainer && !siteContainer.contains(this.video)) {
+        this.iosPlayer.refreshSiteControls();
+      }
+    } catch {
+      // Page-owned DOM access must not prevent ordinary placement recovery.
+    }
     if (
       this.div.isConnected &&
       this.parent === parent &&
@@ -498,6 +507,7 @@ class VideoController {
       this.mediaParentAncestor = parent.parentNode;
       if (this.controlsManager.inlineIOS) {
         this.positionControls(this.div);
+        this.iosPlayer?.refreshSiteControls();
       }
       return this.div.isConnected;
     } catch (error) {

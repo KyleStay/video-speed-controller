@@ -62,7 +62,7 @@ import XCTest
         XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
         capture(safari, "before-owned-play")
         safari.buttons["Play test video"].tap()
-        wait(safari, ["paused: false", "owner active: false", "owned hosts: 0", "native controls: true"])
+        wait(safari, ["paused: false", "owner active: false", "owned hosts: 0", "native controls: false"])
         let pill = safari.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Playback speed '")).firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 10))
         pill.tap()
@@ -282,7 +282,7 @@ import XCTest
         safari.activate()
         reveal(safari)
         safari.buttons["Close StayFast video player"].tap()
-        wait(safari, ["owner active: false", "owned hosts: 0", "inline restored: true", "source preserved: true", "original identity: true", "native controls: true", "native fullscreen: false", "errors: 0"])
+        wait(safari, ["owner active: false", "owned hosts: 0", "inline restored: true", "source preserved: true", "original identity: true", "native controls: false", "native fullscreen: false", "errors: 0"])
         capture(safari, "done-inline-original-restored")
         let open = safari.buttons["Open StayFast player"]
         if !open.isHittable {
@@ -333,7 +333,7 @@ import XCTest
         pause.tap()
         wait(safari, ["paused: true", "owner active: true", "owned hosts: 1", "source preserved: true", "original identity: true", "errors: 0"])
         safari.buttons["Close StayFast video player"].tap()
-        wait(safari, ["owner active: false", "owned hosts: 0", "native controls: true", "errors: 0"])
+        wait(safari, ["owner active: false", "owned hosts: 0", "native controls: false", "errors: 0"])
         capture(safari, "custom-reopen-after-site-handback")
     }
     func testOwnedPlayerRuntime() {

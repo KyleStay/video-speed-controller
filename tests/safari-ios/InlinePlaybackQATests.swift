@@ -25,7 +25,7 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 20), .completed)
     }
     private func inline(_ safari: XCUIApplication, playing: Bool? = nil) {
-        var pieces = ["plays inline: true", "webkit inline: true", "inline property: true", "original inline flags: [null,null]", "controllers: 1", "errors: 0", "media error: 0", "owner active: false", "owned hosts: 0", "native fullscreen: false", "native controls: true", "original identity: true", "source preserved: true"]
+        var pieces = ["plays inline: true", "webkit inline: true", "inline property: true", "original inline flags: [null,null]", "controllers: 1", "errors: 0", "media error: 0", "owner active: false", "owned hosts: 0", "native fullscreen: false", "native controls: false", "original identity: true", "source preserved: true"]
         if let playing { pieces.append("paused: " + String(!playing)) }
         wait(safari, pieces)
     }
@@ -86,16 +86,13 @@ import XCTest
         }
         let baseline = [point[0], point[1], top]
         XCTAssertGreaterThan(baseline[1], 500)
-        capture(safari, "native-inline-play-control-before-tap")
-        // iPhone exposes its inline native video controls as one media element,
-        // not individual AX Play buttons. Tap the observed media center where
-        // the native paused Play glyph is shown in the preceding screenshot.
-        let media = safari.otherElements.matching(NSPredicate(format: "label BEGINSWITH 'Test video'")).firstMatch
-        XCTAssertTrue(media.waitForExistence(timeout: 10)); XCTAssertTrue(media.isHittable)
-        XCTAssertGreaterThan(media.frame.width, 100); XCTAssertGreaterThan(media.frame.height, 100)
-        media.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        capture(safari, "owned-inline-play-control-before-tap")
+        let inlinePlay = safari.buttons["Play video"]
+        XCTAssertTrue(inlinePlay.waitForExistence(timeout: 10)); XCTAssertTrue(inlinePlay.isHittable)
+        XCTAssertGreaterThanOrEqual(inlinePlay.frame.width, 44); XCTAssertGreaterThanOrEqual(inlinePlay.frame.height, 44)
+        inlinePlay.tap()
         inline(safari, playing: true); progress(safari)
-        capture(safari, "native-controls-play-stays-inline")
+        capture(safari, "owned-controls-play-stays-inline")
         safari.buttons["Pause test video"].tap(); inline(safari, playing: false)
         safari.buttons["Open video fullscreen"].tap()
         // Primary presentation preserves the already-paused original media.

@@ -145,6 +145,11 @@ with direct `chrome.*` access.
   same-origin iframe ancestors; `ios-player-scrubber` owns precision seeking;
   `ios-player-gestures` owns stage touch gestures. `ios-player-fullscreen` owns
   optional container DOM fullscreen, scoped to the active UI/session and target.
+  `ios-inline-player` owns responsive inline transport; `ios-site-controls`
+  reversibly hides exact recognized chrome; `ios-player-takeover` owns lazy,
+  per-window iOS fullscreen hooks and the explicit Apple-player bypass. Existing
+  child-list reconciliation and known-media class/style rechecks refresh site
+  chrome recognition and ambiguity; scroll placement does not reacquire it.
   Read `docs/safari.md` before changing these.
   `popup/tab-command.js` aggregates frame replies in the popup extension context
   only; it is not part of the MAIN-world module loader.
@@ -236,12 +241,16 @@ with direct `chrome.*` access.
   in Chrome and native WebKit. iOS placement repair repositions the same
   controller after reparenting; desktop manual drag positions remain intact.
   Regression checks must measure inside the readiness handler as well as after
-  observer settling. Inline speed/fullscreen targets are at least 44px, with a
-  default 92px-wide pair including its gap. Compact labels retain the accepted
+  observer settling. iOS-owned inline transport adapts play/pause, seek, mute,
+  timeline, speed and fullscreen to the available area, retaining 44px targets.
+  The compact speed/fullscreen pair remains the fallback. Compact labels retain the accepted
   numeric rate in `dataset.speed` and full accessible text. Bounds account for
   scaled hidden/clip ancestors (at most 24 hops), stopping at scrolling ports.
-  Available width <180px or height <96px selects fullscreen-only; either axis
-  <52px hides the surface and closes its popover. Visible placement uses at most
+  The legacy compact surface selects fullscreen-only below 180px wide or 96px
+  high; owned transport uses its own responsive layout. Actual clipped media
+  below 52px on either axis hides the surface, closes its popover and restores
+  native/site controls. Active owned fullscreen acquires controls independently
+  of inline fit. Visible placement uses at most
   three hit-test passes to avoid covering page chrome while staying within the
   clipped media/viewport; it does not escape blocking modals. Passive captured
   window scroll and visual-viewport scroll share one coalesced animation frame
@@ -250,6 +259,8 @@ with direct `chrome.*` access.
   also refresh placement. Cleanup removes each entry and the last group's
   listeners/frame through its original window, including after document adoption.
   This schedules layout from events, without polling or page-scroll writes.
+  Owned inline Play, speed and fullscreen precede idle-hidden controls so reveal
+  cannot move a target between pointerdown and click.
   Popovers anchor beside the primary controls, clamp text to 13–18px, and make
   child buttons inherit that font rather than the configured global button size.
   While playing, touch-idle collapse uses 2.5s;
@@ -268,8 +279,11 @@ with direct `chrome.*` access.
   test these transitions in Safari. iOS owned-player behavior is below.
 - **iOS presentation**: attachment separately owns the presence of `playsinline`
   and `webkit-playsinline`, including when the site originally omitted them, so
-  ordinary Play stays inline. Attachment leaves the site's controls and native
-  fullscreen APIs unchanged.
+  ordinary Play stays inline. On iOS, attachment owns `controls=false` and inline
+  transport without moving/loading/playing the media, opening fullscreen or
+  writing page scroll. Exact known chrome is hidden only in unambiguous
+  single-video YouTube/Video.js/Plyr/JW/X containers; captions and arbitrary
+  unrecognized controls remain. Ownership is bounded and reversible.
   A per-media observer watches only these two attributes; after a bounded eight
   conflicts it hands back to the site. Cleanup/Use site player restores the
   latest site intent; a new source or explicit Custom Player re-enables inline
@@ -279,10 +293,18 @@ with direct `chrome.*` access.
   fullscreen only for the owned container where permitted. Guard asynchronous
   completion by UI/session/source generation; cleanup removes listeners and
   exits only its owned fullscreen target. More → Apple player explicitly invokes
-  the original media's native presentation API. Native presentation must not
-  trigger automatic takeover or fullscreen exit/reentry loops. `prepareMedia()`
-  owns native controls only for that session; native fullscreen methods remain
-  unchanged. Safari's bars may remain; webpage controls cannot modify Apple's UI.
+  the original media's native presentation API through `withNative`. Lazy iOS-only
+  per-window prototype hooks route controlled video/unambiguous container
+  fullscreen requests synchronously during the current trusted click/keydown to
+  the owned player. Authorize once using native `view.event` in dispatch phase
+  1–3 and the available UserActivation guard. Keep no stored authorization,
+  gesture listeners or authorization timers; asynchronous requests have no routing
+  guarantee. Requests without the current event are suppressed. Use site player restores controls
+  and native passthrough. Last-owner cleanup restores only hooks still owned by
+  StayFast, preserving later page patches. Captured APIs, inaccessible media and
+  unknown CSS fullscreen can bypass interception. Chrome/Firefox remain unchanged.
+  Native events alone never open the player or cause exit/reentry loops.
+  Safari's bars may remain; webpage controls cannot modify Apple's UI.
   Inline-attribute ownership is separate and begins at attachment.
 - **Recycled media sources**: both `emptied` and `loadstart` invalidate the old
   presentation generation, PiP/history resume flags and native/queued scroll
