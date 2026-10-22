@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { launchFixtureBrowser } from './browser-runtime.js';
+import { launchFixtureBrowser, cleanupFixtureBrowsers } from './browser-runtime.js';
 import { startFixtureServer } from './fixture-server.js';
 import { runReliabilityChecks } from './reliability-checks.js';
 
@@ -21,7 +21,7 @@ async function cleanup() {
   }
   stopping = true;
   try {
-    await activeBrowser?.close();
+    await cleanupFixtureBrowsers();
     activeBrowser = null;
   } finally {
     await fixture.stop();
