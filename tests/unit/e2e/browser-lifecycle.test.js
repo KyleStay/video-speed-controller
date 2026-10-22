@@ -34,7 +34,7 @@ describe('owned browser lifecycle', () => {
     events = [];
     browser = {
       close: vi.fn(async () => events.push('Browser.close')),
-      process: () => ({ pid: 123 }),
+      process: () => ({ pid: 123, spawnfile: '/owned/Chrome' }),
       installExtension: vi.fn(async () => 'test-extension'),
       pages: async () => [{ setViewport: vi.fn() }],
     };
@@ -49,6 +49,15 @@ describe('owned browser lifecycle', () => {
     await vi.runAllTimersAsync();
     await cleanup;
     vi.useRealTimers();
+  });
+
+  it('lets Puppeteer resolve Firefox rather than preselecting a Chrome-version cache path', async () => {
+    const active = await launchFixtureBrowser('firefox');
+    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ browser: 'firefox' }));
+    expect(mocks.launch.mock.calls[0][0].executablePath).toBeUndefined();
+    const closed = active.browser.close();
+    await vi.runAllTimersAsync();
+    await closed;
   });
 
   it('uses Browser.close before profile removal without aborting an established runtime', async () => {

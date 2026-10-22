@@ -191,16 +191,14 @@ export async function launchFixtureBrowser(browserName, options = {}) {
     if (browserName === 'firefox' && process.env.FIREFOX_BIN) {
       launchOptions.executablePath = process.env.FIREFOX_BIN;
     }
-    executable =
-      launchOptions.executablePath ||
-      (await puppeteer.executablePath(
-        launchOptions.channel || { browser: browserName, headless: launchOptions.headless }
-      ));
-    launchOptions.executablePath = executable;
+    executable = launchOptions.executablePath;
     if (controller.signal.aborted) {
       throw new Error('Browser launch canceled');
     }
     launching = puppeteer.launch(launchOptions).then((launched) => {
+      // Use the executable Puppeteer actually launched. Pre-resolving another
+      // browser can select the previous launcher's cached version.
+      executable = launched.process()?.spawnfile || executable;
       browser = launched;
       originalClose = browser.close.bind(browser);
       browser.close = close;
