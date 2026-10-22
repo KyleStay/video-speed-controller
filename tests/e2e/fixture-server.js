@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { installPrecisionTrace } from './precision-trace.js';
 import {
   RATE_PROBE_RATES,
   summarizeFrameCadence,
@@ -55,6 +56,7 @@ const mobileHtml = `<!doctype html>
     <div class="scroll-space"></div>
     <script>
       const video = document.querySelector('video');
+      if (new URLSearchParams(location.search).has('precision')) (${installPrecisionTrace.toString()})(video);
       if (new URLSearchParams(location.search).has('rtl')) document.documentElement.dir = 'rtl';
       const scrollFixture = new URLSearchParams(location.search).get('scroll');
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
@@ -230,6 +232,7 @@ const mobileHtml = `<!doctype html>
             '; scrub active: ' + !!owner?.scrubber?.active +
             '; scrub hint: ' + (owner?.ui?.refs?.scrubHint?.textContent || 'none');
           if (owner?.ui) {
+            window.__stayfastPrecision?.bind(owner.ui.refs.seek);
             const shadow = owner.ui.shadow;
             const timeline = shadow.querySelector('.timeline');
             const hud = shadow.querySelector('.hud');
@@ -266,6 +269,9 @@ const mobileHtml = `<!doctype html>
             '; seek feedback: ' + (video.vsc?.iosPlayer?.ui?.refs.seekFeedback?.textContent || 'none') +
             '; owned fullscreen: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.owns?.() +
             '; fullscreen available: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.available?.();
+          if (window.__stayfastPrecision?.report) {
+            text += '; precision: ' + JSON.stringify(window.__stayfastPrecision.report);
+          }
           for (const host of document.querySelectorAll('vsc-ios-player')) {
             controllerObserver.observe(host, { attributes: true, attributeFilter: ['data-controls-hidden'] });
             const dialog = host.shadowRoot?.querySelector('dialog');

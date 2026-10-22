@@ -160,6 +160,7 @@ describe('owned-player pointer precision scrubbing', () => {
       for (const direction of [-1, 1]) {
         owner.video.currentTime = 50;
         pointer('pointerdown');
+        pointer('pointermove', 160, 122 + distance * direction);
         pointer('pointermove', 190, 122 + distance * direction);
         expect(Number(range.value)).toBeCloseTo(50 + 10 * rate);
         vi.advanceTimersByTime(50);
@@ -187,6 +188,85 @@ describe('owned-player pointer precision scrubbing', () => {
     pointer('pointermove', 250, 122);
     vi.advanceTimersByTime(50);
     expect(owner.video.currentTime).toBe(71);
+  });
+
+  it.each([-1, 1])(
+    'keeps diagonal seeking consistent across event delivery above/below (%s)',
+    (direction) => {
+      for (const samples of [1, 2, 5, 10, 100]) {
+        paused = true;
+        owner.video.currentTime = 50;
+        pointer('pointerdown');
+        for (let index = 1; index <= samples; index++) {
+          pointer(
+            'pointermove',
+            160 + (90 * index) / samples,
+            122 + (150 * direction * index) / samples
+          );
+        }
+        // The path spends 44px in each inner band, then 18px at tenth speed.
+        const expected = 50 + (30 * (44 + 44 * 0.5 + 44 * 0.25 + 18 * 0.1)) / 150;
+        expect(scrubber.value).toBeCloseTo(expected, 8);
+        pointer('pointerup', 250, 122 + 150 * direction);
+        expect(owner.video.currentTime).toBeCloseTo(expected, 8);
+        expect(vi.getTimerCount()).toBe(0);
+      }
+    }
+  );
+
+  it('returns along a diagonal path without changing the result when event density changes', () => {
+    paused = true;
+    pointer('pointerdown');
+    pointer('pointermove', 250, -28);
+    expect(scrubber.value).toBeCloseTo(65.76, 8);
+    for (let index = 1; index <= 10; index++) {
+      pointer('pointermove', 250 - 9 * index, -28 + 15 * index);
+    }
+    pointer('pointerup');
+    expect(owner.video.currentTime).toBeCloseTo(50, 8);
+    expect(owner.play).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected time when layout moves underneath the captured finger', () => {
+    paused = true;
+    pointer('pointerdown');
+    range.getBoundingClientRect = () => ({ left: 20, top: 0, width: 600, height: 44 });
+    pointer('pointermove', 160, 122);
+    expect(scrubber.value).toBe(50);
+    pointer('pointermove', 220, 122);
+    pointer('pointerup', 220, 122);
+    expect(owner.video.currentTime).toBeCloseTo(52.5);
+  });
+
+  it.each([false, true])(
+    'commits the final release coordinate after moves (paused=%s)',
+    (wasPaused) => {
+      paused = wasPaused;
+      pointer('pointerdown');
+      pointer('pointermove', 190);
+      pointer('pointerup', 220);
+      expect(owner.video.currentTime).toBeCloseTo(70);
+      expect(Number(range.value)).toBeCloseTo(70);
+      expect(owner.play).toHaveBeenCalledTimes(wasPaused ? 0 : 1);
+      expect(paused).toBe(wasPaused);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('includes an undelivered diagonal move in the release position at fine precision', () => {
+    paused = true;
+    pointer('pointerdown');
+    pointer('pointermove', 160, -28);
+    pointer('pointerup', 190, -28);
+    expect(owner.video.currentTime).toBeCloseTo(51);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('handles a short drag delivered only as down and up', () => {
+    pointer('pointerdown');
+    pointer('pointerup', 190);
+    expect(owner.video.currentTime).toBeCloseTo(60);
+    expect(owner.play).toHaveBeenCalledOnce();
   });
 
   it.each(['pointercancel', 'lostpointercapture'])(

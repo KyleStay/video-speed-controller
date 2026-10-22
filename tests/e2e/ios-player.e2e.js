@@ -1766,6 +1766,128 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         console.log(`   Scrub precision measurements: ${JSON.stringify(measured)}`);
       }
     );
+    await check('one touch crosses all precision bands and returns without jumps', async () => {
+      await page.evaluate(() => {
+        window.__ownedOriginal.currentTime = 30;
+      });
+      await page.waitForFunction(() => {
+        const player = window.__ownedOriginal.vsc.iosPlayer;
+        return !player.scrubber.active && Math.abs(Number(player.ui.refs.seek.value) - 30) < 0.1;
+      });
+      assert.true(
+        await page.evaluate(() => window.__ownedOriginal.paused),
+        'The continuous precision gesture must begin paused'
+      );
+      const bar = await page.evaluate(() => {
+        const range = window.__ownedOriginal.vsc.iosPlayer.ui.refs.seek;
+        const { x, y, width, height } = range.getBoundingClientRect();
+        return {
+          x: x + (width * (30 - Number(range.min))) / (Number(range.max) - Number(range.min)),
+          y: y + height / 2,
+          width,
+          duration: Number(range.max) - Number(range.min),
+        };
+      });
+      assert.true(
+        bar.y - 150 >= 0 && bar.y < page.viewport().height,
+        'The entire continuous precision path must remain inside the viewport'
+      );
+      const session = await page.createCDPSession();
+      const send = (type, x, y) =>
+        session.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints:
+            type === 'touchEnd' || type === 'touchCancel'
+              ? []
+              : [{ x, y, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+        });
+      const measured = [];
+      let x = bar.x;
+      let expected = 30;
+      let touchEnded = false;
+      try {
+        await send('touchStart', x, bar.y);
+        for (const [index, [distance, precision, hint]] of [
+          [0, 1, 'Scrubbing'],
+          [60, 0.5, 'Fine scrubbing · Half speed'],
+          [100, 0.25, 'Fine scrubbing · Quarter speed'],
+          [150, 0.1, 'Fine scrubbing · Tenth speed'],
+          [100, 0.25, 'Fine scrubbing · Quarter speed'],
+          [60, 0.5, 'Fine scrubbing · Half speed'],
+          [0, 1, 'Scrubbing'],
+        ].entries()) {
+          await send('touchMove', x, bar.y - distance);
+          await page.waitForFunction(
+            (text) => {
+              const player = window.__ownedOriginal.vsc.iosPlayer;
+              return player.scrubber.active && player.ui.refs.scrubHint.textContent === text;
+            },
+            { timeout: 2000 },
+            hint
+          );
+          await assertSeekProgress(page, `Vertical-only leg ${index}`, expected, true);
+          const before = await page.evaluate(
+            () => window.__ownedOriginal.vsc.iosPlayer.scrubber.value
+          );
+          assert.true(
+            Math.abs(before - expected) < 0.15,
+            `Changing only distance must preserve the continuous preview at leg ${index}`
+          );
+          const dx = index % 2 === 0 ? 15 : -15;
+          x += dx;
+          const delta = ((dx * bar.duration) / bar.width) * precision;
+          expected += delta;
+          await send('touchMove', x, bar.y - distance);
+          await assertSeekProgress(page, `Continuous ${precision} sensitivity`, expected, true);
+          const preview = await page.evaluate(
+            () => window.__ownedOriginal.vsc.iosPlayer.scrubber.value
+          );
+          assert.true(
+            Math.abs(preview - before - delta) < 0.15,
+            `Equal horizontal travel must use ${precision} sensitivity at leg ${index}`
+          );
+          measured.push({
+            distance,
+            precision,
+            dx,
+            expectedDelta: delta,
+            previewDelta: preview - before,
+          });
+        }
+        await send('touchEnd');
+        touchEnded = true;
+        await page.waitForFunction(
+          (target) => {
+            const player = window.__ownedOriginal.vsc.iosPlayer;
+            return (
+              !player.scrubber.active &&
+              window.__ownedOriginal.paused &&
+              Math.abs(window.__ownedOriginal.currentTime - target) < 0.3
+            );
+          },
+          { timeout: 2000 },
+          expected
+        );
+        await assertSeekProgress(page, 'Continuous gesture release', expected);
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/ios-owned-precision-continuous.png'),
+        });
+      } finally {
+        try {
+          await send('touchCancel').catch((error) => {
+            if (!touchEnded || !error.message.includes('Must send a TouchStart first')) {
+              throw error;
+            }
+          });
+          await page.waitForFunction(() => !window.__ownedOriginal.vsc.iosPlayer.scrubber.active, {
+            timeout: 2000,
+          });
+        } finally {
+          await session.detach();
+        }
+      }
+      console.log(`   Continuous scrub precision measurements: ${JSON.stringify(measured)}`);
+    });
     await check('genuine touch cancellation restores scrub position and paused state', async () => {
       await page.evaluate(() => {
         window.__ownedOriginal.currentTime = 30;

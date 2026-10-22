@@ -121,6 +121,7 @@ class IOSPlayerScrubber {
     this.value = this.startTime;
     this.pointerId = event.pointerId;
     this.lastX = event.clientX;
+    this.lastY = event.clientY;
     this.wasPlaying = !this.video.paused;
     this.active = true;
     try {
@@ -136,7 +137,17 @@ class IOSPlayerScrubber {
     }
     const view = this.range.ownerDocument.defaultView;
     this.listen(view, 'pointermove', (move) => this.move(move), this.gestureListeners, true);
-    this.listen(view, 'pointerup', (up) => this.finish(up), this.gestureListeners, true);
+    this.listen(
+      view,
+      'pointerup',
+      (up) => {
+        // Safari may deliver the release beyond its last pointermove.
+        this.move(up);
+        this.finish(up);
+      },
+      this.gestureListeners,
+      true
+    );
     this.listen(
       view,
       'pointercancel',
@@ -170,6 +181,23 @@ class IOSPlayerScrubber {
     }
   }
 
+  rateForDistance(distance) {
+    return distance >= 132 ? 0.1 : distance >= 88 ? 0.25 : distance >= 44 ? 0.5 : 1;
+  }
+
+  movementRate(fromY, toY, centerY) {
+    const low = Math.min(fromY, toY) - centerY;
+    const high = Math.max(fromY, toY) - centerY;
+    if (high === low) {
+      return this.rateForDistance(Math.abs(high));
+    }
+    // Average the gain along the whole segment, so grouping diagonal moves
+    // into fewer events cannot skip a precision band or change the seek.
+    const fractionWithin = (radius) =>
+      Math.max(0, Math.min(high, radius) - Math.max(low, -radius)) / (high - low);
+    return 0.1 + 0.15 * fractionWithin(132) + 0.25 * fractionWithin(88) + 0.5 * fractionWithin(44);
+  }
+
   move(event) {
     if (!this.active || event.pointerId !== this.pointerId) {
       return;
@@ -184,10 +212,12 @@ class IOSPlayerScrubber {
     if (!bounds || !rect || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
       return;
     }
-    const distance = Math.abs(event.clientY - (rect.top + rect.height / 2));
-    const rate = distance >= 132 ? 0.1 : distance >= 88 ? 0.25 : distance >= 44 ? 0.5 : 1;
-    const delta = ((event.clientX - this.lastX) / rect.width) * (bounds[1] - bounds[0]) * rate;
+    const centerY = rect.top + rect.height / 2;
+    const rate = this.rateForDistance(Math.abs(event.clientY - centerY));
+    const gain = this.movementRate(this.lastY, event.clientY, centerY);
+    const delta = ((event.clientX - this.lastX) / rect.width) * (bounds[1] - bounds[0]) * gain;
     this.lastX = event.clientX;
+    this.lastY = event.clientY;
     if (delta !== 0 || this.value < bounds[0] || this.value > bounds[1]) {
       this.queue(this.value + delta);
     }
