@@ -380,7 +380,9 @@ with direct `chrome.*` access.
   and opaque frames remain local. A child token alone grants no parent authority.
 - **iOS player interaction**: precision seeking captures one pointer and applies
   incremental horizontal movement at normal/half/quarter/tenth sensitivity as
-  vertical distance from the timeline increases in either direction. It pauses
+  vertical distance from the timeline increases in either direction. Average
+  gain across each delivered diagonal segment so event grouping cannot skip
+  bands; consume the pointer-up endpoint before committing the final seek. It pauses
   during the gesture, clamps to current seek bounds, coalesces decoder writes,
   restores the starting time on cancellation, and resumes only an originally
   playing, still-current visible session. Close/cleanup cancels capture, timers,

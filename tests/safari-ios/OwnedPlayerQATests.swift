@@ -336,6 +336,75 @@ import XCTest
         wait(safari, ["owner active: false", "owned hosts: 0", "native controls: false", "errors: 0"])
         capture(safari, "custom-reopen-after-site-handback")
     }
+    private struct PrecisionReport: Decodable {
+        let gesture, samples: Int
+        let bands: [Double]
+        let maxError, verticalDrift, finalError, delta: Double
+        let active, paused, truncated: Bool
+    }
+
+    private func precisionReport(_ safari: XCUIApplication) -> PrecisionReport? {
+        let pieces = status(safari).label.components(separatedBy: "; precision: ")
+        guard pieces.count == 2, let data = pieces[1].data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(PrecisionReport.self, from: data)
+    }
+
+    func testPrecisionScrubbingPaths() throws {
+        try checkPrecisionScrubbingPaths(false)
+    }
+
+    func testPrecisionScrubbingPathsLandscape() throws {
+        try checkPrecisionScrubbingPaths(true)
+    }
+
+    private func checkPrecisionScrubbingPaths(_ landscape: Bool) throws {
+        openAndVerifyPlayback()
+        checkTransportAndMute()
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        if landscape { XCUIDevice.shared.orientation = .landscapeLeft }
+        defer { if landscape { XCUIDevice.shared.orientation = .portrait } }
+        let seek = safari.sliders["Seek video"]
+        func drag(_ name: String, _ dx: CGFloat, _ dy: CGFloat, _ velocity: XCUIGestureVelocity) throws -> PrecisionReport {
+            target(seek)
+            seek.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - 7.5) < 0.6 }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [centered], timeout: 10), .completed)
+            let prior = precisionReport(safari)?.gesture ?? 0
+            let start = seek.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: dx, dy: dy)), withVelocity: velocity, thenHoldForDuration: 0.1)
+            let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let report = self.precisionReport(safari) else { return false }
+                return report.gesture > prior && !report.active && report.samples > 2
+            }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 10), .completed)
+            capture(safari, "precision-path-" + name)
+            let report = try XCTUnwrap(precisionReport(safari))
+            print("PRECISION PATH " + name + ": " + (status(safari).label.components(separatedBy: "; precision: ").last ?? "missing"))
+            XCTAssertFalse(report.truncated)
+            XCTAssertTrue(report.paused)
+            XCTAssertLessThan(report.maxError, 0.00001)
+            XCTAssertLessThan(report.verticalDrift, 0.00001)
+            XCTAssertLessThan(report.finalError, 0.02)
+            return report
+        }
+        let near = try drag("normal", 80, 0, .slow)
+        XCTAssertEqual(near.bands, [1])
+        XCTAssertGreaterThan(near.delta, 0.5)
+        let vertical = try drag("vertical-only", 0, -170, .slow)
+        XCTAssertEqual(vertical.bands, [1, 0.5, 0.25, 0.1])
+        XCTAssertLessThan(abs(vertical.delta), 0.00001)
+        let slow = try drag("diagonal-slow", 80, -170, .slow)
+        XCTAssertEqual(slow.bands, [1, 0.5, 0.25, 0.1])
+        XCTAssertGreaterThan(slow.delta, 0.1)
+        XCTAssertLessThan(slow.delta, near.delta * 0.8)
+        let fast = try drag("diagonal-fast", 80, -170, .fast)
+        XCTAssertGreaterThan(fast.delta, 0.1)
+        XCTAssertLessThan(abs(fast.delta - slow.delta), near.delta * 0.15)
+        wait(safari, ["owner active: true", "original identity: true", "source preserved: true", "errors: 0"])
+        safari.buttons["Close StayFast video player"].tap()
+        wait(safari, ["owner active: false", "owned hosts: 0", "errors: 0"])
+    }
+
     func testThinBottomTimeline() {
         openAndVerifyPlayback()
         checkTransportAndMute()

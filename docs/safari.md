@@ -448,11 +448,17 @@ evidence below does not verify this change.
   captions where possible. Caption changes leave metadata/chapter tracks alone.
 - Drag the timeline horizontally to seek. Moving farther above or below it
   changes sensitivity to half, quarter, then tenth speed without jumping the
-  selected position. Scrubbing pauses playback; release resumes only if the
+  selected position. Keep the finger down as you move away and back; the
+  sensitivity changes within the same gesture. Diagonal movement accounts for
+  every crossed band, even when Safari groups touch updates, and release includes
+  the final finger position. Scrubbing pauses playback; release resumes only if the
   video was playing before the gesture and the current view is still visible.
   Cancellation restores the starting position. Decoder writes are coalesced and
   seek targets stay inside the current finite/live seek range. Keyboard range
   controls remain available.
+  This follows the distance-controlled scrubbing described in Apple's
+  [iOS 3.1 user guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma616_iphone_ios3_1_user_guide.pdf);
+  the four gain levels and no-jump return are StayFast's explicit behavior.
 - Fit shows the whole video; Fill crops its edges. Use the button or a two-finger
   pinch on the video. Tap the duration to alternate total and remaining media
   time. A live stream shows **LIVE** and offers **Go live** when it exposes a
