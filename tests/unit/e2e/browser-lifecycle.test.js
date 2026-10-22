@@ -426,7 +426,7 @@ describe('Linux launched executable identity', () => {
     const start = source.indexOf('async function actualLaunchedExecutable(');
     const end = source.indexOf('\nasync function collectOwned(', start);
     const processRows = vi.fn();
-    for (const row of rows) processRows.mockResolvedValueOnce([row]);
+    for (const row of rows) {processRows.mockResolvedValueOnce([row]);}
     const readlink = vi.fn(async () => '/owned/firefox-bin');
     const context = {
       process: { platform: 'linux' },
