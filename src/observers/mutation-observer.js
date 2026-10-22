@@ -413,6 +413,8 @@ class VideoMutationObserver {
     }
     if (video.isConnected) {
       controller?.repairDOMPlacement?.();
+      // Player composition can change without moving the existing media.
+      controller?.iosPlayer?.refreshSiteControls?.();
     } else {
       this.onVideoRemoved(video);
     }
@@ -637,6 +639,7 @@ class VideoMutationObserver {
       } else {
         // Video is still valid, update visibility based on current state
         video.vsc.repairDOMPlacement?.();
+        video.vsc.iosPlayer?.refreshSiteControls?.();
         video.vsc.updateVisibility();
       }
     } else {

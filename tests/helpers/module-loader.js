@@ -43,6 +43,9 @@ export async function loadCoreModules() {
   await import('../../src/core/video-controller.js');
 
   // UI components
+  await import('../../src/ui/ios-inline-player.js');
+  await import('../../src/ui/ios-site-controls.js');
+  await import('../../src/ui/ios-player-takeover.js');
   await import('../../src/ui/controls.js');
   await import('../../src/ui/drag-handler.js');
   await import('../../src/ui/shadow-dom.js');

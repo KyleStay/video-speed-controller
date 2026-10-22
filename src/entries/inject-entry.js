@@ -33,6 +33,9 @@ import '../core/action-handler.js';
 import '../core/video-controller.js';
 
 // UI components - depends on core functionality
+import '../ui/ios-inline-player.js';
+import '../ui/ios-site-controls.js';
+import '../ui/ios-player-takeover.js';
 import '../ui/controls.js';
 import '../ui/drag-handler.js';
 import '../ui/shadow-dom.js';

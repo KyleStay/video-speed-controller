@@ -128,6 +128,74 @@ async function tapInline(page, selector, mediaId = 'mobile-video', context = pag
   );
 }
 
+async function tapInlinePlayer(page, ref) {
+  const handle = await page.evaluateHandle(
+    (name) => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs[name],
+    ref
+  );
+  try {
+    const bounds = await handle.asElement()?.boundingBox();
+    assert.exists(bounds, `Owned inline control ${ref}`);
+    assert.true(bounds.width >= 44 && bounds.height >= 44, `${ref} must retain a 44px target`);
+    await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  } finally {
+    await handle.dispose();
+  }
+}
+
+async function evaluateWithoutUserGesture(page, callback) {
+  const session = await page.createCDPSession();
+  try {
+    const response = await session.send('Runtime.evaluate', {
+      expression: `(${callback.toString()})()`,
+      userGesture: false,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (response.exceptionDetails) {
+      throw new Error(
+        response.exceptionDetails.exception?.description || response.exceptionDetails.text
+      );
+    }
+    return response.result.value;
+  } finally {
+    await session.detach();
+  }
+}
+
+async function probeProgrammaticFullscreen(page) {
+  const dispatch = await evaluateWithoutUserGesture(page, async () => {
+    const snapshot = () => ({
+      activation: navigator.userActivation.isActive,
+      event: window.event ? { type: window.event.type, trusted: window.event.isTrusted } : null,
+    });
+    const before = snapshot();
+    await window.__stayfastTakeover.programmatic();
+    return { before, after: snapshot() };
+  });
+  console.log(`   Programmatic fullscreen dispatch: ${JSON.stringify(dispatch)}`);
+  assert.true(
+    !dispatch.before.event?.trusted && !dispatch.after.event?.trusted,
+    `The programmatic probe must run outside a trusted dispatch: ${JSON.stringify(dispatch)}`
+  );
+}
+
+function originalOwnFullscreenDescriptors() {
+  const video = window.__ownedOriginal;
+  return [...window.__stayfastInitialFullscreen].every(([name, original]) => {
+    const current = Object.getOwnPropertyDescriptor(video, name);
+    const before = original.descriptor;
+    return (
+      (!before && !current) ||
+      (!!before &&
+        !!current &&
+        ['value', 'get', 'set', 'writable', 'configurable', 'enumerable'].every(
+          (key) => before[key] === current[key]
+        ))
+    );
+  });
+}
+
 async function openCustom(page, mediaId = 'mobile-video', context = page) {
   if (
     !(await context.evaluate(
@@ -338,6 +406,382 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
     };
     await navigate();
     await check(
+      'page-load and synthetic fullscreen calls cannot open a player or move the page',
+      async () => {
+        await navigate('&takeover&standard-fullscreen&onload-fullscreen');
+        await page.waitForFunction(() => window.__stayfastTakeover.requests >= 4);
+        // Puppeteer's ordinary evaluate grants user activation. Read the real
+        // activation state through CDP without creating another gesture first.
+        const activation = await evaluateWithoutUserGesture(page, async () => {
+          const deadline = performance.now() + 6500;
+          while (navigator.userActivation.isActive && performance.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          return navigator.userActivation.isActive;
+        });
+        assert.equal(activation, false, 'The untrusted probe needs real expired user activation');
+        const before = await evaluateWithoutUserGesture(page, () => {
+          const container = document.querySelector('#scroll-container, #parent-scroll');
+          return {
+            pageX: scrollX,
+            pageY: scrollY,
+            nestedX: container?.scrollLeft || 0,
+            nestedY: container?.scrollTop || 0,
+          };
+        });
+        await probeProgrammaticFullscreen(page);
+        await painted(page);
+        const state = await page.evaluate(() => {
+          const trace = window.__stayfastTakeover;
+          return {
+            controls: trace.video.controls,
+            native: trace.nativeBegins + trace.nativeDOMEntries,
+            insertions: trace.ownedInsertions,
+            hosts: document.querySelectorAll('vsc-ios-player').length,
+            fullscreen: !!document.fullscreenElement,
+            active: !!trace.video.vsc.iosPlayer.active,
+            requests: trace.requests,
+            original: trace.video === window.__ownedOriginal,
+          };
+        });
+        assert.true(
+          !state.controls &&
+            state.native === 0 &&
+            state.insertions === 0 &&
+            state.hosts === 0 &&
+            !state.fullscreen &&
+            !state.active &&
+            state.requests >= 8 &&
+            state.original,
+          JSON.stringify(state)
+        );
+        assert.true(
+          await page.evaluate(
+            () =>
+              getComputedStyle(document.querySelector('#site-original-chrome')).display ===
+                'none' &&
+              getComputedStyle(document.querySelector('#unrelated-page-control')).display !== 'none'
+          ),
+          'Default takeover must hide only the recognized player chrome in its own media shell'
+        );
+        await assertScrollPosition(page, before, 'untrusted fullscreen attempts');
+      }
+    );
+    await check(
+      'default owned inline play, seek and mute operate on the original media without fullscreen',
+      async () => {
+        await navigate('&takeover&standard-fullscreen');
+        const before = await scrollPosition(page);
+        const frames = await page.evaluate(
+          () => window.__ownedOriginal.getVideoPlaybackQuality().totalVideoFrames
+        );
+        await tapInlinePlayer(page, 'play');
+        await page.waitForFunction(
+          (previous) =>
+            !window.__ownedOriginal.paused &&
+            window.__ownedOriginal.currentTime > 0 &&
+            window.__ownedOriginal.getVideoPlaybackQuality().totalVideoFrames > previous,
+          {},
+          frames
+        );
+        await tapInlinePlayer(page, 'play');
+        await page.waitForFunction(() => window.__ownedOriginal.paused);
+        await page.evaluate(() => {
+          window.__ownedOriginal.currentTime = 20;
+        });
+        await tapInlinePlayer(page, 'rewind');
+        await page.waitForFunction(() => Math.abs(window.__ownedOriginal.currentTime - 10) < 0.1);
+        await tapInlinePlayer(page, 'forward');
+        await page.waitForFunction(() => Math.abs(window.__ownedOriginal.currentTime - 20) < 0.1);
+        const range = await page.evaluateHandle(
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timeline
+        );
+        try {
+          const bounds = await range.asElement()?.boundingBox();
+          assert.exists(bounds, 'The owned inline timeline must be reachable');
+          assert.true(bounds.height >= 44, 'Inline timeline must retain a 44px touch target');
+          await page.touchscreen.tap(bounds.x + bounds.width * 0.7, bounds.y + bounds.height / 2);
+        } finally {
+          await range.dispose();
+        }
+        await page.waitForFunction(
+          () => window.__ownedOriginal.currentTime > window.__ownedOriginal.duration * 0.55
+        );
+        const muted = await page.evaluate(() => window.__ownedOriginal.muted);
+        await tapInlinePlayer(page, 'mute');
+        await page.waitForFunction((value) => window.__ownedOriginal.muted !== value, {}, muted);
+        // Earlier genuine interaction must not authorize a later programmatic request.
+        await probeProgrammaticFullscreen(page);
+        const inlineState = await page.evaluate(() => {
+          const trace = window.__stayfastTakeover;
+          return {
+            controls: trace.video.controls,
+            active: !!trace.video.vsc.iosPlayer.active,
+            insertions: trace.ownedInsertions,
+            nativeBegins: trace.nativeBegins,
+            nativeDOMEntries: trace.nativeDOMEntries,
+            fullscreen: !!document.fullscreenElement,
+            identity: trace.video === window.__ownedOriginal,
+            source: trace.video.currentSrc === trace.source,
+            requests: trace.events,
+          };
+        });
+        assert.true(
+          !inlineState.controls &&
+            !inlineState.active &&
+            inlineState.insertions === 0 &&
+            inlineState.nativeBegins === 0 &&
+            inlineState.nativeDOMEntries === 0 &&
+            !inlineState.fullscreen &&
+            inlineState.identity &&
+            inlineState.source,
+          `Inline interaction must retain original media/source without fullscreen: ${JSON.stringify(inlineState)}`
+        );
+        await assertScrollPosition(page, before, 'owned inline interaction');
+      }
+    );
+    await check(
+      'dynamic player ambiguity and class changes release and reacquire only scoped site chrome',
+      async () => {
+        await navigate('&takeover&standard-fullscreen');
+        await page.evaluate(() => {
+          const caption = document.createElement('div');
+          caption.id = 'scope-safe-caption';
+          caption.className = 'vjs-text-track-display';
+          caption.textContent = 'Caption remains available';
+          window.__stayfastTakeover.shell.append(caption);
+        });
+        const before = await scrollPosition(page);
+        const original = await page.evaluate(() => ({
+          time: window.__ownedOriginal.currentTime,
+          paused: window.__ownedOriginal.paused,
+        }));
+        const checkScope = async (hidden, label) => {
+          await page.waitForFunction(
+            (suppressed) => {
+              const trace = window.__stayfastTakeover;
+              const bars = [...trace.shell.querySelectorAll('.vjs-control-bar')];
+              const marker = trace.shell.getAttribute('data-vsc-ios-site-controls');
+              return (
+                bars.length > 0 &&
+                bars.every((bar) => (getComputedStyle(bar).display === 'none') === suppressed) &&
+                (suppressed
+                  ? marker !== null && marker !== 'site-original'
+                  : marker === 'site-original')
+              );
+            },
+            {},
+            hidden
+          );
+          const state = await page.evaluate(() => {
+            const trace = window.__stayfastTakeover;
+            const video = window.__ownedOriginal;
+            const visible = (node) =>
+              !!node?.getClientRects().length &&
+              getComputedStyle(node).display !== 'none' &&
+              getComputedStyle(node).visibility !== 'hidden';
+            return {
+              identity: trace.video === video && document.getElementById('mobile-video') === video,
+              controller: video.vsc === window.__ownedController,
+              source: video.currentSrc === trace.source,
+              placement: video.parentElement === trace.shell,
+              paused: video.paused,
+              time: video.currentTime,
+              hosts: document.querySelectorAll('vsc-ios-player').length,
+              fullscreen: !!document.fullscreenElement,
+              insertions: trace.ownedInsertions,
+              native: trace.nativeBegins + trace.nativeDOMEntries,
+              caption: visible(document.querySelector('#scope-safe-caption')),
+              unrelated: visible(document.querySelector('#unrelated-page-control')),
+              chrome: [...trace.shell.querySelectorAll('.vjs-control-bar')].map((bar) => ({
+                id: bar.id,
+                visible: visible(bar),
+              })),
+              marker: trace.shell.getAttribute('data-vsc-ios-site-controls'),
+            };
+          });
+          console.log(`   Dynamic site chrome ${label}: ${JSON.stringify(state)}`);
+          assert.true(
+            state.identity &&
+              state.controller &&
+              state.source &&
+              state.placement &&
+              state.paused === original.paused &&
+              Math.abs(state.time - original.time) < 0.05 &&
+              state.hosts === 0 &&
+              !state.fullscreen &&
+              state.insertions === 0 &&
+              state.native === 0 &&
+              state.caption &&
+              state.unrelated,
+            `${label}: ${JSON.stringify(state)}`
+          );
+          await assertScrollPosition(page, before, `dynamic site chrome ${label}`);
+        };
+        await checkScope(true, 'initial single media');
+        await page.evaluate(() => {
+          const trace = window.__stayfastTakeover;
+          const video = document.createElement('video');
+          video.id = 'scope-extra-video';
+          video.muted = true;
+          video.preload = 'auto';
+          video.src = '/sample.webm';
+          const chrome = document.createElement('div');
+          chrome.id = 'scope-extra-chrome';
+          chrome.className = 'vjs-control-bar';
+          chrome.textContent = 'Second site controls';
+          trace.shell.append(video, chrome);
+        });
+        await page.waitForFunction(
+          () => document.querySelector('#scope-extra-video')?.vsc?.iosPlayer?.attached
+        );
+        await checkScope(false, 'ambiguous second media');
+        assert.equal(
+          await page.evaluate(
+            () => window.__stayfastTakeover.shell.querySelectorAll('.vjs-control-bar').length
+          ),
+          2
+        );
+        await page.evaluate(() => document.querySelector('#scope-extra-video').remove());
+        await checkScope(true, 'second media removed');
+        await page.evaluate(() => window.__stayfastTakeover.shell.classList.remove('video-js'));
+        await checkScope(false, 'recognized class removed');
+        await page.evaluate(() => window.__stayfastTakeover.shell.classList.add('video-js'));
+        await checkScope(true, 'recognized class restored');
+      }
+    );
+    await check(
+      'genuine site video and container fullscreen buttons route to the owned player only',
+      async () => {
+        for (const route of ['video', 'container']) {
+          await navigate('&takeover&standard-fullscreen');
+          const before = await scrollPosition(page);
+          await page.tap(`#site-fullscreen-${route}`);
+          await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.active);
+          assert.true(
+            await page.evaluate((requested) => {
+              const trace = window.__stayfastTakeover;
+              return (
+                trace.lastRequest === requested &&
+                trace.ownedInsertions === 1 &&
+                trace.nativeBegins === 0 &&
+                trace.nativeDOMEntries === 0 &&
+                document.querySelector('vsc-ios-player video') === trace.video &&
+                trace.video.currentSrc === trace.source &&
+                !trace.video.vsc.iosPlayer.nativeSession &&
+                !trace.video.controls
+              );
+            }, route),
+            `Site ${route} fullscreen must preserve the owned controls and original media`
+          );
+          await tapPlayer(page, 'done');
+          await page.waitForFunction(
+            () => !document.querySelector('vsc-ios-player') && !document.fullscreenElement
+          );
+          await assertScrollPosition(page, before, `site ${route} fullscreen return`);
+        }
+      }
+    );
+    await check(
+      'site handback restores controls and own API descriptors and genuine site fullscreen',
+      async () => {
+        await navigate('&takeover&standard-fullscreen');
+        await openCustom(page);
+        await tapPlayer(page, 'site');
+        await page.waitForFunction(
+          () => !document.querySelector('vsc-ios-player') && window.__ownedOriginal.controls
+        );
+        assert.true(
+          await page.evaluate(originalOwnFullscreenDescriptors),
+          'Site handback must restore original own API descriptors'
+        );
+        assert.true(
+          await page.evaluate(
+            () =>
+              window.__ownedOriginal.getAttribute('controls') ===
+              window.__stayfastTakeover.originalControls
+          ),
+          'Handback must restore the original controls attribute value'
+        );
+        assert.true(
+          await page.evaluate(
+            () =>
+              getComputedStyle(document.querySelector('#site-original-chrome')).display !==
+                'none' &&
+              document.querySelector('.video-js').getAttribute('data-vsc-ios-site-controls') ===
+                'site-original'
+          ),
+          'Site handback must restore the original chrome and container marker'
+        );
+
+        await page.tap('#site-fullscreen-video');
+        await page.waitForFunction(() => document.fullscreenElement === window.__ownedOriginal);
+        assert.true(
+          await page.evaluate(
+            () =>
+              window.__stayfastTakeover.nativeDOMEntries === 1 &&
+              !document.querySelector('vsc-ios-player') &&
+              window.__ownedOriginal.controls
+          ),
+          'Handed-back site API must reach original fullscreen'
+        );
+        await exitBrowserFullscreen(page);
+      }
+    );
+    await check(
+      'source reuse keeps inline takeover and teardown restores exact controls and API descriptors',
+      async () => {
+        await navigate('&takeover&standard-fullscreen');
+        await page.tap('#site-fullscreen-container');
+        await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.active);
+        const before = await scrollPosition(page);
+        await page.evaluate(() => {
+          window.__ownedOriginal.src = '/sample.webm?takeover-reused';
+          window.__ownedOriginal.load();
+        });
+        await page.waitForFunction(
+          () =>
+            window.__ownedOriginal.readyState >= 2 &&
+            !window.__ownedOriginal.vsc.iosPlayer.active &&
+            !document.querySelector('vsc-ios-player') &&
+            !document.fullscreenElement
+        );
+        assert.true(
+          await page.evaluate(
+            () =>
+              !window.__ownedOriginal.controls &&
+              window.__ownedOriginal.vsc === window.__ownedController &&
+              window.__ownedOriginal.currentSrc.includes('takeover-reused') &&
+              window.__stayfastTakeover.nativeBegins === 0 &&
+              window.__stayfastTakeover.nativeDOMEntries === 0
+          ),
+          'Recycled source must retain inline ownership and its original controller'
+        );
+        await assertScrollPosition(page, before, 'source reuse');
+        await page.evaluate(() => window.__ownedOriginal.setAttribute('controls', 'site-current'));
+        await page.waitForFunction(() => !window.__ownedOriginal.controls);
+        await page.evaluate(() => window.VSC_controller.teardown());
+        await page.waitForFunction(() => !window.__ownedOriginal.vsc);
+        assert.equal(
+          await page.evaluate(() => window.__ownedOriginal.getAttribute('controls')),
+          'site-current'
+        );
+        assert.true(
+          await page.evaluate(originalOwnFullscreenDescriptors),
+          'Teardown must restore exact original own fullscreen descriptors'
+        );
+        assert.true(
+          await page.evaluate(() =>
+            [...window.__stayfastInitialFullscreen].every(
+              ([name, original]) => window.__ownedOriginal[name] === original.method
+            )
+          ),
+          'Final teardown must restore the original fullscreen method identities'
+        );
+      }
+    );
+    await navigate();
+    await check(
       'normal Play stays inline with compact reachable speed and fullscreen controls',
       async () => {
         await page.tap('#play');
@@ -373,7 +817,10 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             }),
           };
         });
-        assert.true(state.nativeControls && !state.owned && !state.expanded, JSON.stringify(state));
+        assert.true(
+          !state.nativeControls && !state.owned && !state.expanded,
+          JSON.stringify(state)
+        );
         for (const target of state.targets) {
           assert.true(
             target.width >= 44 && target.height >= 44 && target.inside,
@@ -536,16 +983,52 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             window.__ownedOriginal.vsc.div.hasAttribute('data-vsc-inline-tiny')
           );
           const narrow = await page.evaluate(() => {
-            const shadow = window.__ownedOriginal.vsc.div.shadowRoot;
-            const rect = shadow.querySelector('.inline-fullscreen').getBoundingClientRect();
+            const video = window.__ownedOriginal;
+            const host = video.vsc.div;
+            const shadow = host.shadowRoot;
+            const play = video.vsc.controlsManager.inlinePlayer.refs.play;
             return {
-              width: rect.width,
-              height: rect.height,
-              pill: shadow.querySelector('.draggable').getClientRects().length,
+              owned: host.hasAttribute('data-vsc-inline-owned'),
+              layout: host.getAttribute('data-vsc-inline-layout'),
+              media: video.getBoundingClientRect().toJSON(),
+              root: shadow.querySelector('#controller').getBoundingClientRect().toJSON(),
+              play: play.getBoundingClientRect().toJSON(),
+              playVisible: !!play.getClientRects().length,
+              fullscreen: shadow
+                .querySelector('.inline-fullscreen')
+                .getBoundingClientRect()
+                .toJSON(),
+              fullscreenVisible: !!shadow.querySelector('.inline-fullscreen').getClientRects()
+                .length,
+              identity:
+                document.getElementById('mobile-video') === video &&
+                video.vsc === window.__ownedController,
+              source: video.currentSrc === window.__stayfastOwnedFixture.source,
+              hosts: document.querySelectorAll('vsc-ios-player').length,
+              pillVisible: !!shadow.querySelector('.draggable').getClientRects().length,
+              nativeControls: video.controls,
             };
           });
+          console.log(`   Minimal owned inline geometry: ${JSON.stringify(narrow)}`);
+          await page.screenshot({
+            path: resolve('tests/e2e/screenshots/ios-inline-tiny-owned.png'),
+          });
           assert.true(
-            narrow.width >= 44 && narrow.height >= 44 && !narrow.pill,
+            narrow.owned &&
+              narrow.layout === 'minimal' &&
+              narrow.playVisible &&
+              !narrow.nativeControls &&
+              narrow.identity &&
+              narrow.source &&
+              narrow.hosts === 0 &&
+              narrow.play.width >= 44 &&
+              narrow.play.height >= 44 &&
+              narrow.play.left >= narrow.media.left &&
+              narrow.play.right <= narrow.media.right &&
+              narrow.play.top >= narrow.media.top &&
+              narrow.play.bottom <= narrow.media.bottom &&
+              !narrow.fullscreenVisible &&
+              !narrow.pillVisible,
             JSON.stringify(narrow)
           );
           await page.evaluate(() => {
@@ -564,6 +1047,27 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             ),
             0,
             'A media box too small for44px targets must hide instead of clipping controls'
+          );
+          const unavailable = await page.evaluate(() => {
+            const video = window.__ownedOriginal;
+            const host = video.vsc.div;
+            return {
+              nativeControls: video.controls,
+              owned: host.hasAttribute('data-vsc-inline-owned'),
+              inline: video.playsInline && video.hasAttribute('webkit-playsinline'),
+              paused: video.paused,
+              hosts: document.querySelectorAll('vsc-ios-player').length,
+              nativeSession: !!video.vsc.iosPlayer.nativeSession,
+            };
+          });
+          assert.true(
+            unavailable.nativeControls &&
+              !unavailable.owned &&
+              unavailable.inline &&
+              unavailable.paused &&
+              unavailable.hosts === 0 &&
+              !unavailable.nativeSession,
+            JSON.stringify(unavailable)
           );
           await page.evaluate(() => {
             document.querySelector('.player').style.marginTop = '2000px';
@@ -592,6 +1096,138 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         await page.waitForFunction(
           () => !window.__ownedOriginal.vsc.div.hasAttribute('data-vsc-inline-tiny')
         );
+      }
+    );
+    await check(
+      'owned inline controls retain painted touch targets inside actual CSS-scaled ancestors',
+      async () => {
+        try {
+          for (const scale of [0.75, 2]) {
+            await navigate();
+            const before = await scrollPosition(page);
+            await page.evaluate((factor) => {
+              document.querySelector('.player').style.cssText =
+                `position:relative;width:180px;height:110px;margin:12px;overflow:visible;transform-origin:0 0;transform:scale(${factor})`;
+              window.__ownedOriginal.style.height = '110px';
+            }, scale);
+            await painted(page);
+            const state = await page.evaluate(() => {
+              const video = window.__ownedOriginal;
+              const host = video.vsc.div;
+              const shadow = host.shadowRoot;
+              const root = shadow.querySelector('#controller');
+              const media = video.getBoundingClientRect();
+              const ancestor = video.parentElement.getBoundingClientRect();
+              const play = video.vsc.controlsManager.inlinePlayer.refs.play.getBoundingClientRect();
+              const elements = new Set([
+                shadow.querySelector('.draggable'),
+                ...root.querySelectorAll('button,input,select,[role="button"]'),
+              ]);
+              const targets = [...elements]
+                .filter(
+                  (node) =>
+                    node &&
+                    node.getClientRects().length &&
+                    getComputedStyle(node).visibility !== 'hidden' &&
+                    getComputedStyle(node).display !== 'none'
+                )
+                .map((node) => ({
+                  label: node.getAttribute('aria-label') || node.className,
+                  ...node.getBoundingClientRect().toJSON(),
+                }));
+              return {
+                owned: host.hasAttribute('data-vsc-inline-owned'),
+                layout: host.getAttribute('data-vsc-inline-layout'),
+                nativeControls: video.controls,
+                media: media.toJSON(),
+                ancestor: ancestor.toJSON(),
+                clip: {
+                  left: Math.max(0, media.left, ancestor.left),
+                  top: Math.max(0, media.top, ancestor.top),
+                  right: Math.min(innerWidth, media.right, ancestor.right),
+                  bottom: Math.min(innerHeight, media.bottom, ancestor.bottom),
+                },
+                root: root.getBoundingClientRect().toJSON(),
+                play: play.toJSON(),
+                targets,
+                identity:
+                  document.getElementById('mobile-video') === video &&
+                  video.vsc === window.__ownedController,
+                source: video.currentSrc === window.__stayfastOwnedFixture.source,
+                active: !!video.vsc.iosPlayer.active,
+                hosts: document.querySelectorAll('vsc-ios-player').length,
+                fullscreen: !!document.fullscreenElement,
+                paused: video.paused,
+                time: video.currentTime,
+                frames: video.getVideoPlaybackQuality().totalVideoFrames,
+              };
+            });
+            console.log(`   CSS scale ${scale} owned inline geometry: ${JSON.stringify(state)}`);
+            await page.screenshot({
+              path: resolve(`tests/e2e/screenshots/ios-inline-scale-${scale}.png`),
+            });
+            assert.true(
+              state.owned &&
+                !state.nativeControls &&
+                state.identity &&
+                state.source &&
+                !state.active &&
+                state.hosts === 0 &&
+                !state.fullscreen &&
+                state.paused &&
+                state.targets.length > 0,
+              JSON.stringify(state)
+            );
+            const inside = (rect) =>
+              rect.left >= state.clip.left - 2 &&
+              rect.top >= state.clip.top - 2 &&
+              rect.right <= state.clip.right + 2 &&
+              rect.bottom <= state.clip.bottom + 2;
+            assert.true(
+              inside(state.root),
+              `Scaled root must fit clipped media: ${JSON.stringify(state)}`
+            );
+            assert.true(
+              state.play.width + 0.02 >= 44 && state.play.height + 0.02 >= 44 && inside(state.play),
+              `Scaled Play must retain a painted44px touch target: ${JSON.stringify(state)}`
+            );
+            for (const target of state.targets) {
+              assert.true(
+                target.width + 0.02 >= 44 && target.height + 0.02 >= 44 && inside(target),
+                `Every visible scaled target must remain usable: ${JSON.stringify({ scale, target, clip: state.clip })}`
+              );
+            }
+            const x = state.play.left + state.play.width / 2;
+            const y = state.play.top + state.play.height / 2;
+            await page.touchscreen.tap(x, y);
+            await page.waitForFunction(
+              (time, frames) =>
+                !window.__ownedOriginal.paused &&
+                window.__ownedOriginal.currentTime > time + 0.1 &&
+                window.__ownedOriginal.getVideoPlaybackQuality().totalVideoFrames > frames,
+              {},
+              state.time,
+              state.frames
+            );
+            await page.touchscreen.tap(x, y);
+            await page.waitForFunction(() => window.__ownedOriginal.paused);
+            assert.true(
+              await page.evaluate(
+                () =>
+                  document.getElementById('mobile-video') === window.__ownedOriginal &&
+                  window.__ownedOriginal.currentSrc === window.__stayfastOwnedFixture.source &&
+                  !window.__ownedOriginal.controls &&
+                  !window.__ownedOriginal.vsc.iosPlayer.active &&
+                  !document.querySelector('vsc-ios-player') &&
+                  !document.fullscreenElement
+              ),
+              'Genuine scaled Play must keep the original media inline'
+            );
+            await assertScrollPosition(page, before, `CSS scale ${scale} genuine inline playback`);
+          }
+        } finally {
+          await navigate();
+        }
       }
     );
     await check(
@@ -1564,7 +2200,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         assert.true(
           await page.evaluate(
             () =>
-              window.__ownedOriginal.controls &&
+              !window.__ownedOriginal.controls &&
               window.__ownedOriginal.parentNode === window.__stayfastOwnedFixture.parent &&
               !window.__ownedOriginal.vsc.iosPlayer.nativeSession
           )
@@ -1834,7 +2470,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           owned: !!video.vsc?.iosPlayer?.active || !!document.querySelector('vsc-ios-player'),
         };
       });
-    const assertPlayingInline = async (label) => {
+    const assertPlayingInline = async (label, nativeControls = false) => {
       await page.waitForFunction(
         () => !window.__ownedOriginal.paused && window.__ownedOriginal.currentTime > 0
       );
@@ -1844,7 +2480,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         `${label}: ${JSON.stringify(state)}`
       );
       assert.true(
-        state.controls && !state.native && !state.owned,
+        state.controls === nativeControls && !state.native && !state.owned,
         `${label}: ${JSON.stringify(state)}`
       );
     };
@@ -1902,7 +2538,8 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       async () => {
         await navigate('&no-playsinline');
         await page.evaluate(() => {
-          window.__inlineNativeMethod = window.__ownedOriginal.webkitEnterFullscreen;
+          window.__inlineNativeMethod =
+            window.__stayfastInitialFullscreen.get('webkitEnterFullscreen').method;
         });
         await page.tap('#play');
         await assertPlayingInline('before teardown');

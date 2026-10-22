@@ -81,10 +81,94 @@ const mobileHtml = `<!doctype html>
           video.webkitEnterFullscreen = () => { window.__stayfastOwnedFixture.nativeFullscreenCalls++; };
         }
       }
+      const takeoverFixture = new URLSearchParams(location.search).has('takeover');
+      const fullscreenNames = ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen', 'webkitEnterFullscreen', 'webkitEnterFullScreen', 'webkitSetPresentationMode'];
+      window.__stayfastInitialFullscreen = new Map(fullscreenNames.map((name) => [name, {
+        method: video[name], descriptor: Object.getOwnPropertyDescriptor(video, name),
+      }]));
+      if (takeoverFixture) {
+        const shell = video.parentElement;
+        shell.classList.add('video-js');
+        shell.setAttribute('data-vsc-ios-site-controls', 'site-original');
+        const siteChrome = document.createElement('div');
+        siteChrome.className = 'vjs-control-bar'; siteChrome.id = 'site-original-chrome';
+        siteChrome.textContent = 'Original site controls'; shell.append(siteChrome);
+        const unrelated = document.createElement('button');
+        unrelated.className = 'vjs-control-bar'; unrelated.id = 'unrelated-page-control';
+        unrelated.textContent = 'Unrelated page control'; unrelated.style.minHeight = '44px';
+        document.querySelector('#pause').after(unrelated);
+        const trace = window.__stayfastTakeover = {
+          video, shell, source: video.src, originalControls: video.getAttribute('controls'),
+          events: [], nativeBegins: 0, nativeDOMEntries: 0, ownedInsertions: 0,
+          requests: 0, failures: 0, lastRequest: 'none',
+        };
+        const record = (kind, detail = {}) => {
+          trace.events.push({ kind, ...detail });
+          if (trace.events.length > 64) trace.events.shift();
+        };
+        trace.request = (route, event) => {
+          const target = route === 'container' ? shell : video;
+          const name = route === 'webkit' ? 'webkitEnterFullscreen' :
+            route === 'presentation' ? 'webkitSetPresentationMode' : 'requestFullscreen';
+          trace.requests++;
+          trace.lastRequest = route;
+          record('request', { route, trusted: event?.isTrusted === true,
+            active: navigator.userActivation?.isActive === true });
+          try {
+            if (typeof target[name] !== 'function') throw new Error('API unavailable: ' + name);
+            const result = target[name](...(route === 'presentation' ? ['fullscreen'] : []));
+            return Promise.resolve(result).then(() => record('settled', { route }), (error) => {
+              trace.failures++; record('denied', { route, name: error.name });
+            });
+          } catch (error) {
+            trace.failures++; record('denied', { route, name: error.name });
+            return Promise.resolve();
+          }
+        };
+        const actions = document.createElement('div');
+        actions.id = 'site-player-actions';
+        actions.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:8px;';
+        for (const [route, label] of [['video','Site video fullscreen'], ['container','Site player fullscreen'],
+          ['webkit','Site Apple fullscreen'], ['presentation','Site presentation fullscreen']]) {
+          const button = document.createElement('button');
+          button.id = 'site-fullscreen-' + route;
+          button.textContent = label; button.type = 'button'; button.style.minHeight = '44px';
+          button.addEventListener('click', (event) => { trace.request(route, event); });
+          actions.append(button);
+        }
+        document.querySelector('#play').before(actions);
+        video.addEventListener('webkitbeginfullscreen', () => { trace.nativeBegins++; record('native-begin'); });
+        document.addEventListener('fullscreenchange', () => {
+          if (document.fullscreenElement === video || document.fullscreenElement === shell) {
+            trace.nativeDOMEntries++; record('native-dom-entry');
+          }
+        });
+        new MutationObserver((records) => {
+          for (const record of records) for (const node of record.addedNodes) {
+            if (node.nodeType === 1 && node.matches('vsc-ios-player')) trace.ownedInsertions++;
+          }
+        }).observe(document.documentElement, { childList: true, subtree: true });
+        trace.programmatic = async () => {
+          for (const route of ['video', 'container', ...(typeof video.webkitEnterFullscreen === 'function' ? ['webkit'] : []), ...(typeof video.webkitSetPresentationMode === 'function' ? ['presentation'] : [])]) {
+            await trace.request(route);
+          }
+          document.querySelector('#site-fullscreen-video').click();
+          document.querySelector('#site-fullscreen-container').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        };
+        if (new URLSearchParams(location.search).has('onload-fullscreen')) {
+          trace.runOnloadProbe = () => {
+            if (trace.onloadStarted || video.readyState < 1 || !video.vsc?.iosPlayer?.attached || video.controls) return;
+            trace.onloadStarted = true;
+            trace.runOnloadProbe = null;
+            trace.programmatic().then(() => { trace.onloadComplete = true; updateStatus(); });
+          };
+        }
+      }
       const mediaStatus = document.querySelector('#media-status');
       const errors = [];
       const observedRoots = new WeakSet();
       const updateStatus = () => {
+        if (takeoverFixture) window.__stayfastTakeover.runOnloadProbe?.();
         const hosts = document.querySelectorAll(ownedDiagnostics ? 'vsc-controller, vsc-ios-player' : 'vsc-controller');
         for (const host of hosts) {
           if (host.shadowRoot && !observedRoots.has(host.shadowRoot)) {
@@ -106,6 +190,22 @@ const mobileHtml = `<!doctype html>
           '; namespace: ' + !!window.VSC + '; initialized: ' + window.VSC_controller?.initialized +
           '; abort: ' + window.VSC?.videoSpeedConfig?.settings?._abort +
           '; lastSpeed: ' + window.VSC?.videoSpeedConfig?.settings?.lastSpeed;
+        if (takeoverFixture) {
+          const trace = window.__stayfastTakeover;
+          const inline = video.vsc?.controlsManager?.inlinePlayer;
+          text += '; takeover controls: ' + video.controls + '; takeover requests: ' + trace.requests +
+            '; takeover native begins: ' + trace.nativeBegins + '; takeover native DOM: ' + trace.nativeDOMEntries +
+            '; takeover inserts: ' + trace.ownedInsertions + '; takeover last request: ' + trace.lastRequest +
+            '; takeover onload complete: ' + !!trace.onloadComplete +
+            '; takeover inline: ' + !!inline + '; takeover owner active: ' + !!video.vsc?.iosPlayer?.active +
+            '; takeover site controls hidden: ' + (getComputedStyle(document.querySelector('#site-original-chrome')).display === 'none') +
+            '; takeover unrelated visible: ' + (getComputedStyle(document.querySelector('#unrelated-page-control')).display !== 'none') +
+            '; takeover APIs restored: ' + [...window.__stayfastInitialFullscreen].every(([name, original]) => {
+              const current = Object.getOwnPropertyDescriptor(video, name);
+              return !original.descriptor && !current || !!original.descriptor && !!current &&
+                ['value','get','set','writable','configurable','enumerable'].every((key) => original.descriptor[key] === current[key]);
+            });
+        }
         if (ownedDiagnostics) {
           text += '; touch trace: ' + JSON.stringify(window.__stayfastTouchTrace || []);
           const speedSelect = document.querySelector('vsc-ios-player')?.shadowRoot?.querySelector('[aria-label="Playback speed"]');

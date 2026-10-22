@@ -47,6 +47,7 @@ class IOSPlayer {
     this.activeListeners = [];
     this.attributes = new Map();
     this.inlineAttributes = new Map();
+    this.inlineUnavailable = false;
     this.nativeMethods = new Map();
     this.nativeGeneration = 0;
     this.styles = [];
@@ -70,6 +71,8 @@ class IOSPlayer {
     this.attached = true;
     this.enableInlinePlayback();
     this.captureNativeFullscreenMethods();
+    this.releaseTakeover = window.VSC.IOSPlayerTakeover?.register(this);
+    this.prepareMedia();
 
     this.button = this.doc.createElement('button');
     this.button.type = 'button';
@@ -122,12 +125,14 @@ class IOSPlayer {
       this.nativeScroll = null;
       this.scrollRestore?.cancel();
       this.close();
+      this.releaseMediaOwnership();
       this.nativeSession = false;
       this.dismissed = false;
       IOSPlayer.siteRelinquished.delete(this.video);
       this.inlineRelinquished = false;
       this.inlineConflicts = 0;
       this.enableInlinePlayback();
+      this.prepareMedia();
     };
     this.listen(this.video, 'emptied', sourceReset);
     this.listen(this.video, 'loadstart', sourceReset);
@@ -139,6 +144,7 @@ class IOSPlayer {
       this.resumeAfterPip = false;
       this.resumeOnShow = false;
       this.close();
+      this.releaseMediaOwnership();
       this.scrollRestore?.cancel();
     };
     const nativeEnded = () => {
@@ -146,6 +152,7 @@ class IOSPlayer {
       this.nativeGeneration++;
       this.controller.repairDOMPlacement?.();
       this.restoreNativeScroll();
+      this.prepareMedia();
     };
     this.listen(this.video, 'webkitbeginfullscreen', nativeBegan);
     this.listen(this.video, 'webkitendfullscreen', nativeEnded);
@@ -169,12 +176,18 @@ class IOSPlayer {
         return;
       }
       const pip = mode === 'picture-in-picture' || this.doc.pictureInPictureElement === this.video;
-      if (pip && this.active) {
-        this.resumeAfterPip = true;
+      if (pip) {
+        // WebKit may report one PiP entry through two different events.
+        if (this.active) {
+          this.resumeAfterPip = true;
+        }
         this.close();
-      } else if (!pip && this.resumeAfterPip) {
+        this.releaseMediaOwnership();
+      } else if (this.resumeAfterPip) {
         this.resumeAfterPip = false;
         this.open({ automatic: true });
+      } else {
+        this.prepareMedia();
       }
     };
     this.listen(this.video, 'webkitpresentationmodechanged', presentationChanged);
@@ -196,8 +209,71 @@ class IOSPlayer {
     return true;
   }
 
+  setInlineAvailability(available) {
+    const unavailable = !available;
+    if (this.inlineUnavailable === unavailable) {
+      return;
+    }
+    this.inlineUnavailable = unavailable;
+    if (unavailable) {
+      this.releaseMediaOwnership();
+    } else {
+      this.prepareMedia();
+    }
+  }
+
+  shouldOwnInlineMedia() {
+    try {
+      return Boolean(
+        this.attached &&
+        !this.disposed &&
+        (this.active || !this.inlineUnavailable) &&
+        !this.nativeSession &&
+        !IOSPlayer.siteRelinquished.has(this.video) &&
+        !this.video.webkitDisplayingFullscreen &&
+        !['fullscreen', 'picture-in-picture'].includes(this.video.webkitPresentationMode) &&
+        this.doc.pictureInPictureElement !== this.video
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  refreshSiteControls() {
+    if (!this.mediaPrepared || !this.shouldOwnInlineMedia()) {
+      return;
+    }
+    try {
+      this.siteControls?.acquire();
+    } catch {
+      // Reparenting must not interrupt controller repair.
+    }
+  }
+
+  setInlineOwnership(owned) {
+    try {
+      this.controller.controlsManager?.inlinePlayer?.setOwned(owned);
+      if (owned && this.shouldOwnInlineMedia()) {
+        this.siteControls ||= new window.VSC.IOSSiteControls(this.video);
+        this.siteControls.acquire();
+      } else {
+        this.siteControls?.release();
+      }
+    } catch {
+      // A page can replace DOM APIs; presentation cleanup must remain available.
+    }
+  }
+
   prepareMedia() {
-    if (this.mediaPrepared || this.disposed) {
+    if (!this.shouldOwnInlineMedia()) {
+      return;
+    }
+    this.setInlineOwnership(true);
+    if (!this.shouldOwnInlineMedia()) {
+      this.setInlineOwnership(false);
+      return;
+    }
+    if (this.mediaPrepared) {
       return;
     }
     this.mediaPrepared = true;
@@ -338,7 +414,8 @@ class IOSPlayer {
       'requestFullscreen',
     ]) {
       try {
-        const method = this.video[name];
+        const method =
+          window.VSC.IOSPlayerTakeover?.nativeMethod(this.video, name) || this.video[name];
         if (typeof method === 'function') {
           this.nativeMethods.set(name, method);
         }
@@ -396,6 +473,7 @@ class IOSPlayer {
     recovery?.cancel?.();
     this.nativeSession = false;
     this.restoreNativeScroll();
+    this.prepareMedia();
     if (recovery) {
       // Reopen only the owned viewport: no fullscreen request and no play call.
       this.open();
@@ -492,10 +570,11 @@ class IOSPlayer {
     this.nativeSession = true;
     for (const [name, method] of this.nativeMethods) {
       try {
-        const result = method.apply(
-          this.video,
-          name === 'webkitSetPresentationMode' ? ['fullscreen'] : []
-        );
+        const invoke = () =>
+          method.apply(this.video, name === 'webkitSetPresentationMode' ? ['fullscreen'] : []);
+        const result = window.VSC.IOSPlayerTakeover
+          ? window.VSC.IOSPlayerTakeover.withNative(this, invoke)
+          : invoke();
         Promise.resolve(result)
           .then(
             () => recovery?.cancel?.(),
@@ -634,6 +713,10 @@ class IOSPlayer {
     this.originParent.insertBefore(this.placeholder, this.portalNode);
     this.originalSlot = this.portalNode.getAttribute('slot');
     this.active = true;
+    // Fullscreen ownership is independent of whether inline targets could fit.
+    if (!this.mediaPrepared) {
+      this.prepareMedia();
+    }
     IOSPlayer.activePlayers.set(this.doc, this);
     this.doc.documentElement.append(this.ui.host);
     this.portalNode.setAttribute('slot', 'media');
@@ -1609,7 +1692,11 @@ class IOSPlayer {
     } catch {
       /* Site removed focus target. */
     }
-    this.releaseMediaOwnership();
+    if (this.shouldOwnInlineMedia()) {
+      this.prepareMedia();
+    } else {
+      this.releaseMediaOwnership();
+    }
     this.controller.repairDOMPlacement?.();
     if (scroll) {
       this.scrollRestore = scroll;
@@ -1627,6 +1714,7 @@ class IOSPlayer {
   }
 
   releaseMediaOwnership() {
+    this.setInlineOwnership(false);
     this.attributeObserver?.disconnect();
     this.attributeObserver = null;
     for (const [name, state] of this.attributes) {
@@ -1646,6 +1734,8 @@ class IOSPlayer {
     this.disposed = true;
     this.nativeGeneration++;
     this.nativeSession = false;
+    this.releaseTakeover?.();
+    this.releaseTakeover = null;
     this.nativeMethods.clear();
     this.close();
     this.scrollRestore?.cancel();

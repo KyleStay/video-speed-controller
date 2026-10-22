@@ -14,6 +14,7 @@ class ControlsManager {
     this.closeTouchControls = null;
     this.touchMode = false;
     this.inlineIOS = false;
+    this.inlinePlayer = null;
     this.inlineHideTimer = null;
     this.inlineTimerView = null;
     this.inlinePointerActivity = false;
@@ -109,6 +110,9 @@ class ControlsManager {
     const host = shadow.host;
     const view = host.ownerDocument.defaultView;
     this.inlineTimerView = view;
+    if (window.VSC.IOSInlinePlayer) {
+      this.inlinePlayer = new window.VSC.IOSInlinePlayer(this, shadow, video);
+    }
     const position = () => {
       this.positionInlineControls(shadow, video);
       this.positionTouchPanel?.();
@@ -255,6 +259,11 @@ class ControlsManager {
     const controller = shadow.querySelector('#controller');
     const view = shadow.host.ownerDocument.defaultView;
     const media = this.getInlineMediaBounds(video);
+    try {
+      video.vsc?.iosPlayer?.setInlineAvailability?.(media.width >= 52 && media.height >= 52);
+    } catch {
+      // A disappearing site player cannot strand the other inline controls.
+    }
     const viewport = view.visualViewport;
     const left = viewport?.offsetLeft || 0;
     const top = viewport?.offsetTop || 0;
@@ -271,6 +280,19 @@ class ControlsManager {
       'data-vsc-inline-tiny',
       availableWidth < 180 || availableHeight < 96
     );
+    this.inlinePlayer?.position({
+      bounds: media,
+      clipped: {
+        left: Math.max(media.left, left),
+        top: Math.max(media.top, top),
+        right: Math.min(media.right, right),
+        bottom: Math.min(media.bottom, bottom),
+      },
+      width: availableWidth,
+      height: availableHeight,
+      visible,
+      unavailable,
+    });
     if (unavailable) {
       this.setTouchExpanded(shadow, false);
       return;
@@ -293,7 +315,8 @@ class ControlsManager {
     if (visible) {
       this.avoidInlineOcclusion(shadow, video, placement);
     }
-    controller.style.transform = `translate(${placement.x - rect.left}px, ${placement.y - rect.top}px)`;
+    const scale = this.inlinePlayer?.owned ? this.inlinePlayer.scale : null;
+    controller.style.transform = `translate(${(placement.x - rect.left) / (scale?.x || 1)}px, ${(placement.y - rect.top) / (scale?.y || 1)}px)`;
     const player = video.vsc?.iosPlayer;
     if (player) {
       const button = shadow.querySelector('.inline-fullscreen');
@@ -577,6 +600,8 @@ class ControlsManager {
   }
 
   cleanup() {
+    this.inlinePlayer?.cleanup();
+    this.inlinePlayer = null;
     this.clearInlineCollapse();
     this.closeTouchControls?.();
     for (const cleanup of this.cleanupHandlers) {
@@ -657,6 +682,9 @@ class ControlsManager {
    */
   setupButtonHandlers(shadow, video = this.video) {
     shadow.querySelectorAll('button').forEach((button) => {
+      if (button.dataset.inlineAction) {
+        return; // The owned inline transport owns its media-local actions.
+      }
       // Click handler
       button.addEventListener(
         'click',

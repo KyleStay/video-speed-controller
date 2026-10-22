@@ -8,9 +8,60 @@ acceptance checks below pass on the intended devices.
 For signed iOS distribution and ready-to-use App Store Connect metadata, see
 [the TestFlight release packet](testflight.md).
 
+## Build 13 takeover candidate — r4 verification
+
+**0.11.4 (13)** replaces controlled iOS HTML5 video controls inline by default:
+responsive 44px play/pause, ten-second skips, mute, timeline, speed and fullscreen.
+Attachment sets `controls=false` and inline flags on the original node without
+portal movement, source changes, load/play calls, fullscreen entry or page-scroll
+writes. Recognized single-video YouTube, Video.js, Plyr, JW Player and X chrome
+is hidden through scoped, reversible selectors; captions and arbitrary unknown
+buttons are preserved. Done returns to owned inline controls; **Use site player**
+restores the site's controls and native fullscreen passthrough.
+
+`IOSPlayerTakeover` installs lazy per-window prototype hooks only on iOS. Supported
+controlled video/container fullscreen API requests made synchronously during
+the current trusted click or keydown open StayFast's owned player. The native
+current event must still be dispatching and can authorize only one request;
+there is no stored gesture token, listener or authorization timer. Requests
+without that event are suppressed; asynchronous site requests have no routing guarantee.
+Explicit **More → Apple player** uses the native bypass. Cleanup restores only
+StayFast's own hooks and owned attributes/styles, preserving subsequent site edits.
+Ordinary playback/loading does not trigger a portal or fullscreen takeover.
+
+Scope is supported HTML5 videos in extension-accessible frames. Closed shadow
+trees, private/unsupported embeds, previously captured native APIs and unknown
+CSS fullscreen can bypass interception. Apple's protected player UI cannot be
+modified, and iPhone Safari bars may remain. Chrome/Firefox behavior is unchanged.
+Build 13 is unreleased. The frozen r4 resources passed Chrome owned-player
+**43/43**, mobile **11/11** and basic **22/22** checks. Built-fixture checks also
+passed dynamic player ambiguity/class recovery and 44px targets at 0.75×/2×
+scaling. The native iPhone 17 Pro/iOS 26.2 simulator passed inline/site fullscreen
+(38.999s), primary entry (71.567s) and full owned-player acceptance (230.672s).
+Additional page/nested/frame scroll, missing-inline-attribute and appearance
+acceptance is recorded phase by phase in [the native result record](../test-results/takeover/r4-native-acceptance.json)
+and local release ledger; only completed phases count as passed.
+
+Live YouTube initially passed **10/12**; an unchanged-assertion diagnostic run
+passed **11/12**, retaining one play `AbortError` amid ad/source churn on the
+same controlled video. The initial separate content probe's ad-gate timeout is
+retained. A second separate probe passed after genuine Play and visible Skip,
+then Pause/Play: time advanced 0.13549→1.270889s, decoded frames 7→35 and eight
+presented callbacks were observed. Genuine D changed 1×→1.1× and R restored 1×;
+the video/source remained the same, content was not an ad and its controller
+stayed connected. It recorded zero page errors and cleaned up all owned Chrome
+processes/profiles. This separate pass does not change the original suite's
+**11/12** result. Final full-suite output belongs to the local release ledger.
+
+Native physical-device double-tap remains unverified; the simulator's one-touch-pair
+delivery gap is unchanged. No physical-device, all-site, audio, DRM or AirPlay
+acceptance is claimed. Final acceptance/distribution belongs to the local build 13
+release ledger and test results; no build 13 Testing status is asserted.
+The build 12 records below remain historical evidence for the earlier policy.
+
 ## Build 12 presentation policy and source-freeze acceptance
 
-The next candidate is **0.11.4 (12)**. The primary **Full screen** action opens
+**0.11.4 (12)** is Testing for the two existing testers. Its primary **Full screen** action opens
 StayFast's owned player around the original media. **Custom Player** remains an
 explicit alternate entry. Ordinary Play stays inline; loading or playing media
 does not automatically open the player or move the page.
@@ -224,15 +275,17 @@ physical-device or streaming-site performance.
 
 ## Inline control fit
 
-On iPhone/iPad, inline controls use two separate 44px targets for speed and
-the StayFast player. The cluster fits the video's visible, clipped bounds
+On iPhone/iPad, build 13's owned inline transport adapts play/pause, skips, mute,
+timeline, speed and fullscreen to available space with 44px targets. Compact
+layouts progressively reduce controls. The surface fits the video's visible, clipped bounds
 and avoids overlapping site headers where space permits. Scrolling refreshes
 visible controllers through one shared listener and one coalesced animation
 frame per window; it does not write page scroll offsets.
 
-When the available video area is narrower than 180px or shorter than 96px,
-only the fullscreen target remains. If either dimension is below 52px, the
-inline controls hide because a 44px target plus its insets cannot fit. Expanded
+The compact speed/fullscreen pair and fullscreen-only layout remain fallbacks.
+If the actual clipped media is below 52px on either axis, inline controls hide
+and native/site controls return because the touch targets cannot fit. Active
+owned fullscreen acquires controls independently of this inline-fit fallback. Expanded
 controls remain within the visual viewport. Compact speed labels retain the full
 accepted rate in their accessible label and state.
 

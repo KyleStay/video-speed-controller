@@ -541,7 +541,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(audio.div.shadowRoot.querySelector('button')).toBeNull();
   });
 
-  it('adds one explicit custom entry point while preserving native controls and inline playback', () => {
+  it('adds one explicit custom entry point while owning inline controls and playback', () => {
     const { player, video, div } = makeController();
     player.attach();
     player.attach();
@@ -551,13 +551,299 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(buttons[0].getAttribute('aria-label') || buttons[0].textContent).toMatch(
       /Open StayFast player/i
     );
-    expect(video.controls).toBe(true);
+    expect(video.controls).toBe(false);
     expect(video.playsInline).toBe(true);
     expect(player.active).toBe(false);
   });
 
+  describe('default inline media ownership', () => {
+    it('removes native controls at attachment without opening, playing, loading or scrolling the media', () => {
+      const { player, video, parent, controller, stream } = makeController();
+      const source = video.getAttribute('src');
+      const order = [...parent.childNodes];
+      const show = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
+      const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+      const load = vi.spyOn(video, 'load');
+      expect(player.attach()).toBe(true);
+      expect(video.controls).toBe(false);
+      expect(video.playsInline).toBe(true);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(true);
+      expect(player.active).toBe(false);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+      expect([...parent.childNodes]).toEqual(order);
+      expect(video.vsc).toBe(controller);
+      expect(video.srcObject).toBe(stream);
+      expect(video.getAttribute('src')).toBe(source);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      expect(show).not.toHaveBeenCalled();
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it('releases native and site UI ownership when inline controls do not fit, then reacquires once when available', () => {
+      const { player, video, controller } = makeController();
+      const setOwned = vi.fn();
+      controller.controlsManager = { inlinePlayer: { setOwned } };
+      player.attach();
+      expect(video.controls).toBe(false);
+      const release = vi.spyOn(player.siteControls, 'release');
+      const acquire = vi.spyOn(player.siteControls, 'acquire');
+      const remove = vi.spyOn(video, 'removeAttribute');
+      setOwned.mockClear();
+      player.setInlineAvailability(false);
+      expect(video.controls).toBe(true);
+      expect(setOwned).toHaveBeenCalledExactlyOnceWith(false);
+      expect(release).toHaveBeenCalledOnce();
+      player.setInlineAvailability(false);
+      expect(setOwned).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+      expect(remove.mock.calls.filter(([name]) => name === 'controls')).toHaveLength(0);
+      player.setInlineAvailability(true);
+      expect(video.controls).toBe(false);
+      expect(setOwned.mock.calls).toEqual([[false], [true]]);
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(remove.mock.calls.filter(([name]) => name === 'controls')).toHaveLength(1);
+      player.setInlineAvailability(true);
+      expect(setOwned.mock.calls).toEqual([[false], [true]]);
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(remove.mock.calls.filter(([name]) => name === 'controls')).toHaveLength(1);
+      expect(player.active).toBe(false);
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('owns controls during explicit fullscreen on unavailable inline media and restores site controls on close', async () => {
+      const { player, video, controller, parent, stream } = makeController();
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      const source = video.src;
+      player.attach();
+      player.setInlineAvailability(false);
+      expect(video.controls).toBe(true);
+      const open = vi.spyOn(player, 'open');
+      player.open({ fullscreen: true });
+      expect(player.active).toBe(true);
+      expect(video.controls).toBe(false);
+      expect(player.ui.host.contains(video)).toBe(true);
+      expect(video.vsc).toBe(controller);
+      expect(video.src).toBe(source);
+      expect(video.srcObject).toBe(stream);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      player.close();
+      video.dispatchEvent(new Event('playing'));
+      await flushEvents();
+      expect(player.active).toBe(false);
+      expect(video.controls).toBe(true);
+      expect(video.parentNode).toBe(parent);
+      expect(video.vsc).toBe(controller);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+      expect(open).toHaveBeenCalledExactlyOnceWith({ fullscreen: true });
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(native).not.toHaveBeenCalled();
+    });
+
+    it('does not reclaim an explicit site-player handback when inline availability returns', () => {
+      const { player, video, controller } = makeController();
+      const setOwned = vi.fn();
+      controller.controlsManager = { inlinePlayer: { setOwned } };
+      player.attach();
+      player.restoreSitePlayer();
+      setOwned.mockClear();
+      player.setInlineAvailability(false);
+      player.setInlineAvailability(true);
+      expect(video.controls).toBe(true);
+      expect(video.hasAttribute('playsinline')).toBe(false);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(false);
+      expect(window.VSC.IOSPlayer.siteRelinquished.has(video)).toBe(true);
+      expect(setOwned).not.toHaveBeenCalledWith(true);
+      expect(player.mediaPrepared).toBe(false);
+      expect(player.active).toBe(false);
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('does not remove native controls after initial inline acquisition synchronously refuses insufficient space', () => {
+      const { player, video, controller } = makeController();
+      const setOwned = vi.fn((owned) => {
+        if (owned) {
+          player.setInlineAvailability(false);
+        }
+      });
+      controller.controlsManager = { inlinePlayer: { setOwned } };
+      const remove = vi.spyOn(video, 'removeAttribute');
+      const acquire = vi.spyOn(window.VSC.IOSSiteControls.prototype, 'acquire');
+      player.attach();
+      expect(video.controls).toBe(true);
+      expect(remove.mock.calls.filter(([name]) => name === 'controls')).toHaveLength(0);
+      expect(player.mediaPrepared).toBe(false);
+      expect(player.attributeObserver).toBeFalsy();
+      expect(acquire).not.toHaveBeenCalled();
+      expect(player.active).toBe(false);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('limits inline controls reassertion to eight writes and restores the latest site intent on handback', async () => {
+      const { player, video, controller, div, parent } = makeController();
+      player.attach();
+      const removeAttribute = vi.spyOn(video, 'removeAttribute');
+      for (let conflict = 0; conflict < 12; conflict++) {
+        video.setAttribute('controls', `site-${conflict}`);
+        await flushEvents();
+      }
+      expect(removeAttribute.mock.calls.filter(([name]) => name === 'controls')).toHaveLength(8);
+      expect(video.getAttribute('controls')).toBe('site-11');
+      expect(player.active).toBe(false);
+      expect(player.attached).toBe(false);
+      expect(player.disposed).toBe(true);
+      expect(video.hasAttribute('playsinline')).toBe(false);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      expect(div.shadowRoot.querySelector('button')).toBeNull();
+      expect(video.vsc).toBe(controller);
+      expect(controller.remove).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    });
+
+    it('keeps default inline ownership after Done while restoring the original media location and session', () => {
+      const { player, video, parent, controller, stream } = makeController();
+      player.attach();
+      player.open();
+      const host = player.ui.host;
+      player.ui.refs.done.click();
+      expect(player.active).toBe(false);
+      expect(host.isConnected).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      expect(video.controls).toBe(false);
+      expect(video.playsInline).toBe(true);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(true);
+      expect(video.vsc).toBe(controller);
+      expect(video.srcObject).toBe(stream);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(controller.remove).not.toHaveBeenCalled();
+    });
+
+    it('restores the latest site controls value on explicit site-player handback and leaves native entry available', async () => {
+      const { player, video, parent } = makeController();
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.attach();
+      video.setAttribute('controls', 'site-latest');
+      await flushEvents();
+      expect(video.controls).toBe(false);
+      player.restoreSitePlayer();
+      expect(video.getAttribute('controls')).toBe('site-latest');
+      expect(video.hasAttribute('playsinline')).toBe(false);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      video.webkitEnterFullscreen();
+      expect(native).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    });
+
+    it('does not manufacture native controls when the site originally left them absent', () => {
+      const { player, video } = makeController();
+      video.removeAttribute('controls');
+      player.attach();
+      player.open();
+      player.ui.refs.done.click();
+      expect(video.controls).toBe(false);
+      player.cleanup();
+      expect(video.hasAttribute('controls')).toBe(false);
+      expect(video.hasAttribute('playsinline')).toBe(false);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(false);
+    });
+
+    it('preserves pending site controls intent across a recycled source before observer delivery', () => {
+      const { player, video, controller, parent } = makeController();
+      player.attach();
+      video.setAttribute('controls', 'new-source-intent');
+      video.src = 'https://media.example.test/next-resource.mp4';
+      video.dispatchEvent(new Event('loadstart'));
+      expect(video.controls).toBe(false);
+      expect(player.active).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      expect(video.vsc).toBe(controller);
+      expect(video.playbackRate).toBe(1.5);
+      expect(video.play).not.toHaveBeenCalled();
+      player.cleanup();
+      expect(video.getAttribute('controls')).toBe('new-source-intent');
+    });
+
+    it('preserves synchronous site controls edits when cleanup precedes mutation delivery', () => {
+      const { player, video, controller } = makeController();
+      player.attach();
+      video.setAttribute('controls', 'site-pending');
+      player.cleanup();
+      expect(video.getAttribute('controls')).toBe('site-pending');
+      expect(video.hasAttribute('playsinline')).toBe(false);
+      expect(video.hasAttribute('webkit-playsinline')).toBe(false);
+      expect(player.disposed).toBe(true);
+      expect(controller.remove).not.toHaveBeenCalled();
+    });
+
+    it('releases controls for the explicit Apple player and reacquires inline ownership only after native exit', () => {
+      const { player, video, parent, controller } = makeController();
+      const native = vi.fn(() => {
+        expect(video.controls).toBe(true);
+        expect(video.parentNode).toBe(parent);
+        expect(document.querySelector('vsc-ios-player')).toBeNull();
+        video.dispatchEvent(new Event('webkitbeginfullscreen'));
+      });
+      video.webkitEnterFullscreen = native;
+      player.attach();
+      player.open();
+      player.ui.refs.native.click();
+      expect(native).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+      expect(video.controls).toBe(true);
+      video.dispatchEvent(new Event('webkitendfullscreen'));
+      expect(video.controls).toBe(false);
+      expect(video.playsInline).toBe(true);
+      expect(player.active).toBe(false);
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+      expect(video.vsc).toBe(controller);
+      expect(video.currentTime).toBe(12.5);
+      expect(video.playbackRate).toBe(1.5);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it.each(['emptied', 'loadstart'])(
+      'reacquires default ownership for a recycled source after explicit site-player handback on %s',
+      (type) => {
+        const { player, video, parent, controller, stream } = makeController();
+        player.attach();
+        player.restoreSitePlayer();
+        expect(video.controls).toBe(true);
+        video.src = 'https://media.example.test/recycled.mp4';
+        video.dispatchEvent(new Event(type));
+        expect(video.controls).toBe(false);
+        expect(video.playsInline).toBe(true);
+        expect(video.hasAttribute('webkit-playsinline')).toBe(true);
+        expect(player.active).toBe(false);
+        expect(document.querySelector('vsc-ios-player')).toBeNull();
+        expect(video.parentNode).toBe(parent);
+        expect(video.vsc).toBe(controller);
+        expect(video.srcObject).toBe(stream);
+        expect(video.playbackRate).toBe(1.5);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(controller.remove).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   describe('inline policy while the video remains controlled', () => {
-    it('adds missing inline flags before ordinary play without touching controls, source or native APIs', async () => {
+    it('adds missing inline flags before ordinary play while owning controls and preserving source and native APIs', async () => {
       const { player, video, controller, parent, stream } = makeController();
       const enter = vi.fn();
       video.webkitEnterFullscreen = enter;
@@ -566,7 +852,7 @@ describe('iOS player ownership, playback, and restoration', () => {
       player.attach();
       expect(video.playsInline).toBe(true);
       expect(video.hasAttribute('webkit-playsinline')).toBe(true);
-      expect(video.controls).toBe(true);
+      expect(video.controls).toBe(false);
       expect(Object.getOwnPropertyDescriptor(video, 'webkitEnterFullscreen')).toEqual(descriptor);
       await video.play();
       video.dispatchEvent(new Event('playing'));
@@ -593,7 +879,7 @@ describe('iOS player ownership, playback, and restoration', () => {
       player.open();
       player.close();
       expect(video.playsInline).toBe(true);
-      expect(video.controls).toBe(true);
+      expect(video.controls).toBe(false);
       expect(player.enterNativeFullscreen()).toBe(true);
       video.dispatchEvent(new Event('webkitendfullscreen'));
       expect(video.playsInline).toBe(true);
@@ -921,13 +1207,13 @@ describe('iOS player ownership, playback, and restoration', () => {
     await flushEvents();
     expect(player.active).toBe(false);
     expect(video.parentNode).toBe(parent);
-    expect(video.controls).toBe(true);
+    expect(video.controls).toBe(false);
     expect(siteClick).toHaveBeenCalledOnce();
     player.button.click();
     expect(player.active).toBe(true);
     expect(video.controls).toBe(false);
     player.close();
-    expect(video.controls).toBe(true);
+    expect(video.controls).toBe(false);
     expect(video.playsInline).toBe(true);
   });
 
@@ -1181,7 +1467,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     reject(new Error('NotAllowedError'));
     await flushEvents();
     expect(player.nativeSession).toBe(false);
-    expect(video.controls).toBe(true);
+    expect(video.controls).toBe(false);
     expect(video.parentNode).toBe(parent);
     player.cleanup();
     video.dispatchEvent(new Event('webkitbeginfullscreen'));
@@ -1395,7 +1681,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     });
     failing.player.attach();
     expect(failing.player.enterNativeFullscreen()).toBe(false);
-    expect(failing.video.controls).toBe(true);
+    expect(failing.video.controls).toBe(false);
     failing.video.remove();
     expect(failing.player.enterNativeFullscreen()).toBe(false);
     expect(failing.video.webkitEnterFullscreen).toHaveBeenCalledOnce();
@@ -1534,6 +1820,77 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.active).toBe(false);
   });
 
+  it('resumes the same owned video once after duplicate PiP entry notifications without extra playback or native entry', () => {
+    const { player, video, controller, stream, parent } = makeController();
+    video.webkitPresentationMode = 'inline';
+    const native = vi.fn();
+    const present = vi.fn();
+    video.webkitEnterFullscreen = native;
+    video.webkitSetPresentationMode = present;
+    const source = video.src;
+    player.attach();
+    player.open({ play: true });
+    const oldHost = player.ui.host;
+    const open = vi.spyOn(player, 'open');
+    video.webkitPresentationMode = 'picture-in-picture';
+    video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+    expect(player.active).toBe(false);
+    expect(oldHost.isConnected).toBe(false);
+    expect(video.parentNode).toBe(parent);
+    video.dispatchEvent(new Event('enterpictureinpicture'));
+    expect(player.resumeAfterPip).toBe(true);
+    expect(player.active).toBe(false);
+    video.webkitPresentationMode = 'inline';
+    video.dispatchEvent(new Event('leavepictureinpicture'));
+    video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+    expect(open).toHaveBeenCalledExactlyOnceWith({ automatic: true });
+    expect(player.active).toBe(true);
+    expect(window.VSC.IOSPlayer.activePlayers.get(document)).toBe(player);
+    expect(video.vsc).toBe(controller);
+    expect(player.ui.host.contains(video)).toBe(true);
+    expect(video.src).toBe(source);
+    expect(video.srcObject).toBe(stream);
+    expect(video.currentTime).toBe(12.5);
+    expect(video.playbackRate).toBe(1.5);
+    expect(video.play).toHaveBeenCalledOnce();
+    expect(video.pause).not.toHaveBeenCalled();
+    expect(native).not.toHaveBeenCalled();
+    expect(present).not.toHaveBeenCalled();
+  });
+
+  it.each(['emptied', 'loadstart', 'site-player'])(
+    'does not resume duplicate-entry PiP ownership after %s cancels it',
+    (reason) => {
+      const { player, video, parent, controller } = makeController();
+      video.webkitPresentationMode = 'inline';
+      player.attach();
+      player.open({ play: true });
+      video.webkitPresentationMode = 'picture-in-picture';
+      video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+      video.dispatchEvent(new Event('enterpictureinpicture'));
+      expect(player.resumeAfterPip).toBe(true);
+      const open = vi.spyOn(player, 'open');
+      if (reason === 'site-player') {
+        player.restoreSitePlayer();
+      } else {
+        video.src = 'https://media.example.test/new-pip-resource.mp4';
+        video.dispatchEvent(new Event(reason));
+      }
+      expect(player.resumeAfterPip).toBe(false);
+      video.webkitPresentationMode = 'inline';
+      video.dispatchEvent(new Event('leavepictureinpicture'));
+      video.dispatchEvent(new Event('webkitpresentationmodechanged'));
+      expect(open).not.toHaveBeenCalled();
+      expect(player.active).toBe(false);
+      expect(video.controls).toBe(reason === 'site-player');
+      expect(video.parentNode).toBe(parent);
+      expect(video.vsc).toBe(controller);
+      expect(video.play).toHaveBeenCalledOnce();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    }
+  );
+
   describe('recycled feed media cannot inherit a previous source presentation', () => {
     function replaceFeedSource(video, eventType = 'emptied') {
       video.srcObject = { feedItem: 'replacement' };
@@ -1626,7 +1983,7 @@ describe('iOS player ownership, playback, and restoration', () => {
         expect(player.active).toBe(false);
         expect(oldHost.isConnected).toBe(false);
         expect(video.parentNode).toBe(parent);
-        expect(video.controls).toBe(true);
+        expect(video.controls).toBe(false);
         expect(video.playsInline).toBe(true);
         expect(y).toBe(720);
         expect(video.vsc).toBe(controller);

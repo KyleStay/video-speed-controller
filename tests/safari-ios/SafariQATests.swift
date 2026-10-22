@@ -172,7 +172,7 @@ final class SafariQATests: XCTestCase {
         safari.buttons["Forward 10 seconds"].tap()
         waitForStatus(safari, ["seek feedback: +", "owner active: true"])
         safari.buttons["Close StayFast video player"].tap()
-        waitForStatus(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "native controls: true"])
+        waitForStatus(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "native controls: false"])
         capture(safari, "enhanced-controls-inline-return")
     }
 
@@ -211,7 +211,7 @@ final class SafariQATests: XCTestCase {
         // Normal playback remains inline; the primary fullscreen target must
         // open StayFast with its controls; Apple player remains an explicit choice.
         safari.buttons["Play test video"].tap()
-        waitForStatus(safari, ["ready: 4; errors: 0;", "native fullscreen: false", "owner active: false", "owned hosts: 0", "native controls: true"])
+        waitForStatus(safari, ["ready: 4; errors: 0;", "native fullscreen: false", "owner active: false", "owned hosts: 0", "native controls: false"])
         XCTAssertFalse(safari.buttons["Close StayFast video player"].exists)
         capture(safari, "inline-before-direct-native-fullscreen")
         safari.buttons["Pause test video"].tap()
@@ -356,6 +356,60 @@ final class SafariQATests: XCTestCase {
         XCTAssertFalse(done.exists)
         XCTAssertTrue(safari.buttons["Open video fullscreen"].isHittable)
         capture(safari, "clean-owned-player-inline-return")
+    }
+
+    /// Fresh /mobile.html?mp4&owned&takeover&standard-fullscreen&onload-fullscreen.
+    func testInlineTakeoverAndSiteFullscreen() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        waitForStatus(safari, ["errors: 0", "paused: true", "native controls: false", "owner active: false", "owned hosts: 0", "takeover native begins: 0", "takeover native DOM: 0", "takeover inserts: 0", "takeover site controls hidden: true", "takeover unrelated visible: true", "takeover onload complete: true", "page scroll: 0,0"])
+        func position() -> Double {
+            let text = safari.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Playback rate:'")).firstMatch.label
+            let fields = text.components(separatedBy: "; time: ")
+            return fields.count == 2 ? Double(fields[1].components(separatedBy: ";")[0]) ?? -1 : -1
+        }
+        let play = safari.buttons["Play video"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCTAssertTrue(play.isHittable)
+        XCTAssertGreaterThanOrEqual(play.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(play.frame.height, 44)
+        play.tap()
+        waitForStatus(safari, ["ready: 4", "paused: false", "native controls: false", "owner active: false", "takeover inserts: 0", "takeover native begins: 0"])
+        let starting = position()
+        let progress = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in position() > starting + 0.3 }, object: safari)
+        XCTAssertEqual(XCTWaiter.wait(for: [progress], timeout: 8), .completed)
+        safari.buttons["Pause video"].tap()
+        waitForStatus(safari, ["paused: true"])
+        let unmute = safari.buttons["Unmute video"]
+        XCTAssertTrue(unmute.isHittable); unmute.tap()
+        XCTAssertTrue(safari.buttons["Mute video"].waitForExistence(timeout: 5))
+        waitForStatus(safari, ["muted: false"])
+        let beforeSeek = position()
+        let timeline = safari.sliders["Seek video"]
+        XCTAssertTrue(timeline.isHittable)
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        let sought = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(position() - beforeSeek) > 1 }, object: safari)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 8), .completed)
+        waitForStatus(safari, ["native controls: false", "owner active: false", "owned hosts: 0", "takeover native begins: 0", "takeover inserts: 0", "original identity: true", "source preserved: true"])
+        capture(safari, "takeover-owned-inline-controls")
+
+        let site = safari.buttons["Site Apple fullscreen"]
+        XCTAssertTrue(site.isHittable); site.tap()
+        waitForStatus(safari, ["owner active: true", "owned hosts: 1", "native fullscreen: false", "takeover last request: webkit", "takeover native begins: 0", "takeover native DOM: 0", "original identity: true", "source preserved: true"])
+        XCTAssertTrue(safari.buttons["Close StayFast video player"].isHittable)
+        capture(safari, "takeover-site-api-owned-player")
+        safari.buttons["More video options"].tap()
+        safari.buttons["Use site player"].tap()
+        waitForStatus(safari, ["owner active: false", "owned hosts: 0", "native controls: true", "takeover APIs restored: true", "takeover site controls hidden: false", "takeover unrelated visible: true", "original identity: true", "source preserved: true"])
+        site.tap()
+        waitForStatus(safari, ["native fullscreen: true", "owner active: false", "owned hosts: 0", "takeover native begins: 1"])
+        capture(safari, "takeover-explicit-site-handback")
+        let close = safari.buttons["Close Button"]
+        if !close.isHittable { safari.otherElements["Media"].tap() }
+        XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
+        waitForStatus(safari, ["native fullscreen: false", "native controls: true", "owner active: false", "owned hosts: 0", "errors: 0"])
     }
 
 }

@@ -31,7 +31,7 @@ advertising, analytics, or StayTech backend.
 - **Touch controls** — on devices with a coarse pointer, tap the speed pill to
   open large speed/seek controls, 1×/1.25×/1.5×/2× presets, and an explicit close
   button. Touch interaction does not require hover.
-- **iPhone/iPad presentation** — inline playback and an explicit StayFast player
+- **iPhone/iPad presentation** — StayFast inline controls and an owned fullscreen player
   offering precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
   The original video and its media source stay in use.
 - **Private by design** — playback and page processing stay in your browser.
@@ -126,11 +126,20 @@ verification, uploads and TestFlight availability are tracked in the
 [release packet](docs/testflight.md). See [Safari development](docs/safari.md)
 for builds, activation, verification status, and device testing.
 
-StayFast prepares videos for inline playback even when a site
-omits its inline flags. Ordinary Play keeps the original video on the page,
-with the site's controls and native fullscreen APIs available. A compact speed
-pill and 44px **Full screen** action open StayFast's player around the original
-video. **Custom Player** remains another explicit entry. Where Safari permits it,
+The unreleased build 13 candidate gives controlled HTML5 videos StayFast's
+inline play/pause, ten-second skips, mute, timeline, speed and fullscreen controls.
+Controls adapt to the visible video area with 44px targets. The original video
+stays in its site DOM; attachment does not load, play, open fullscreen or scroll
+the page. StayFast prepares inline playback even when the site omitted inline flags.
+Recognized single-video YouTube, Video.js, Plyr, JW Player and X controls are
+hidden while StayFast owns playback; captions and unrecognized buttons remain.
+
+**Full screen**, **Custom Player**, and supported site video/container fullscreen
+API requests made synchronously during the active trusted click or keydown open
+StayFast's player around that video. Controlled requests outside that active
+event are suppressed; asynchronous site requests are not guaranteed to route.
+**Use site player** restores the site's controls and fullscreen behavior.
+Where Safari permits it,
 the player can also expand its container using webpage fullscreen. On iPhone,
 Safari's browser bars may remain visible. **More → Apple player** explicitly
 opens Apple's native video fullscreen when available.
@@ -146,8 +155,10 @@ status are tracked in the [Safari guide](docs/safari.md).
 
 Inline controls use the video's connected layout for placement as a player
 loads or moves. This avoids temporarily oversized controller geometry during
-insertion. Compact speed and fullscreen targets stay at least 44px; small or
-cropped players show only fullscreen, and unusably small areas hide the controls.
+insertion. Controls stay at least 44px; small or cropped players progressively
+reduce the transport controls. When the actual clipped video is smaller than
+52px on either axis, the surface hides and native/site controls return. An active
+owned fullscreen player acquires controls independently of inline fit.
 The expanded speed panel fits the viewport with readable text. Placement accounts
 for clipping and nearby page chrome where space permits. Verification limits
 and current site issues are recorded in the
@@ -172,9 +183,13 @@ StayFast cannot change that interface or add buttons inside it or Picture in Pic
 If an explicit Apple-player request is refused, StayFast can restore its viewing
 surface for the same video when no newer input, navigation or player session intervenes.
 
-Same-origin embedded players can expand their owning iframe; cross-origin
-players remain inside their frame. Website permissions, player behavior, and
-protected media can limit compatibility. Safari settings stay on this device;
+Takeover applies to supported HTML5 videos in frames where the extension has
+access. Same-origin embedded players can expand their owning iframe; cross-origin
+players remain inside their frame. Closed shadow trees, private/unsupported
+embeds, previously captured native APIs and custom CSS fullscreen may bypass it.
+Apple's protected player UI remains outside extension control. Chrome/Firefox
+behavior is unchanged. Build 13 runtime verification is pending; build 12 evidence
+does not verify takeover. Safari settings stay on this device;
 this edition does not add iCloud settings sync. Current owned-player runtime
 verification is tracked separately in the [Safari guide](docs/safari.md).
 

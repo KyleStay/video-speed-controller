@@ -376,6 +376,91 @@ class ShadowDOMManager {
         opacity: var(--vsc-inline-playing-opacity) !important;
       }
 
+      .inline-owned-control, .inline-owned-status { display: none; }
+      :host([data-vsc-ios-inline][data-vsc-inline-owned]) #controller {
+        width: var(--vsc-inline-owned-width, 44px);
+        max-width: var(--vsc-inline-owned-width, 44px);
+        height: auto;
+        min-height: calc(44px / var(--vsc-inline-scale-y, 1));
+        flex-wrap: wrap;
+        column-gap: calc(4px / var(--vsc-inline-scale-x, 1));
+        row-gap: calc(4px / var(--vsc-inline-scale-y, 1));
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+      :host([data-vsc-inline-owned]) .inline-owned-control:not([hidden]) {
+        display: inline-flex;
+        flex: 0 0 calc(44px / var(--vsc-inline-scale-x, 1));
+        width: calc(44px / var(--vsc-inline-scale-x, 1));
+        height: calc(44px / var(--vsc-inline-scale-y, 1));
+        min-width: calc(44px / var(--vsc-inline-scale-x, 1));
+        min-height: calc(44px / var(--vsc-inline-scale-y, 1));
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        padding: calc(4px / var(--vsc-inline-scale-y, 1)) calc(4px / var(--vsc-inline-scale-x, 1));
+        border: 1px solid #94cbdd33;
+        border-radius: 8px;
+        background: rgba(5, 24, 39, 0.86);
+        color: #fff;
+        font-size: calc(13px / var(--vsc-inline-scale-y, 1)) !important;
+        line-height: 1;
+        touch-action: manipulation;
+      }
+      :host([data-vsc-ios-inline][data-vsc-inline-owned]) .draggable {
+        display: inline-flex;
+        flex-basis: calc(var(--vsc-inline-pill-width, 44px) / var(--vsc-inline-scale-x, 1));
+        width: calc(var(--vsc-inline-pill-width, 44px) / var(--vsc-inline-scale-x, 1));
+        min-width: calc(44px / var(--vsc-inline-scale-x, 1));
+        height: calc(44px / var(--vsc-inline-scale-y, 1));
+        min-height: calc(44px / var(--vsc-inline-scale-y, 1));
+        font-size: calc(var(--vsc-inline-font-size, 13px) / var(--vsc-inline-scale-y, 1)) !important;
+      }
+      :host([data-vsc-ios-inline][data-vsc-inline-owned]) .inline-fullscreen {
+        flex-basis: calc(44px / var(--vsc-inline-scale-x, 1));
+        width: calc(44px / var(--vsc-inline-scale-x, 1));
+        min-width: calc(44px / var(--vsc-inline-scale-x, 1));
+        height: calc(44px / var(--vsc-inline-scale-y, 1));
+        min-height: calc(44px / var(--vsc-inline-scale-y, 1));
+        font-size: calc(18px / var(--vsc-inline-scale-y, 1));
+      }
+      :host([data-vsc-inline-owned][data-vsc-inline-layout='compact']) .draggable,
+      :host([data-vsc-inline-owned][data-vsc-inline-layout='minimal']) .draggable,
+      :host([data-vsc-inline-owned][data-vsc-inline-layout='minimal']) .inline-fullscreen {
+        display: none !important;
+      }
+      :host([data-vsc-inline-owned]) .inline-timeline:not([hidden]) {
+        flex: 0 0 100%;
+        width: 100%;
+        gap: 6px;
+      }
+      :host([data-vsc-inline-owned]) .inline-seek {
+        width: 0;
+        flex: 1 1 44px;
+        min-width: calc(44px / var(--vsc-inline-scale-x, 1));
+        height: calc(44px / var(--vsc-inline-scale-y, 1));
+        min-height: calc(44px / var(--vsc-inline-scale-y, 1));
+        margin: 0;
+        padding: 0;
+        touch-action: none;
+      }
+      :host([data-vsc-inline-owned]) .inline-time {
+        font-size: calc(11px / var(--vsc-inline-scale-y, 1));
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      :host([data-vsc-inline-owned]) .inline-owned-status {
+        display: block;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+      }
+      :host([data-vsc-inline-owned][data-vsc-inline-idle]:not(:focus-within):not(.vsc-touch-open)) #controller {
+        opacity: 0.6 !important;
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
