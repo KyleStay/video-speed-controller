@@ -180,7 +180,14 @@ async function cleanup() {
     // Close the known browser even when native inspection failed, but retain
     // its profile and never signal discovered identities on incomplete proof.
     if (inventoryError) {
-      throw inventoryError;
+      // Browser.close may finish a process that exited during native inspection.
+      // Recheck once; persistent uncertainty or a live root retains the profile.
+      const remaining = await profileRoots(await processRows(), profile, owned.executable, {
+        retained: owned.identities,
+      });
+      if (remaining.length) {
+        throw inventoryError;
+      }
     }
     if (!browser) {
       await terminateExact(identities);

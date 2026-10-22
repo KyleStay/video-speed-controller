@@ -103,6 +103,25 @@ describe('owned browser lifecycle', () => {
     }
   });
 
+  it('rechecks an uncertain helper after Browser.close proves it exited', async () => {
+    const active = await launchFixtureBrowser('chrome');
+    mocks.rows =
+      '456 1 Thu Oct 22 13:00:00 2026 Chrome --user-data-dir=/tmp/stayfast-lifecycle-test-profile';
+    mocks.native = { 456: { status: 'unavailable' } };
+    browser.close = active.browser.close;
+    // The runtime retained the original close handle from launch.
+    // Complete normal browser shutdown while its native inventory is uncertain.
+    const original = events.push.bind(events);
+    vi.spyOn(events, 'push').mockImplementation((value) => {
+      mocks.rows = '';
+      return original(value);
+    });
+    const closed = active.browser.close();
+    await vi.runAllTimersAsync();
+    await closed;
+    expect(mocks.rm).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['chrome', ['-profile', '/tmp/stayfast-lifecycle-test-profile']],
     ['firefox', ['--user-data-dir=/tmp/stayfast-lifecycle-test-profile']],

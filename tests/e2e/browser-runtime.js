@@ -138,7 +138,9 @@ export async function launchFixtureBrowser(browserName, options = {}) {
       // The returned browser handle is ours to close even if native inspection
       // failed. Do not signal discovered PIDs or remove an ambiguous profile.
       if (inventoryError) {
-        throw inventoryError;
+        // A helper can exit between the process snapshot and native argv read.
+        // A fresh successful inventory supersedes that earlier uncertainty.
+        await collectOwned(profile, retained, executable, browserName);
       }
       if (!(await waitForExit(profile, retained, executable, browserName, 10))) {
         for (const row of (
