@@ -13,19 +13,20 @@ if (browserNames.some((name) => !['chrome', 'firefox'].includes(name))) {
 
 const fixture = await startFixtureServer();
 let activeBrowser = null;
-let stopping = false;
+let cleaning;
 
-async function cleanup() {
-  if (stopping) {
-    return;
+function cleanup() {
+  if (!cleaning) {
+    cleaning = (async () => {
+      try {
+        await cleanupFixtureBrowsers();
+        activeBrowser = null;
+      } finally {
+        await fixture.stop();
+      }
+    })();
   }
-  stopping = true;
-  try {
-    await cleanupFixtureBrowsers();
-    activeBrowser = null;
-  } finally {
-    await fixture.stop();
-  }
+  return cleaning;
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

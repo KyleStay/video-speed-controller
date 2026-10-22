@@ -183,6 +183,9 @@ async function cleanup() {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, async () => {
+    if (interrupted) {
+      return;
+    }
     interrupted = true;
     try {
       if (activeLauncher) {
@@ -223,12 +226,7 @@ async function runExternal(script, arguments_) {
       exited = resolveExit;
     });
     activeExternal = { child, done };
-    const stopChild = () => child.kill('SIGTERM');
-    process.once('SIGINT', stopChild);
-    process.once('SIGTERM', stopChild);
     const removeSignals = () => {
-      process.off('SIGINT', stopChild);
-      process.off('SIGTERM', stopChild);
       activeExternal = null;
       exited();
     };

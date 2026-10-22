@@ -101,7 +101,9 @@ export async function launchFixtureBrowser(browserName, options = {}) {
     }
     closing = (async () => {
       await collectOwned(profile, retained);
-      controller.abort();
+      if (!browser) {
+        controller.abort();
+      }
       // A signal may arrive before Puppeteer hands back its browser handle.
       await launching?.catch(() => undefined);
       await collectOwned(profile, retained);
