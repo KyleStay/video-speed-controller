@@ -3046,4 +3046,39 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(replacement.hasAttribute('slot')).toBe(false);
     expect(controller.remove).toHaveBeenCalledOnce();
   });
+
+  it('does not retain scrub gesture listeners when a page pause wrapper closes the real player', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const scrubber = player.scrubber;
+    const range = player.ui.refs.seek;
+    range.getBoundingClientRect = () => ({ left: 10, top: 100, width: 300, height: 44 });
+    range.setPointerCapture = vi.fn();
+    range.releasePointerCapture = vi.fn();
+    const pause = video.pause;
+    video.pause = vi.fn(() => {
+      pause();
+      player.close();
+    });
+    const event = new Event('pointerdown', { bubbles: true, composed: true, cancelable: true });
+    for (const [key, value] of Object.entries({
+      pointerId: 7,
+      clientX: 41.25,
+      clientY: 122,
+      button: 0,
+      isPrimary: true,
+    })) {
+      Object.defineProperty(event, key, { value });
+    }
+    range.dispatchEvent(event);
+    expect(player.active).toBe(false);
+    expect(player.scrubber).toBeNull();
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.listeners).toHaveLength(0);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(range.setPointerCapture).not.toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.currentTime).toBe(12.5);
+  });
 });

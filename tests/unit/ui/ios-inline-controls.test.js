@@ -93,6 +93,136 @@ describe('compact iOS inline controls', () => {
     vi.restoreAllMocks();
   });
 
+  describe('owned bottom video timeline', () => {
+    let scale;
+    let controller;
+    const number = (property) => parseFloat(controller.style.getPropertyValue(property));
+    const railRect = () => {
+      const strip = controller.getBoundingClientRect();
+      const left = strip.left + number('--vsc-inline-timeline-left') * scale.x;
+      const top = strip.top + number('--vsc-inline-timeline-top') * scale.y;
+      const width = number('--vsc-inline-timeline-width') * scale.x;
+      return { left, top, width, right: left + width, bottom: top + 44 };
+    };
+    beforeEach(() => {
+      scale = { x: 1, y: 1 };
+      window.visualViewport.width = 1000;
+      window.visualViewport.height = 800;
+      media = { left: 20, top: 40, width: 700, height: 420, right: 720, bottom: 460 };
+      Object.defineProperty(video, 'duration', { configurable: true, value: 120 });
+      controller = shadow.querySelector('#controller');
+      const usedWidth = () => number('--vsc-inline-owned-width') || 92;
+      Object.defineProperty(controller, 'offsetWidth', { configurable: true, get: usedWidth });
+      Object.defineProperty(controller, 'offsetHeight', {
+        configurable: true,
+        get: () => 44 / scale.y,
+      });
+      // Model the compact strip's transformed layout. Absolute rail coordinates
+      // are then reconstructed independently in visual pixels, as a browser does.
+      controller.getBoundingClientRect = () => {
+        const shift = controller.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/);
+        const left = 300 + (shift ? Number(shift[1]) * scale.x : 0);
+        const top = 100 + (shift ? Number(shift[2]) * scale.y : 0);
+        const width = usedWidth() * scale.x;
+        return { left, top, width, height: 44, right: left + width, bottom: top + 44 };
+      };
+      manager.inlinePlayer.setOwned(true);
+    });
+
+    it('separates the rail at the video bottom before later readiness handlers run', () => {
+      media = { left: 35, top: 80, width: 700, height: 500, right: 735, bottom: 580 };
+      const ready = vi.fn(() => {
+        expect(controller.getBoundingClientRect()).toMatchObject({
+          top: 84,
+          width: 420,
+          height: 44,
+        });
+        expect(railRect()).toEqual({ left: 39, top: 532, width: 692, right: 731, bottom: 576 });
+        expect(railRect().top - controller.getBoundingClientRect().bottom).toBeGreaterThan(300);
+      });
+      video.addEventListener('canplay', ready);
+      video.dispatchEvent(new Event('canplay'));
+      expect(ready).toHaveBeenCalledOnce();
+      video.removeEventListener('canplay', ready);
+    });
+
+    it('follows scrolling through the existing coalesced refresh without page scroll writes', () => {
+      const scroll = vi.spyOn(window, 'scrollTo');
+      media = { left: 20, top: -80, width: 700, height: 420, right: 720, bottom: 340 };
+      window.dispatchEvent(new Event('scroll'));
+      window.dispatchEvent(new Event('scroll'));
+      vi.advanceTimersByTime(20);
+      expect(railRect()).toEqual({ left: 24, top: 292, width: 692, right: 716, bottom: 336 });
+      expect(controller.getBoundingClientRect().top).toBe(4);
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it('uses cropped media and the visual viewport rather than the uncropped video bottom', () => {
+      const clip = document.createElement('section');
+      clip.style.cssText = 'overflow-x:hidden;overflow-y:hidden';
+      clip.getBoundingClientRect = () => ({
+        left: 90,
+        top: 60,
+        width: 500,
+        height: 320,
+        right: 590,
+        bottom: 380,
+      });
+      document.body.append(clip);
+      clip.append(video);
+      window.visualViewport.offsetLeft = 120;
+      window.visualViewport.offsetTop = 100;
+      window.visualViewport.width = 400;
+      window.visualViewport.height = 240;
+      try {
+        observer.callback();
+        expect(railRect()).toEqual({ left: 124, top: 292, width: 392, right: 516, bottom: 336 });
+      } finally {
+        document.body.append(video);
+        clip.remove();
+      }
+    });
+
+    it('recalculates independent rail offsets after occlusion and nonuniform rescaling', () => {
+      const occlusion = vi
+        .spyOn(manager, 'avoidInlineOcclusion')
+        .mockImplementation((_, __, placement) => {
+          placement.x += 30;
+          placement.y += 70;
+        });
+      for (const next of [
+        { x: 0.6, y: 0.75 },
+        { x: 1.25, y: 1.6 },
+      ]) {
+        scale = next;
+        observer.callback();
+        expect(manager.inlinePlayer.scale.x).toBeCloseTo(scale.x, 10);
+        expect(manager.inlinePlayer.scale.y).toBeCloseTo(scale.y, 10);
+        expect(railRect().left).toBeCloseTo(24, 10);
+        expect(railRect().right).toBeCloseTo(716, 10);
+        expect(railRect().bottom).toBeCloseTo(456, 10);
+        expect(number('--vsc-inline-timeline-left')).toBeCloseTo(-30 / scale.x, 10);
+        expect(controller.getBoundingClientRect().height).toBe(44);
+      }
+      expect(occlusion).toHaveBeenCalledTimes(2);
+    });
+
+    it('hides the rail and hands actual tiny media back without leaving a video-sized hit box', () => {
+      const availability = vi.fn();
+      video.vsc.iosPlayer.setInlineAvailability = availability;
+      media = { left: 20, top: 40, width: 40, height: 420, right: 60, bottom: 460 };
+      observer.callback();
+      expect(availability).toHaveBeenCalledWith(false);
+      expect(host.hasAttribute('data-vsc-inline-unavailable')).toBe(true);
+      expect(manager.inlinePlayer.refs.timelineGroup.hidden).toBe(true);
+      expect(controller.getBoundingClientRect().height).toBe(44);
+      const css = shadow.querySelector('style').textContent;
+      expect(css).toContain('.inline-owned-control[hidden] { display: none !important; }');
+      expect(css).toContain('left: var(--vsc-inline-timeline-left, 0px)');
+      expect(css).toContain('top: var(--vsc-inline-timeline-top, 0px)');
+    });
+  });
+
   it('hands actual tiny media back and reacquires it after resize without treating viewport clipping as tiny', () => {
     const availability = vi.fn();
     video.vsc.iosPlayer.setInlineAvailability = availability;

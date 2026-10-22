@@ -377,6 +377,7 @@ class ShadowDOMManager {
       }
 
       .inline-owned-control, .inline-owned-status { display: none; }
+      :host([data-vsc-inline-owned]) .inline-owned-control[hidden] { display: none !important; }
       :host([data-vsc-ios-inline][data-vsc-inline-owned]) #controller {
         width: var(--vsc-inline-owned-width, 44px);
         max-width: var(--vsc-inline-owned-width, 44px);
@@ -430,9 +431,17 @@ class ShadowDOMManager {
         display: none !important;
       }
       :host([data-vsc-inline-owned]) .inline-timeline:not([hidden]) {
-        flex: 0 0 100%;
-        width: 100%;
-        gap: 6px;
+        position: absolute;
+        left: var(--vsc-inline-timeline-left, 0px);
+        top: var(--vsc-inline-timeline-top, 0px);
+        width: var(--vsc-inline-timeline-width, 44px);
+        min-width: var(--vsc-inline-timeline-width, 44px);
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        gap: calc(6px / var(--vsc-inline-scale-x, 1));
+        background: transparent;
       }
       :host([data-vsc-inline-owned]) .inline-seek {
         width: 0;
@@ -442,13 +451,48 @@ class ShadowDOMManager {
         min-height: calc(44px / var(--vsc-inline-scale-y, 1));
         margin: 0;
         padding: 0;
+        border: 0;
+        background: transparent;
+        -webkit-appearance: none;
+        appearance: none;
+        direction: ltr;
         touch-action: none;
+      }
+      :host([data-vsc-inline-owned]) .inline-seek::-webkit-slider-runnable-track {
+        height: calc(3px / var(--vsc-inline-scale-y, 1));
+        border-radius: 999px;
+        background: linear-gradient(to right, #67e8f9 var(--seek-progress, 0%), #ffffff45 var(--seek-progress, 0%));
+      }
+      :host([data-vsc-inline-owned]) .inline-seek::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none;
+        width: calc(12px / var(--vsc-inline-scale-x, 1));
+        height: calc(12px / var(--vsc-inline-scale-y, 1));
+        margin-top: calc(-4.5px / var(--vsc-inline-scale-y, 1));
+        border: 0; border-radius: 50%; background: #fff;
       }
       :host([data-vsc-inline-owned]) .inline-time {
         font-size: calc(11px / var(--vsc-inline-scale-y, 1));
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
       }
+      :host([data-vsc-inline-owned]) .inline-scrub-hint {
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: 100%;
+        margin: 0;
+        padding: calc(4px / var(--vsc-inline-scale-y, 1)) calc(8px / var(--vsc-inline-scale-x, 1));
+        border-radius: 6px;
+        background: #111e;
+        color: #fff;
+        font-size: calc(13px / var(--vsc-inline-scale-y, 1));
+        line-height: 1.3;
+        text-align: center;
+        white-space: normal;
+        pointer-events: none;
+      }
+      :host([data-vsc-inline-owned]) .inline-scrub-hint:empty { display: none; }
       :host([data-vsc-inline-owned]) .inline-owned-status {
         display: block;
         position: absolute;
@@ -536,6 +580,8 @@ class ShadowDOMManager {
       { action: 'slower', text: '−', class: '', label: 'Decrease speed' },
       { action: 'faster', text: '+', class: '', label: 'Increase speed' },
       { action: 'advance', text: '»', class: 'rw', label: 'Advance' },
+      { action: 'rewindFrame', text: '|◀', class: 'frame-step', label: 'Frame back' },
+      { action: 'advanceFrame', text: '▶|', class: 'frame-step', label: 'Frame forward' },
     ];
 
     buttons.forEach((btnConfig) => {

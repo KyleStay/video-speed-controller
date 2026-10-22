@@ -222,6 +222,21 @@ const mobileHtml = `<!doctype html>
             '; inline panel block size: ' + (inlineStyle?.blockSize || 'none') +
             '; inline panel rows: ' + (inlineStyle?.gridTemplateRows || 'none');
           const owner = video.vsc?.iosPlayer;
+          const inline = video.vsc?.controlsManager?.inlinePlayer;
+          const inlineRange = inline?.refs.timeline;
+          const inlineRect = inlineRange?.getBoundingClientRect();
+          const mediaBottom = video.getBoundingClientRect().bottom;
+          const shellBottom = document.querySelector('.player').getBoundingClientRect().bottom;
+          const inlineBottom = Math.min(innerHeight, mediaBottom, shellBottom);
+          text += '; precision mode: ' + (owner?.active ? 'fullscreen' : inline?.available() ? 'inline' : 'none') +
+            '; inline scrub active: ' + !!inline?.scrubber?.active +
+            '; inline scrub hint: ' + (inline?.refs.scrubHint?.textContent || 'none') +
+            '; inline selected time: ' + (inline?.refs.time?.textContent || 'none') +
+            '; inline timeline height: ' + (inlineRect?.height || 0) +
+            '; inline timeline bottom gap: ' + (inlineRect ? Math.round((inlineBottom - inlineRect.bottom) * 100) / 100 : 'none') +
+            '; inline timeline geometry: ' + JSON.stringify(inlineRect ? {left:inlineRect.left,top:inlineRect.top,right:inlineRect.right,bottom:inlineRect.bottom} : null);
+          const precisionRange = owner?.active ? owner.ui?.refs.seek : inlineRange;
+          if (precisionRange) window.__stayfastPrecision?.bind(precisionRange);
           text += '; speed select height: ' + (speedSelect ? speedSelect.getBoundingClientRect().height : 0) +
             '; speed select min height: ' + (speedSelect ? getComputedStyle(speedSelect).minHeight : 'none') +
             '; video fit: ' + getComputedStyle(video).objectFit +
@@ -232,7 +247,6 @@ const mobileHtml = `<!doctype html>
             '; scrub active: ' + !!owner?.scrubber?.active +
             '; scrub hint: ' + (owner?.ui?.refs?.scrubHint?.textContent || 'none');
           if (owner?.ui) {
-            window.__stayfastPrecision?.bind(owner.ui.refs.seek);
             const shadow = owner.ui.shadow;
             const timeline = shadow.querySelector('.timeline');
             const hud = shadow.querySelector('.hud');

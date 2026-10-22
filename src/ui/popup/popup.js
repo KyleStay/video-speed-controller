@@ -7,6 +7,7 @@ const MessageTypes = {
   SET_SPEED: 'VSC_SET_SPEED',
   ADJUST_SPEED: 'VSC_ADJUST_SPEED',
   RESET_SPEED: 'VSC_RESET_SPEED',
+  STEP_FRAME: 'VSC_STEP_FRAME',
   TOGGLE_DISPLAY: 'VSC_TOGGLE_DISPLAY',
   GET_STATUS: 'VSC_GET_STATUS',
 };
@@ -121,6 +122,15 @@ document.addEventListener('DOMContentLoaded', () => {
     getSpeedControls().forEach((control) => {
       control.disabled = !available;
     });
+    if (!available) {
+      setFrameControlsAvailable(false);
+    }
+  }
+
+  function setFrameControlsAvailable(available) {
+    document.querySelectorAll('[data-frame-direction]').forEach((button) => {
+      button.disabled = !available;
+    });
   }
 
   function validateCustomSpeedValue(value) {
@@ -203,6 +213,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Speed Control Functions
   function initializeSpeedControls() {
+    document.querySelectorAll('[data-frame-direction]').forEach((button) => {
+      button.addEventListener('click', () => {
+        sendCommand(
+          MessageTypes.STEP_FRAME,
+          { direction: Number(button.dataset.frameDirection) },
+          button.dataset.frameDirection === '-1' ? 'Frame back' : 'Frame forward'
+        );
+      });
+    });
     // Set up speed control button listeners
     document.querySelector('#speed-decrease').addEventListener('click', (event) => {
       const delta = parseFloat(event.currentTarget.dataset.delta);
@@ -311,6 +330,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             setSpeedControlsAvailable(true);
+            setFrameControlsAvailable(response.pausedVideoCount > 0);
             updateCurrentSpeed(response.currentSpeed);
 
             if (!options.silent) {

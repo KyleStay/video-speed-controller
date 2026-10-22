@@ -106,8 +106,8 @@ describe('owned-player pointer precision scrubbing', () => {
     vi.advanceTimersByTime(50);
     expect(owner.video.currentTime).toBe(60);
     expect(Number(range.value)).toBe(60);
-    expect(owner.ui.refs.current.textContent).toBe('1:00');
-    expect(range.getAttribute('aria-valuetext')).toBe('1:00 of 1:40');
+    expect(owner.ui.refs.current.textContent).toBe('1:00.00');
+    expect(range.getAttribute('aria-valuetext')).toBe('1:00.00 of 1:40');
     expect(owner.ui.refs.scrubHint.textContent).toBe('Scrubbing');
   });
 
@@ -121,8 +121,8 @@ describe('owned-player pointer precision scrubbing', () => {
     pointer('pointermove', 190);
     expect(owner.formatTime).toHaveBeenCalledWith(4320);
     expect(owner.formatTime).toHaveBeenCalledWith(7200);
-    expect(owner.ui.refs.current.textContent).toBe('formatted 4320');
-    expect(range.getAttribute('aria-valuetext')).toBe('formatted 4320 of formatted 7200');
+    expect(owner.ui.refs.current.textContent).toBe('formatted 4320.00');
+    expect(range.getAttribute('aria-valuetext')).toBe('formatted 4320.00 of formatted 7200');
   });
 
   it('maps a bar tap to time and resumes a previously playing presentation once', () => {
@@ -441,11 +441,11 @@ describe('owned-player pointer precision scrubbing', () => {
     pointer('pointerdown');
     pointer('pointermove', 220);
     expect(Number(range.value)).toBe(70);
-    expect(owner.ui.refs.current.textContent).toBe('1:10');
+    expect(owner.ui.refs.current.textContent).toBe('1:10.00');
     vi.advanceTimersByTime(50);
     expect(owner.video.currentTime).toBe(50);
     expect(Number(range.value)).toBe(70);
-    expect(owner.ui.refs.current.textContent).toBe('1:10');
+    expect(owner.ui.refs.current.textContent).toBe('1:10.00');
   });
 
   it('keeps keyboard input/change working while preventing duplicate native pointer writes', () => {
@@ -495,5 +495,165 @@ describe('owned-player pointer precision scrubbing', () => {
     pointer('pointerup', 190);
     expect(owner.video.currentTime).toBe(60);
     expect(owner.play).toHaveBeenCalledOnce();
+  });
+
+  it.each(['seekTo', 'update', 'showControls'])(
+    'does not resume after the final %s callback replaces the presentation',
+    (callback) => {
+      pointer('pointerdown');
+      pointer('pointermove', 190);
+      owner.onScrubFinish = vi.fn();
+      owner[callback].mockImplementation(() => {
+        owner.session++;
+        scrubber.cleanup();
+      });
+      scrubber.finish(null);
+      expect(owner.play).not.toHaveBeenCalled();
+      expect(owner.onScrubFinish).toHaveBeenCalledOnce();
+      expect(scrubber.active).toBe(false);
+      expect(scrubber.gestureListeners).toHaveLength(0);
+      expect(scrubber.timer).toBeNull();
+      expect(captured.size).toBe(0);
+    }
+  );
+
+  it('finishes once when a site seek handler reenters finish', () => {
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    owner.onScrubFinish = vi.fn();
+    owner.seekTo.mockImplementation((time) => {
+      owner.video.currentTime = time;
+      scrubber.finish(null);
+    });
+    scrubber.finish(null);
+    expect(owner.seekTo).toHaveBeenCalledOnce();
+    expect(owner.video.currentTime).toBe(60);
+    expect(owner.onScrubFinish).toHaveBeenCalledOnce();
+    expect(owner.play).toHaveBeenCalledOnce();
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(captured.size).toBe(0);
+  });
+
+  it('cleans an active scrub idempotently and cannot restart through retained events', () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    expect(vi.getTimerCount()).toBe(1);
+    const callbacks = add.mock.calls.filter(([type]) =>
+      ['pointermove', 'pointerup', 'pointercancel'].includes(type)
+    );
+    expect(callbacks).toHaveLength(3);
+    scrubber.cleanup();
+    scrubber.cleanup();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(captured.size).toBe(0);
+    for (const [type, callback, options] of callbacks) {
+      expect(remove).toHaveBeenCalledWith(type, callback, options);
+    }
+    pointer('pointerdown');
+    pointer('pointermove', 250);
+    pointer('pointerup', 250);
+    vi.advanceTimersByTime(500);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(owner.play).not.toHaveBeenCalled();
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  it('cancels the original window timer after the range is adopted into an inert document', () => {
+    const clear = vi.spyOn(window, 'clearTimeout');
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    const timer = scrubber.timer;
+    expect(timer).not.toBeNull();
+    const inert = document.implementation.createHTMLDocument('adopted');
+    inert.adoptNode(host);
+    inert.body.append(host);
+    expect(range.ownerDocument.defaultView).toBeNull();
+    scrubber.cleanup();
+    expect(clear).toHaveBeenCalledWith(timer);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(captured.size).toBe(0);
+    vi.advanceTimersByTime(500);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(owner.play).not.toHaveBeenCalled();
+    clear.mockRestore();
+  });
+
+  it('ignores another pointer cancellation while the owner has a pending seek', () => {
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    expect(scrubber.pending).toBeCloseTo(60);
+    pointer('pointercancel', 250, 122, 8);
+    expect(scrubber.active).toBe(true);
+    expect(scrubber.pending).toBeCloseTo(60);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(50);
+    expect(owner.video.currentTime).toBeCloseTo(60);
+    pointer('pointerup', 220);
+    expect(owner.video.currentTime).toBeCloseTo(70);
+    expect(owner.play).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('integrates a diagonal crossing both sides of the timeline consistently', () => {
+    paused = true;
+    // A 400px vertical path spans 136px tenth, 88px quarter,
+    // 88px half and 88px normal sensitivity, independently of event density.
+    const expectedDelta = ((60 / 300) * 100 * (136 * 0.1 + 88 * 0.25 + 88 * 0.5 + 88)) / 400;
+    for (const samples of [1, 3, 17, 101]) {
+      owner.video.currentTime = 50;
+      pointer('pointerdown');
+      pointer('pointermove', 160, -78);
+      for (let index = 1; index <= samples; index++) {
+        pointer('pointermove', 160 + (60 * index) / samples, -78 + (400 * index) / samples);
+      }
+      pointer('pointerup', 220, 322);
+      expect(owner.video.currentTime).toBeCloseTo(50 + expectedDelta, 8);
+      expect(owner.play).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  });
+
+  it('does not reinstall gesture listeners after a pause wrapper cleans up the scrubber', () => {
+    let controlsAfterCleanup;
+    owner.video.pause.mockImplementation(() => {
+      paused = true;
+      scrubber.cleanup();
+      owner.active = false;
+      host.remove();
+      controlsAfterCleanup = owner.showControls.mock.calls.length;
+    });
+    pointer('pointerdown');
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.listeners).toHaveLength(0);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(range.setPointerCapture).not.toHaveBeenCalled();
+    expect(captured.size).toBe(0);
+    expect(owner.showControls).toHaveBeenCalledTimes(controlsAfterCleanup);
+    pointer('pointermove', 220);
+    pointer('pointerup', 220);
+    vi.advanceTimersByTime(500);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('abandons startup when a pause wrapper changes the presentation session', () => {
+    owner.video.pause.mockImplementation(() => {
+      paused = true;
+      owner.session++;
+    });
+    pointer('pointerdown');
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(range.setPointerCapture).not.toHaveBeenCalled();
+    expect(captured.size).toBe(0);
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(owner.showControls).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

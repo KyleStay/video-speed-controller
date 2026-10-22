@@ -341,6 +341,8 @@ import XCTest
         let bands: [Double]
         let maxError, verticalDrift, finalError, delta: Double
         let active, paused, truncated: Bool
+        let mode: String
+        let fractionalFeedback: Bool
     }
 
     private func precisionReport(_ safari: XCUIApplication) -> PrecisionReport? {
@@ -405,6 +407,83 @@ import XCTest
         wait(safari, ["owner active: false", "owned hosts: 0", "errors: 0"])
     }
 
+    func testInlineBottomPrecisionAndFrames() throws {
+        try checkInlineBottomPrecision(false)
+    }
+
+    func testInlineBottomPrecisionLandscape() throws {
+        try checkInlineBottomPrecision(true)
+    }
+
+    private func checkInlineBottomPrecision(_ landscape: Bool) throws {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
+        // Mobile Safari may preload metadata only; genuine Play establishes a
+        // decoded frame before testing paused seeking.
+        safari.buttons["Play test video"].tap()
+        wait(safari, ["ready: 4", "paused: false", "owner active: false", "errors: 0"])
+        safari.buttons["Pause test video"].tap()
+        wait(safari, ["ready: 4", "paused: true", "precision mode: inline", "owner active: false", "inline timeline height: 44", "inline timeline bottom gap: 4", "errors: 0"])
+        if landscape { XCUIDevice.shared.orientation = .landscapeLeft }
+        defer { if landscape { XCUIDevice.shared.orientation = .portrait } }
+        let seek = safari.sliders["Seek video"]
+        target(seek)
+        wait(safari, ["inline timeline height: 44", "inline timeline bottom gap: 4"])
+        capture(safari, landscape ? "inline-bottom-landscape" : "inline-bottom-portrait")
+        func drag(_ name: String, _ dx: CGFloat, _ dy: CGFloat) throws -> PrecisionReport {
+            target(seek)
+            seek.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - 7.5) < 0.6 }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [centered], timeout: 10), .completed)
+            let prior = precisionReport(safari)?.gesture ?? 0
+            let start = seek.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: dx, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0.1)
+            let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let report = self.precisionReport(safari) else { return false }
+                return report.gesture > prior && !report.active && report.samples > 2
+            }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 10), .completed)
+            let report = try XCTUnwrap(precisionReport(safari))
+            XCTAssertEqual(report.mode, "inline")
+            XCTAssertTrue(report.fractionalFeedback)
+            XCTAssertFalse(report.truncated)
+            XCTAssertTrue(report.paused)
+            XCTAssertLessThan(report.maxError, 0.00001)
+            XCTAssertLessThan(report.verticalDrift, 0.00001)
+            XCTAssertLessThan(report.finalError, 0.02)
+            print("INLINE PRECISION " + name + ": " + (status(safari).label.components(separatedBy: "; precision: ").last ?? "missing"))
+            capture(safari, "inline-precision-" + name + (landscape ? "-landscape" : "-portrait"))
+            return report
+        }
+        let normal = try drag("normal", 60, 0)
+        XCTAssertEqual(normal.bands, [1])
+        XCTAssertGreaterThan(normal.delta, 0.5)
+        let vertical = try drag("vertical", 0, -150)
+        XCTAssertEqual(vertical.bands, [1, 0.5, 0.25, 0.1])
+        XCTAssertLessThan(abs(vertical.delta), 0.00001)
+        let fine = try drag("diagonal", 60, -150)
+        XCTAssertEqual(fine.bands, [1, 0.5, 0.25, 0.1])
+        XCTAssertGreaterThan(fine.delta, 0.1)
+        XCTAssertLessThan(fine.delta, normal.delta * 0.8)
+        wait(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "inline timeline bottom gap: 4", "errors: 0"])
+        let pill = safari.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Playback speed '")).firstMatch
+        pill.tap()
+        let forward = safari.buttons["Frame forward"]
+        target(forward)
+        XCTAssertTrue(forward.isEnabled)
+        let before = time(safari)
+        forward.tap()
+        let stepped = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.time(safari) > before + 0.02 && self.time(safari) < before + 0.1 }, object: status(safari))
+        XCTAssertEqual(XCTWaiter.wait(for: [stepped], timeout: 10), .completed)
+        target(safari.buttons["Frame back"])
+        safari.buttons["Frame back"].tap()
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - before) < 0.02 }, object: status(safari))
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
+        wait(safari, ["paused: true", "Playback rate: 1;", "owner active: false", "errors: 0"])
+        capture(safari, landscape ? "inline-frames-landscape" : "inline-frames-portrait")
+    }
+
     func testThinBottomTimeline() {
         openAndVerifyPlayback()
         checkTransportAndMute()
@@ -434,6 +513,25 @@ import XCTest
         target(site)
         target(more)
         XCTAssertLessThan(site.frame.maxY, more.frame.minY)
+        let forward = safari.buttons["Frame forward"]
+        let back = safari.buttons["Frame back"]
+        target(forward)
+        target(back)
+        XCTAssertTrue(forward.isEnabled)
+        XCTAssertTrue(back.isEnabled)
+        let before = time(safari)
+        forward.tap()
+        let advanced = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let delta = self.time(safari) - before
+            return delta >= 0.02 && delta <= 0.1
+        }, object: status(safari))
+        XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 5), .completed)
+        back.tap()
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(self.time(safari) - before) < 0.02
+        }, object: status(safari))
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed)
+        wait(safari, ["paused: true", "Playback rate: 1;", "errors: 0"])
         capture(safari, "bottom-timeline-more-" + orientation)
         more.tap()
         XCTAssertTrue(site.waitForNonExistence(timeout: 5))

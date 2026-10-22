@@ -35,7 +35,10 @@ advertising, analytics, or StayTech backend.
   offering a thin bottom timeline with precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
   Keep your finger down and move upward from the timeline for half, quarter,
   then tenth-speed scrubbing; moving back toward the bar restores sensitivity
-  without jumping, and lifting commits the selected position.
+  without jumping, and lifting commits the selected position. The same captured
+  gesture works on inline and fullscreen timelines; fractional selected time and
+  the active precision mode stay visible while dragging. The inline timeline
+  sits at the video’s bottom, independently of the speed controls.
   The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
   site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
   preserving your position and play/pause state. Supported metadata includes
@@ -79,6 +82,10 @@ effective port, including HTTPS port 443 and HTTP port 80 when omitted.
 | `V` | Show or hide the controller                    |
 | `M` | Set a marker at the current position           |
 | `J` | Return to the saved marker                     |
+
+Use **Frame back** and **Frame forward** in the expanded controller or toolbar popup,
+or **More** in the iPhone/iPad fullscreen player. Buttons enable while a seekable
+video is paused and leave playback speed unchanged.
 
 Frame stepping is video-only. StayFast Video uses the detected frame rate when
 available and otherwise uses the configurable fallback (30 fps by default).
@@ -190,6 +197,10 @@ container fullscreen where supported. Apple player uses Apple's controls;
 StayFast cannot change that interface or add buttons inside it or Picture in Picture.
 If an explicit Apple-player request is refused, StayFast can restore its viewing
 surface for the same video when no newer input, navigation or player session intervenes.
+
+On recognized X/Twitter players, tapping the picture reveals StayFast controls
+without changing playback. Use Play/Pause explicitly, and Full screen to open
+StayFast. Current X player links and older fullscreen buttons are recognized.
 
 Takeover applies to supported HTML5 videos in frames where the extension has
 access. Same-origin embedded players can expand their owning iframe; cross-origin

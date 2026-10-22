@@ -868,6 +868,22 @@ class IOSPlayer {
     });
     click(refs.back, () => this.seekBy(-10));
     click(refs.forward, () => this.seekBy(10));
+    for (const [button, action, direction] of [
+      [refs.frameBack, 'rewindFrame', -1],
+      [refs.frameForward, 'advanceFrame', 1],
+    ]) {
+      click(button, () => {
+        if (!window.VSC.ControlsManager.canStepFrame(this.video) || this.scrubber?.active) {
+          return;
+        }
+        this.controller.actionHandler.stepFrame(
+          this.video,
+          direction,
+          this.controller.config.getKeyBinding(action)
+        );
+        this.update();
+      });
+    }
     click(refs.mute, () => {
       this.video.muted = !this.video.muted;
     });
@@ -1452,6 +1468,11 @@ class IOSPlayer {
       this.scrubber?.active && Number.isFinite(this.scrubber.value)
         ? this.scrubber.value
         : this.video.currentTime;
+    const bounds = this.seekBounds();
+    const timeWidth = `${Math.max(IOSPlayer.formatTime(bounds?.[0] || 0).length, IOSPlayer.formatTime(bounds?.[1] || 0).length) + 3}ch`;
+    if (refs.current.style.minWidth !== timeWidth) {
+      refs.current.style.minWidth = timeWidth;
+    }
     setControlProperty(
       refs.play,
       'textContent',
@@ -1464,7 +1485,10 @@ class IOSPlayer {
     );
     setControlProperty(refs.mute, 'textContent', this.video.muted ? 'Unmute' : 'Mute');
     setControlAttribute(refs.mute, 'aria-label', this.video.muted ? 'Unmute video' : 'Mute video');
-    setControlProperty(refs.current, 'textContent', IOSPlayer.formatTime(position));
+    const selectedTime = this.scrubber?.active
+      ? this.scrubber.formatTime(position)
+      : IOSPlayer.formatTime(position);
+    setControlProperty(refs.current, 'textContent', selectedTime);
     const finite = Number.isFinite(this.video.duration) && this.video.duration > 0;
     setControlProperty(
       refs.duration,
@@ -1479,7 +1503,6 @@ class IOSPlayer {
       'aria-label',
       finite ? (this.remaining ? 'Show total duration' : 'Show remaining time') : 'Live video'
     );
-    const bounds = this.seekBounds();
     setControlProperty(refs.live, 'hidden', finite || !bounds);
     setControlProperty(refs.live, 'disabled', !bounds || bounds[1] - position < 1);
     setControlProperty(refs.volume, 'hidden', !this.canSetVolume());
@@ -1487,6 +1510,10 @@ class IOSPlayer {
     setControlProperty(refs.seek, 'disabled', !bounds);
     setControlProperty(refs.back, 'disabled', !bounds);
     setControlProperty(refs.forward, 'disabled', !bounds);
+    const canStepFrame =
+      window.VSC.ControlsManager.canStepFrame(this.video) && !this.scrubber?.active;
+    setControlProperty(refs.frameBack, 'disabled', !canStepFrame);
+    setControlProperty(refs.frameForward, 'disabled', !canStepFrame);
     if (bounds) {
       setControlProperty(refs.seek, 'min', String(bounds[0]));
       setControlProperty(refs.seek, 'max', String(bounds[1]));
@@ -1496,7 +1523,7 @@ class IOSPlayer {
       setControlAttribute(
         refs.seek,
         'aria-valuetext',
-        `${IOSPlayer.formatTime(position)} of ${IOSPlayer.formatTime(bounds[1])}`
+        `${selectedTime} of ${IOSPlayer.formatTime(bounds[1])}`
       );
     }
     this.ui.updateSeekProgress?.();

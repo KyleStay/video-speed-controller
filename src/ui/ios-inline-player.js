@@ -72,13 +72,51 @@ class IOSInlinePlayer {
     const time = doc.createElement('span');
     time.className = 'inline-time';
     time.setAttribute('aria-hidden', 'true');
-    group.append(timeline, time);
+    const scrubHint = doc.createElement('span');
+    scrubHint.className = 'inline-scrub-hint';
+    scrubHint.id = 'inline-scrub-hint';
+    scrubHint.setAttribute('role', 'status');
+    scrubHint.setAttribute('aria-live', 'polite');
+    timeline.setAttribute('aria-describedby', scrubHint.id);
+    group.append(timeline, time, scrubHint);
     this.root.append(group);
     const status = doc.createElement('span');
     status.className = 'inline-owned-status';
     status.setAttribute('role', 'status');
     this.root.append(status);
-    Object.assign(this.refs, { timeline, timelineGroup: group, time, status });
+    Object.assign(this.refs, { timeline, timelineGroup: group, time, status, scrubHint });
+    // Inline and fullscreen use the same captured, distance-sensitive gesture.
+    // The adapter keeps its authority scoped to this inline presentation/source.
+    const inline = this;
+    const ui = {
+      host: this.host,
+      refs: { seek: timeline, scrubHint },
+      updateSeekProgress: () => this.updateSeekProgress(),
+    };
+    this.scrubber = new window.VSC.IOSPlayerScrubber({
+      ui,
+      video,
+      get active() {
+        return inline.available() && !group.hidden;
+      },
+      get session() {
+        return inline.generation;
+      },
+      seekBounds: () => this.bounds(),
+      seekTo: (value) => this.seekTo(value),
+      formatTime: (value) => this.format(value),
+      update: () => this.update(),
+      showControls: () => {
+        this.seeking = this.scrubber.active;
+        this.reveal();
+      },
+      onScrubFinish: (cancelled) => {
+        this.seeking = false;
+        this.seekCancelled = this.seekCancelled || cancelled;
+      },
+      play: () => this.play(),
+    });
+    this.scrubber.attach();
     this.listen(timeline, 'input', () => {
       if (!this.seekCancelled) {
         this.seekTo(Number(timeline.value));
@@ -92,22 +130,25 @@ class IOSInlinePlayer {
       this.seeking = false;
       this.update();
     });
-    this.listen(timeline, 'pointerdown', () => {
-      this.seekCancelled = false;
-      this.seeking = true;
-    });
+    this.listen(
+      timeline,
+      'pointerdown',
+      () => {
+        this.seekCancelled = false;
+      },
+      true
+    );
     this.listen(timeline, 'keydown', () => {
       this.seekCancelled = false;
     });
-    const finish = (event) => {
-      if (this.seeking) {
-        this.seekCancelled = event.type === 'pointercancel';
-        this.seeking = false;
-        this.update();
-      }
-    };
-    this.listen(this.view, 'pointerup', finish, true);
-    this.listen(this.view, 'pointercancel', finish, true);
+    this.listen(
+      timeline,
+      'pointercancel',
+      () => {
+        this.seekCancelled = true;
+      },
+      true
+    );
     this.listen(this.root, 'pointerdown', () => this.reveal(), true);
     this.listen(this.root, 'focusin', () => this.reveal());
     for (const type of ['play', 'playing', 'pause', 'ended']) {
@@ -133,6 +174,7 @@ class IOSInlinePlayer {
     }
     for (const type of ['emptied', 'loadstart']) {
       this.listen(video, type, () => {
+        this.cancelScrub();
         this.generation++;
         this.seekCancelled = this.seekCancelled || this.seeking;
         this.seeking = false;
@@ -177,6 +219,7 @@ class IOSInlinePlayer {
     if (this.disposed) {
       return;
     }
+    this.cancelScrub();
     this.owned = Boolean(owned);
     this.generation++;
     this.host.toggleAttribute('data-vsc-inline-owned', this.owned);
@@ -192,6 +235,9 @@ class IOSInlinePlayer {
         '--vsc-inline-owned-width',
         '--vsc-inline-scale-x',
         '--vsc-inline-scale-y',
+        '--vsc-inline-timeline-left',
+        '--vsc-inline-timeline-top',
+        '--vsc-inline-timeline-width',
       ]) {
         this.root.style.removeProperty(property);
       }
@@ -324,14 +370,24 @@ class IOSInlinePlayer {
       this.update();
       return;
     }
+    this.play();
+  }
+
+  play() {
+    if (!this.available()) {
+      return;
+    }
+    const generation = this.generation;
     if (this.video.ended) {
       const bounds = this.bounds();
       if (bounds) {
         this.seekTo(bounds[0]);
       }
     }
+    if (generation !== this.generation || !this.available()) {
+      return;
+    }
     this.error('');
-    const generation = this.generation;
     const fail = () => {
       if (generation === this.generation && this.available()) {
         this.error('Playback could not start.');
@@ -351,8 +407,29 @@ class IOSInlinePlayer {
     return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
   }
 
+  cancelScrub() {
+    this.seekCancelled = this.seekCancelled || Boolean(this.scrubber?.active);
+    this.scrubber?.finish(null, false, false, false);
+    this.seeking = false;
+  }
+
+  updateSeekProgress() {
+    const { timeline } = this.refs;
+    const min = Number(timeline.min);
+    const max = Number(timeline.max);
+    const progress =
+      max > min
+        ? Math.max(0, Math.min(100, ((Number(timeline.value) - min) / (max - min)) * 100))
+        : 0;
+    const value = `${progress}%`;
+    if (timeline.style.getPropertyValue('--seek-progress') !== value) {
+      timeline.style.setProperty('--seek-progress', value);
+    }
+  }
+
   update() {
     if (!this.available()) {
+      this.cancelScrub();
       this.clearTimer();
       return;
     }
@@ -377,13 +454,22 @@ class IOSInlinePlayer {
       this.set(this.refs.forward, 'disabled', !bounds);
       this.applyLayout(bounds);
       if (bounds && !this.refs.timelineGroup.hidden) {
+        // Reserve fractional feedback before a drag; changing the label must
+        // never resize the range underneath the captured finger.
+        const timeWidth = `${Math.max(this.format(bounds[0]).length, this.format(bounds[1]).length) + this.format(bounds[1]).length + 6}ch`;
+        if (this.refs.time.style.minWidth !== timeWidth) {
+          this.refs.time.style.minWidth = timeWidth;
+        }
         this.set(this.refs.timeline, 'min', String(bounds[0]));
         this.set(this.refs.timeline, 'max', String(bounds[1]));
-        const position = Math.max(bounds[0], Math.min(bounds[1], this.video.currentTime));
-        if (!this.seeking) {
+        const position = this.scrubber?.active
+          ? this.scrubber.value
+          : Math.max(bounds[0], Math.min(bounds[1], this.video.currentTime));
+        if (!this.scrubber?.active && !this.seeking) {
           this.set(this.refs.timeline, 'value', String(position));
         }
-        const text = `${this.format(position)} / ${this.format(bounds[1])}`;
+        this.updateSeekProgress();
+        const text = `${this.scrubber?.active ? this.scrubber.formatTime(position) : this.format(position)} / ${this.format(bounds[1])}`;
         this.set(this.refs.time, 'textContent', text);
         if (this.refs.timeline.getAttribute('aria-valuetext') !== text) {
           this.refs.timeline.setAttribute('aria-valuetext', text);
@@ -445,6 +531,7 @@ class IOSInlinePlayer {
       return;
     }
     this.setOwned(false);
+    this.scrubber.cleanup();
     this.disposed = true;
     this.generation++;
     for (const remove of this.removers.splice(0)) {

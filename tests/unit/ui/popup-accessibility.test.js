@@ -18,6 +18,8 @@ function renderPopup() {
     <button id="speed-decrease" data-delta="-0.1"><span>-0.1</span></button>
     <button id="speed-reset">1x</button>
     <button id="speed-increase" data-delta="0.1"><span>+0.1</span></button>
+    <button data-frame-direction="-1" disabled>Frame back</button>
+    <button data-frame-direction="1" disabled>Frame forward</button>
     <div class="preset-grid" role="group" aria-label="Speed presets">
       <button class="preset-btn" data-speed="0.5" aria-pressed="false">0.5</button>
       <button class="preset-btn" data-speed="1.0" aria-pressed="false">1</button>
@@ -117,6 +119,46 @@ describe('Popup accessibility', () => {
     expect(customSpeedInput.getAttribute('aria-invalid')).toBe('false');
   });
 
+  it('steps paused video frames and disables the pair when the page is playing', async () => {
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 1, pausedVideoCount: 1 });
+    });
+    await initializePopup();
+    const back = document.querySelector('[data-frame-direction="-1"]');
+    const forward = document.querySelector('[data-frame-direction="1"]');
+    expect(back.disabled).toBe(false);
+    expect(forward.disabled).toBe(false);
+    chrome.tabs.sendMessage.mockClear();
+    back.click();
+    forward.click();
+    expect(chrome.tabs.sendMessage.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ type: 'VSC_STEP_FRAME', payload: { direction: -1 } }),
+      expect.objectContaining({ type: 'VSC_STEP_FRAME', payload: { direction: 1 } }),
+    ]);
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 2, pausedVideoCount: 0 });
+    });
+    document.querySelector('#speed-increase').click();
+    await vi.waitFor(() => expect(forward.disabled).toBe(true));
+    expect(back.disabled).toBe(true);
+  });
+
+  it('keeps frame controls disabled without an eligible paused video and after power off', async () => {
+    await initializePopup();
+    expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(true);
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 1, pausedVideoCount: 1 });
+    });
+    document.querySelector('#speed-increase').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(false)
+    );
+    document.querySelector('#disable').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(true)
+    );
+  });
+
   it('marks invalid custom speed input and avoids sending invalid commands', async () => {
     await initializePopup();
     chrome.tabs.sendMessage.mockClear();
@@ -214,6 +256,7 @@ describe('Popup accessibility', () => {
           response: {
             ok: true,
             mediaCount: 1,
+            pausedVideoCount: 1,
             currentSpeed: 1.5,
             speeds: [1.5],
           },
@@ -223,6 +266,7 @@ describe('Popup accessibility', () => {
     });
     await initializePopup();
     expect(document.getElementById('speed-increase').disabled).toBe(false);
+    expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(false);
     expect(
       document.querySelector('.preset-btn[data-speed="1.5"]').getAttribute('aria-pressed')
     ).toBe('true');
