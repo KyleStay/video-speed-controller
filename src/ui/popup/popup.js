@@ -304,6 +304,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (generation !== commandGeneration) {
               return;
             }
+            // A frame may resume or lose seek bounds after the popup opens.
+            // Step replies exclude ineligible frames; read all status once to
+            // keep speed controls and mixed-frame rates accurate. Never retry
+            // the action itself.
+            if (type === MessageTypes.STEP_FRAME) {
+              refreshStatus();
+              return;
+            }
             // Re-enable initializes media asynchronously and defers DOM work.
             // Retry only status reads, for a bounded period while the popup is
             // open; never repeat a speed-changing command.

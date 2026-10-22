@@ -223,6 +223,31 @@ export default async function runFrameControls({
           );
           await verifyStep(page, 'advanceFrame', () => popup.click('[data-frame-direction="1"]'));
           await verifyStep(page, 'rewindFrame', () => popup.click('[data-frame-direction="-1"]'));
+          // The site can resume while the popup retains its last paused status.
+          // Arrange that race, then use genuine popup input for both commands.
+          const beforeResume = await state(page, 'advanceFrame');
+          await page.evaluate(() => document.querySelector('video').play());
+          await page.waitForFunction(() => !document.querySelector('video').paused);
+          await popup.click('[data-frame-direction="1"]');
+          await popup.waitForFunction(() => {
+            const frames = [...document.querySelectorAll('[data-frame-direction]')];
+            return (
+              frames.every((button) => button.disabled) &&
+              !document.querySelector('#speed-increase').disabled &&
+              document.querySelector('#status').textContent.startsWith('Current ')
+            );
+          });
+          assert.equal(
+            await page.$eval('video', (video) => video.paused),
+            false,
+            'Rejected stale frame input must leave playback running'
+          );
+          await popup.click('#speed-increase');
+          await page.waitForFunction(
+            (rate) => Math.abs(document.querySelector('video').playbackRate - rate) < 0.001,
+            {},
+            beforeResume.rate + 0.1
+          );
           popupErrors.assertNone('Chrome frame popup');
           await popup.screenshot({
             path: resolve('tests/e2e/screenshots/frame-controls-chrome-popup.png'),

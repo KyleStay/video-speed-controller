@@ -45,6 +45,8 @@ toolbar popup and owned fullscreen **More** panel. They seek using detected FPS
 or the configured fallback, only while a seekable video is paused. They do not
 pause playback automatically or write playback rate. Native Apple fullscreen
 continues to use Apple's controls.
+The popup refreshes status once after a frame command, preserving speed controls
+when playback resumes before the click and retaining mixed rates across frames.
 
 ## Build 13 takeover candidate — r4 verification
 

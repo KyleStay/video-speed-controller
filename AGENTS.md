@@ -96,6 +96,9 @@ with direct `chrome.*` access.
   Popup response generations prevent stale replies from changing the UI;
   separate lifecycle generations cancel pending dispatch only on power changes
   or popup close, so rapid relative-speed clicks each reach the media.
+  Frame-step completion triggers one bounded status read, without repeating the
+  action, so stale eligibility and rejected frames cannot disable speed controls
+  or hide mixed playback rates.
 - **Trust boundary**: the MAIN world may write **only `lastSpeed`** back to
   storage (`VSC_WRITE_STORAGE`); everything else is read-only from MAIN.
 
