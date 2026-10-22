@@ -11,7 +11,11 @@ vi.mock('node:child_process', async () => {
   const { promisify } = await import('node:util');
   const execFile = Object.assign(vi.fn(), {
     [promisify.custom]: async (command) => ({
-      stdout: command === 'python3' ? JSON.stringify(mocks.native) : mocks.rows,
+      stdout:
+        command === 'python3'
+          ? JSON.stringify(mocks.native)
+          : (process.platform === 'linux' ? '123 1 Thu Oct 22 13:00:00 2026 owned-browser\n' : '') +
+            mocks.rows,
       stderr: '',
     }),
   });
@@ -20,6 +24,7 @@ vi.mock('node:child_process', async () => {
 vi.mock('node:fs/promises', () => ({
   mkdtemp: vi.fn(async () => '/tmp/stayfast-lifecycle-test-profile'),
   rm: mocks.rm,
+  readlink: vi.fn(async () => '/owned/Chrome'),
 }));
 import { launchFixtureBrowser, cleanupFixtureBrowsers } from '../../e2e/browser-runtime.js';
 import { profileRoots } from '../../e2e/browser-process-ownership.js';
@@ -413,4 +418,41 @@ describe('standalone recovery executable identity', () => {
       await expect(prepare(stdout).context.resolve()).rejects.toThrow();
     }
   );
+});
+
+describe('Linux launched executable identity', () => {
+  function inspect(rows) {
+    const source = readFileSync(resolve('tests/e2e/browser-runtime.js'), 'utf8');
+    const start = source.indexOf('async function actualLaunchedExecutable(');
+    const end = source.indexOf('\nasync function collectOwned(', start);
+    const processRows = vi.fn();
+    for (const row of rows) processRows.mockResolvedValueOnce([row]);
+    const readlink = vi.fn(async () => '/owned/firefox-bin');
+    const context = {
+      process: { platform: 'linux' },
+      processRows,
+      readlink,
+      sameProcess: (a, b) =>
+        a && b && a.pid === b.pid && a.start === b.start && a.command === b.command,
+    };
+    vm.runInNewContext(
+      `${source.slice(start, end)}\nglobalThis.actual=actualLaunchedExecutable;`,
+      context
+    );
+    return { context, readlink };
+  }
+  const row = { pid: 123, start: 'birth', command: 'firefox --profile /tmp/owned' };
+  it('pins the actual kernel executable after a launcher exec', async () => {
+    const { context, readlink } = inspect([row, row]);
+    expect(await context.actual({ process: () => ({ pid: 123 }) }, '/owned/firefox')).toBe(
+      '/owned/firefox-bin'
+    );
+    expect(readlink).toHaveBeenCalledWith('/proc/123/exe');
+  });
+  it('rejects a changed birth identity during executable inspection', async () => {
+    const { context } = inspect([row, { ...row, start: 'different birth' }]);
+    await expect(
+      context.actual({ process: () => ({ pid: 123 }) }, '/owned/firefox')
+    ).rejects.toThrow(/identity changed/);
+  });
 });

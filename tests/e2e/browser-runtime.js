@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -29,6 +29,25 @@ async function processRows() {
 
 function sameProcess(a, b) {
   return a && b && a.pid === b.pid && a.start === b.start && a.command === b.command;
+}
+
+async function actualLaunchedExecutable(browser, fallback) {
+  if (process.platform !== 'linux') {
+    return fallback;
+  }
+  const pid = browser.process()?.pid;
+  const before = (await processRows()).find((row) => row.pid === pid);
+  if (!before) {
+    throw new Error('Launched browser identity unavailable');
+  }
+  // Linux launchers can exec another binary (Firefox uses firefox-bin).
+  // Pin the actual kernel executable while retaining the same birth identity.
+  const executable = await readlink(`/proc/${pid}/exe`);
+  const after = (await processRows()).find((row) => row.pid === pid);
+  if (!sameProcess(before, after) || !executable.startsWith('/')) {
+    throw new Error('Launched browser identity changed during executable inspection');
+  }
+  return executable;
 }
 
 async function collectOwned(profile, retained, executable, browserName) {
@@ -205,6 +224,7 @@ export async function launchFixtureBrowser(browserName, options = {}) {
       return launched;
     });
     await launching;
+    executable = await actualLaunchedExecutable(browser, executable);
     await collectOwned(profile, retained, executable, browserName);
     const pid = browser.process()?.pid;
     const extensionId = await browser.installExtension(
