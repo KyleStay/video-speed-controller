@@ -13,6 +13,41 @@ edge. Its visible track is 3px with a 12px thumb; the slider retains a 44px touc
 region and distance-based precision scrubbing. Progress follows both playback and
 the pending scrub preview, including nonzero live seek bounds.
 
+## Inline timeline and precision gestures
+
+The inline seek rail is independently positioned at the clipped video's bottom,
+with a 3px track, 12px thumb and 44px touch target. The speed/transport strip
+remains compact at the top; the controller does not grow into a video-sized
+hit box. Existing placement events update rail coordinates after occlusion and
+ancestor scaling, without writing scroll or polling.
+
+Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
+playhead, move upward into the video to select half, quarter or fine sensitivity,
+then drag horizontally. The selected fractional time and active mode remain
+visible. Vertical-only movement and return toward the rail do not jump the
+selected time; release consumes the final coordinates. Cancellation, source
+changes, handback, presentation changes and cleanup cannot resume stale playback.
+The shipped gains remain 1, 0.5, 0.25 and 0.1; these are StayFast choices.
+[Apple's documented gesture and known limits](research/ios-precision-scrubbing.md)
+distinguish iOS 5/6 manuals from unspecified private thresholds and return rules.
+
+On exact, unambiguous recognized X players, a lazy click listener reveals owned
+inline controls on a genuine picture tap without toggling playback. Only an
+explicit recognized fullscreen button or same-post video link opens StayFast.
+Modern X recognition requires its direct-video/XDS-trigger structure; captions,
+unrelated elements, ambiguous players, site handback and unknown links remain
+outside ownership. Fullscreen routing still requires the current trusted event;
+no authorization is stored across events. Current live X's navigation link was
+observed in Chrome; authenticated X theater behavior needs separate Safari proof.
+
+**Frame back** and **Frame forward** are available in the expanded controller,
+toolbar popup and owned fullscreen **More** panel. They seek using detected FPS
+or the configured fallback, only while a seekable video is paused. They do not
+pause playback automatically or write playback rate. Native Apple fullscreen
+continues to use Apple's controls.
+The popup refreshes status once after a frame command, preserving speed controls
+when playback resumes before the click and retaining mixed rates across frames.
+
 ## Build 13 takeover candidate — r4 verification
 
 **0.11.4 (13)** replaces controlled iOS HTML5 video controls inline by default:
@@ -28,7 +63,8 @@ restores the site's controls and native fullscreen passthrough.
 controlled video/container fullscreen API requests made synchronously during
 the current trusted click or keydown open StayFast's owned player. The native
 current event must still be dispatching and can authorize only one request;
-there is no stored gesture token, listener or authorization timer. Requests
+there is no stored gesture token or authorization timer. A separate lazy X-only
+click listener handles recognized picture reveal and explicit fullscreen links. Requests
 without that event are suppressed; asynchronous site requests have no routing guarantee.
 Explicit **More → Apple player** uses the native bypass. Cleanup restores only
 StayFast's own hooks and owned attributes/styles, preserving subsequent site edits.

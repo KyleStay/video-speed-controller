@@ -1022,6 +1022,7 @@ describe('Inject', () => {
         requestId: 'status-1',
         ok: true,
         mediaCount: 1,
+        pausedVideoCount: 0,
         currentSpeed: 1.5,
         speeds: [1.5],
       },
@@ -1030,6 +1031,111 @@ describe('Inject', () => {
     document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', handleResult);
     window.VSC.stateManager.controllers.delete('status-test');
     delete video.vsc;
+  });
+
+  it('popup frame commands step paused videos using detected or configured fps, without rate changes', () => {
+    extension = window.VSC_controller;
+    const previousHandler = extension.actionHandler;
+    const previousConfig = extension.config;
+    const config = { getKeyBinding: vi.fn(() => 24) };
+    const handler = new window.VSC.ActionHandler(config, null);
+    const paused = createMockVideo({ currentTime: 10, paused: true });
+    const playing = createMockVideo({ currentTime: 10, paused: false });
+    mockDOM.container.append(paused, playing);
+    const audio = document.createElement('audio');
+    const rateWrite = vi.fn();
+    Object.defineProperty(paused, 'playbackRate', { get: () => 3, set: rateWrite });
+    Object.defineProperty(audio, 'currentTime', { value: 10, writable: true });
+    paused.vsc = { detectedFps: 60, remove: vi.fn() };
+    const media = [paused, playing, audio];
+    const getAll = vi.spyOn(window.VSC.stateManager, 'getAllMediaElements').mockReturnValue(media);
+    extension.actionHandler = handler;
+    extension.config = config;
+    const results = [];
+    const onResult = (event) => results.push(event.detail);
+    document.documentElement.addEventListener('VSC_MESSAGE_RESULT', onResult);
+    const command = (direction) =>
+      document.documentElement.dispatchEvent(
+        new CustomEvent('VSC_MESSAGE', {
+          detail: { type: 'VSC_STEP_FRAME', payload: { direction }, requestId: 'frame-test' },
+        })
+      );
+    try {
+      command(1);
+      expect(paused.currentTime).toBeCloseTo(10 + 1 / 60);
+      delete paused.vsc.detectedFps;
+      command(-1);
+      expect(paused.currentTime).toBeCloseTo(10 + 1 / 60 - 1 / 24);
+      const beforeInvalid = paused.currentTime;
+      for (const direction of [0, 2, -2, '1', NaN, null]) {
+        command(direction);
+      }
+      expect(paused.currentTime).toBe(beforeInvalid);
+      expect(playing.currentTime).toBe(10);
+      expect(playing.paused).toBe(false);
+      expect(audio.currentTime).toBe(10);
+      expect(rateWrite).not.toHaveBeenCalled();
+      expect(results[0]).toMatchObject({ ok: true, pausedVideoCount: 1 });
+      expect(results.slice(2).every((result) => result.ok === false)).toBe(true);
+      expect(config.getKeyBinding.mock.calls).toEqual([['advanceFrame'], ['rewindFrame']]);
+    } finally {
+      getAll.mockRestore();
+      extension.actionHandler = previousHandler;
+      extension.config = previousConfig;
+      document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', onResult);
+      delete paused.vsc;
+    }
+  });
+
+  it('popup frame status and dispatch require a current seekable paused video', () => {
+    extension = window.VSC_controller;
+    const previousHandler = extension.actionHandler;
+    const stepFrame = vi.fn();
+    const video = createMockVideo({ currentTime: 10, paused: true });
+    video.duration = NaN;
+    mockDOM.container.append(video);
+    const getAll = vi
+      .spyOn(window.VSC.stateManager, 'getAllMediaElements')
+      .mockReturnValue([video]);
+    extension.actionHandler = { stepFrame };
+    const results = [];
+    const onResult = (event) => results.push(event.detail);
+    document.documentElement.addEventListener('VSC_MESSAGE_RESULT', onResult);
+    const command = () =>
+      document.documentElement.dispatchEvent(
+        new CustomEvent('VSC_MESSAGE', {
+          detail: { type: 'VSC_STEP_FRAME', payload: { direction: 1 }, requestId: 'bounds-test' },
+        })
+      );
+    try {
+      for (const duration of [NaN, Infinity, 0]) {
+        video.duration = duration;
+        expect(extension.getMediaStatus([video]).pausedVideoCount).toBe(0);
+        command();
+        expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+      }
+      expect(stepFrame).not.toHaveBeenCalled();
+      Object.defineProperty(video, 'seekable', {
+        configurable: true,
+        value: { length: 1, start: () => 2, end: () => 30 },
+      });
+      expect(extension.getMediaStatus([video]).pausedVideoCount).toBe(1);
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      video.paused = false;
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+      video.paused = true;
+      video.remove();
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+    } finally {
+      getAll.mockRestore();
+      extension.actionHandler = previousHandler;
+      document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', onResult);
+    }
   });
 
   // --- Keypress-triggered synchronous rescan (late-loaded media safety net) ---

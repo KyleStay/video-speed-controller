@@ -7,6 +7,33 @@ window.VSC = window.VSC || {};
 class ControlsManager {
   static inlineScrollGroups = new WeakMap();
 
+  static canStepFrame(video) {
+    try {
+      if (
+        video?.tagName !== 'VIDEO' ||
+        !video.isConnected ||
+        !video.paused ||
+        !Number.isFinite(video.currentTime)
+      ) {
+        return false;
+      }
+      const duration = video.duration;
+      if (Number.isFinite(duration) && duration > 0) {
+        return true;
+      }
+      const ranges = video.seekable;
+      const index = ranges.length - 1;
+      if (index < 0) {
+        return false;
+      }
+      const start = ranges.start(index);
+      const end = ranges.end(index);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start;
+    } catch {
+      return false;
+    }
+  }
+
   constructor(actionHandler, config) {
     this.actionHandler = actionHandler;
     this.config = config;
@@ -317,6 +344,23 @@ class ControlsManager {
     }
     const scale = this.inlinePlayer?.owned ? this.inlinePlayer.scale : null;
     controller.style.transform = `translate(${(placement.x - rect.left) / (scale?.x || 1)}px, ${(placement.y - rect.top) / (scale?.y || 1)}px)`;
+    if (this.inlinePlayer?.owned) {
+      // The transport stays compact at the top. Its independently positioned
+      // seek target follows the visible video's bottom, including clipped feeds
+      // and transformed ancestors, without a full-video controller hit box.
+      const railLeft = (visible ? Math.max(media.left, left) : media.left) + 4;
+      const railBottom = (visible ? Math.min(media.bottom, bottom) : media.bottom) - 4;
+      const railWidth = Math.max(44, (visible ? visibleWidth : media.width) - 8);
+      for (const [property, value] of [
+        ['--vsc-inline-timeline-left', `${(railLeft - placement.x) / (scale?.x || 1)}px`],
+        ['--vsc-inline-timeline-top', `${(railBottom - 44 - placement.y) / (scale?.y || 1)}px`],
+        ['--vsc-inline-timeline-width', `${railWidth / (scale?.x || 1)}px`],
+      ]) {
+        if (controller.style.getPropertyValue(property) !== value) {
+          controller.style.setProperty(property, value);
+        }
+      }
+    }
     const player = video.vsc?.iosPlayer;
     if (player) {
       const button = shadow.querySelector('.inline-fullscreen');
@@ -681,52 +725,81 @@ class ControlsManager {
    * @private
    */
   setupButtonHandlers(shadow, video = this.video) {
+    const frameButtons = shadow.querySelectorAll('.frame-step');
+    const updateFrameButtons = () => {
+      const disabled = !ControlsManager.canStepFrame(video);
+      for (const button of frameButtons) {
+        if (button.disabled !== disabled) {
+          button.disabled = disabled;
+        }
+      }
+    };
+    updateFrameButtons();
+    if (video) {
+      for (const type of [
+        'play',
+        'playing',
+        'pause',
+        'ended',
+        'emptied',
+        'loadstart',
+        'loadedmetadata',
+        'durationchange',
+        'progress',
+      ]) {
+        video.addEventListener(type, updateFrameButtons);
+        this.cleanupHandlers.push(() => video.removeEventListener(type, updateFrameButtons));
+      }
+    }
     shadow.querySelectorAll('button').forEach((button) => {
       if (button.dataset.inlineAction) {
         return; // The owned inline transport owns its media-local actions.
       }
       // Click handler
-      button.addEventListener(
-        'click',
-        (e) => {
-          const action = button.dataset.action;
-          if (action === 'ownedFullscreen') {
-            this.setTouchExpanded(shadow, false);
-            try {
-              const player = video?.vsc?.iosPlayer;
-              player?.open({ fullscreen: true });
-            } catch {
-              /* A site can replace media or presentation APIs. */
-            }
-            e.stopPropagation();
-            return;
-          }
-          if (action === 'close') {
-            this.setTouchExpanded(shadow, false, true);
-            e.stopPropagation();
-            return;
-          }
-          const absoluteSpeed = action === 'setSpeed' || action === 'preferredSpeed';
-          const value =
-            action === 'preferredSpeed'
-              ? this.config.getKeyBinding('fast') || 1
-              : action === 'setSpeed'
-                ? Number(button.dataset.value)
-                : this.config.getKeyBinding(action);
-          this.actionHandler.runAction(absoluteSpeed ? 'SET_SPEED' : action, value, e);
+      const click = (e) => {
+        const action = button.dataset.action;
+        if (button.classList.contains('frame-step') && !ControlsManager.canStepFrame(video)) {
+          updateFrameButtons();
           e.stopPropagation();
-        },
-        true
-      );
+          return;
+        }
+        if (action === 'ownedFullscreen') {
+          this.setTouchExpanded(shadow, false);
+          try {
+            const player = video?.vsc?.iosPlayer;
+            player?.open({ fullscreen: true });
+          } catch {
+            /* A site can replace media or presentation APIs. */
+          }
+          e.stopPropagation();
+          return;
+        }
+        if (action === 'close') {
+          this.setTouchExpanded(shadow, false, true);
+          e.stopPropagation();
+          return;
+        }
+        const absoluteSpeed = action === 'setSpeed' || action === 'preferredSpeed';
+        const value =
+          action === 'preferredSpeed'
+            ? this.config.getKeyBinding('fast') || 1
+            : action === 'setSpeed'
+              ? Number(button.dataset.value)
+              : this.config.getKeyBinding(action);
+        this.actionHandler.runAction(absoluteSpeed ? 'SET_SPEED' : action, value, e);
+        e.stopPropagation();
+      };
+      button.addEventListener('click', click, true);
 
       // Touch handler to prevent conflicts
-      button.addEventListener(
-        'touchstart',
-        (e) => {
-          e.stopPropagation();
-        },
-        true
-      );
+      const touch = (e) => e.stopPropagation();
+      button.addEventListener('touchstart', touch, true);
+      if (button.classList.contains('frame-step')) {
+        this.cleanupHandlers.push(() => {
+          button.removeEventListener('click', click, true);
+          button.removeEventListener('touchstart', touch, true);
+        });
+      }
     });
   }
 

@@ -21,6 +21,27 @@ describe('owned iOS inline transport', () => {
   const touch = (node) =>
     node.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
 
+  const scrubPointer = (type, x = 40, y = 122, pointerId = 7) => {
+    player.refs.timeline.getBoundingClientRect = () => ({
+      left: 10,
+      top: 100,
+      width: 300,
+      height: 44,
+    });
+    const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+    for (const [key, value] of Object.entries({
+      pointerId,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      isPrimary: true,
+    })) {
+      Object.defineProperty(event, key, { value });
+    }
+    (type === 'pointerdown' ? player.refs.timeline : window).dispatchEvent(event);
+    return event;
+  };
+
   beforeAll(async () => {
     // Module loading starts initialization without awaiting its storage migrations.
     // Settle those real-timer callbacks before teardown switches to fake timers.
@@ -406,9 +427,9 @@ describe('owned iOS inline transport', () => {
     'ignores late range input/change after %s and accepts a fresh gesture',
     (change) => {
       player.setOwned(true);
-      touch(player.refs.timeline);
+      scrubPointer('pointerdown');
       if (change === 'pointercancel') {
-        window.dispatchEvent(new Event('pointercancel'));
+        scrubPointer('pointercancel');
       } else if (change === 'handback') {
         player.setOwned(false);
         player.setOwned(true);
@@ -420,9 +441,9 @@ describe('owned iOS inline transport', () => {
       player.refs.timeline.dispatchEvent(new Event('change', { bubbles: true }));
       expect(actionHandler.seek).not.toHaveBeenCalled();
       expect(video.currentTime).toBe(12);
-      touch(player.refs.timeline);
-      player.refs.timeline.value = '30';
-      player.refs.timeline.dispatchEvent(new Event('input', { bubbles: true }));
+      scrubPointer('pointerdown');
+      scrubPointer('pointermove', 85);
+      scrubPointer('pointerup', 85);
       expect(video.currentTime).toBe(30);
     }
   );
@@ -560,6 +581,7 @@ describe('owned iOS inline transport', () => {
     const remove = vi.spyOn(video, 'removeEventListener');
     const removeWindow = vi.spyOn(window, 'removeEventListener');
     const oldPlay = player.refs.play;
+    scrubPointer('pointerdown');
     manager.cleanup();
     expect(manager.inlinePlayer).toBeNull();
     expect(player.disposed).toBe(true);
@@ -572,5 +594,154 @@ describe('owned iOS inline transport', () => {
     vi.advanceTimersByTime(5000);
     expect(video.play).not.toHaveBeenCalled();
     expect(host.hasAttribute('data-vsc-inline-owned')).toBe(false);
+  });
+  it('uses one captured inline gesture across precision bands and commits the final release', () => {
+    player.setOwned(true);
+    paused = false;
+    scrubPointer('pointerdown');
+    expect(video.pause).toHaveBeenCalledOnce();
+    let x = 40;
+    let expected = 12;
+    for (const [distance, gain, direction] of [
+      [0, 1, 1],
+      [60, 0.5, 1],
+      [100, 0.25, 1],
+      [150, 0.1, 1],
+      [100, 0.25, -1],
+      [60, 0.5, -1],
+      [0, 1, -1],
+    ]) {
+      const y = 122 - distance;
+      scrubPointer('pointermove', x, y);
+      expect(player.scrubber.value).toBeCloseTo(expected, 8);
+      x += direction * 30;
+      expected += direction * 12 * gain;
+      scrubPointer('pointermove', x, y);
+      expect(Number(player.refs.timeline.value)).toBeCloseTo(expected, 8);
+      expect(player.refs.time.textContent).toMatch(/\d+:\d{2}\.\d{2} \/ 2:00/);
+      expect(player.refs.scrubHint.textContent).not.toBe('');
+      if (gain === 0.1) {
+        expect(player.refs.scrubHint.textContent).toContain('Tenth');
+        expect(player.refs.time.textContent).toBe('0:34.20 / 2:00');
+      }
+      expect(video.play).not.toHaveBeenCalled();
+    }
+    scrubPointer('pointerup', x + 3);
+    expect(video.currentTime).toBeCloseTo(expected + 1.2, 8);
+    expect(video.play).toHaveBeenCalledOnce();
+    expect(player.scrubber.active).toBe(false);
+    expect(player.refs.scrubHint.textContent).toBe('');
+    expect(video.vsc.iosPlayer.open).not.toHaveBeenCalled();
+  });
+
+  it('restores an inline cancelled scrub and never changes a previously paused playback state', () => {
+    player.setOwned(true);
+    scrubPointer('pointerdown');
+    scrubPointer('pointermove', 100);
+    vi.advanceTimersByTime(50);
+    expect(video.currentTime).toBeCloseTo(36);
+    scrubPointer('pointercancel', 100);
+    expect(video.currentTime).toBe(12);
+    expect(video.play).not.toHaveBeenCalled();
+    expect(player.scrubber.gestureListeners).toHaveLength(0);
+    expect(player.scrubber.timer).toBeNull();
+  });
+
+  it('keeps playback running if the site resumes during an inline scrub', () => {
+    player.setOwned(true);
+    paused = false;
+    scrubPointer('pointerdown');
+    scrubPointer('pointermove', 100);
+    paused = false;
+    scrubPointer('pointerup', 100);
+    expect(paused).toBe(false);
+    expect(video.pause).toHaveBeenCalledOnce();
+    expect(video.play).toHaveBeenCalledOnce();
+  });
+
+  it('does not resume a source replaced by the final inline seek', () => {
+    player.setOwned(true);
+    paused = false;
+    scrubPointer('pointerdown');
+    scrubPointer('pointermove', 100);
+    actionHandler.seek.mockImplementation((target, delta) => {
+      target.currentTime += delta;
+      target.dispatchEvent(new Event('loadstart'));
+    });
+    player.scrubber.finish(null);
+    expect(actionHandler.seek).toHaveBeenCalledOnce();
+    expect(video.play).not.toHaveBeenCalled();
+    expect(player.scrubber.active).toBe(false);
+    expect(player.scrubber.gestureListeners).toHaveLength(0);
+    expect(player.scrubber.timer).toBeNull();
+  });
+
+  it.each(['src', 'srcObject'])(
+    'does not resume a %s replacement before queued native source events arrive',
+    (kind) => {
+      player.setOwned(true);
+      paused = false;
+      scrubPointer('pointerdown');
+      scrubPointer('pointermove', 100);
+      actionHandler.seek.mockImplementation((target, delta) => {
+        target.currentTime += delta;
+        if (kind === 'src') {
+          target.src = 'https://example.test/next.mp4';
+        } else {
+          Object.defineProperty(target, 'srcObject', { configurable: true, value: {} });
+        }
+      });
+      player.scrubber.finish(null);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(player.scrubber.active).toBe(false);
+      expect(player.scrubber.gestureListeners).toHaveLength(0);
+      expect(player.scrubber.timer).toBeNull();
+    }
+  );
+
+  it.each(['loadstart', 'handback', 'fullscreen', 'cleanup'])(
+    'abandons pending inline scrubbing after %s without a stale seek or resume',
+    (reason) => {
+      player.setOwned(true);
+      paused = false;
+      scrubPointer('pointerdown');
+      scrubPointer('pointermove', 100);
+      if (reason === 'loadstart') {
+        video.dispatchEvent(new Event('loadstart'));
+      } else if (reason === 'handback') {
+        player.setOwned(false);
+      } else if (reason === 'fullscreen') {
+        video.vsc.iosPlayer.active = true;
+        player.update();
+      } else {
+        manager.cleanup();
+      }
+      const count = actionHandler.seek.mock.calls.length;
+      scrubPointer('pointermove', 200);
+      scrubPointer('pointerup', 200);
+      vi.advanceTimersByTime(300);
+      expect(actionHandler.seek).toHaveBeenCalledTimes(count);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(player.scrubber.active).toBe(false);
+      expect(player.scrubber.timer).toBeNull();
+    }
+  );
+  it('does not play a recycled source when replay seeking synchronously loads another clip', () => {
+    player.setOwned(true);
+    ended = true;
+    actionHandler.seek.mockImplementation(() => video.dispatchEvent(new Event('loadstart')));
+    player.play();
+    expect(actionHandler.seek).toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+  });
+  it('does not play a replay source replaced before loadstart is dispatched', () => {
+    player.setOwned(true);
+    ended = true;
+    actionHandler.seek.mockImplementation(() => {
+      video.src = 'https://example.test/next.mp4';
+    });
+    player.play();
+    expect(actionHandler.seek).toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
   });
 });

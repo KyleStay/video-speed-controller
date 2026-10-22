@@ -88,6 +88,291 @@ afterEach(() => {
 });
 
 describe('iOS fullscreen request takeover', () => {
+  function xEntry(modern = true) {
+    const result = player();
+    const { container } = result;
+    let control;
+    if (modern) {
+      const trigger = document.createElement('div');
+      trigger.dataset.slot = 'xds-context-menu-trigger';
+      trigger.innerHTML =
+        '<button aria-label="Play"></button><div class="group/controls"><div><div inert><button data-slot="xds-button"><svg data-icon="icon-media-expand"></svg></button></div><a aria-label="Full screen" href="/example/status/123/video/1"></a></div></div>';
+      container.append(trigger);
+      control = trigger.querySelector('a');
+    } else {
+      container.dataset.testid = 'videoPlayer';
+      control = document.createElement('button');
+      control.dataset.testid = 'videoControlFullscreenButton';
+      container.append(control);
+    }
+    return { ...result, control };
+  }
+
+  function explicitClick(manager, target, overrides = {}) {
+    currentEvent = {
+      type: 'click',
+      isTrusted: true,
+      eventPhase: 1,
+      button: 0,
+      target,
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+      ...overrides,
+    };
+    manager.routeXPlayerClick(currentEvent);
+    return currentEvent;
+  }
+
+  it.each([true, false])(
+    'routes only explicit modern=%s X fullscreen entry around original media',
+    (modern) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { owner, video, control } = xEntry(modern);
+      const source = video.src;
+      const stream = video.srcObject;
+      register(owner);
+      const event = explicitClick(Takeover.managers.get(window), control);
+      expect(owner.open).toHaveBeenCalledExactlyOnceWith({ fullscreen: true });
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
+      expect(video.src).toBe(source);
+      expect(video.srcObject).toBe(stream);
+    }
+  );
+
+  it.each([
+    'modern-video',
+    'modern-cover',
+    'modern-container',
+    'modern-trigger',
+    'legacy-video',
+    'legacy-container',
+  ])(
+    'a trusted %s picture tap reveals controls without changing playback or opening fullscreen',
+    (kind) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { owner, video, container } = xEntry(!kind.startsWith('legacy-'));
+      if (kind === 'legacy-container') {
+        container.dataset.testid = 'videoPlayer';
+      }
+      video.getBoundingClientRect = () => ({
+        left: 20,
+        top: 40,
+        right: 320,
+        bottom: 240,
+        width: 300,
+        height: 200,
+      });
+      const inline = { available: vi.fn(() => true), reveal: vi.fn() };
+      video.vsc.controlsManager = { inlinePlayer: inline };
+      const play = vi.spyOn(video, 'play');
+      const pause = vi.spyOn(video, 'pause');
+      register(owner);
+      const target =
+        kind === 'modern-cover'
+          ? container.querySelector('button[aria-label="Play"]')
+          : kind.endsWith('-container')
+            ? container
+            : kind === 'modern-trigger'
+              ? container.querySelector('[data-slot="xds-context-menu-trigger"]')
+              : video;
+      const event = explicitClick(Takeover.managers.get(window), target, {
+        clientX: 100,
+        clientY: 100,
+      });
+      expect(inline.reveal).toHaveBeenCalledOnce();
+      expect(owner.open).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['outside-picture', 'missing-coordinates', 'arbitrary-overlay'])(
+    'does not treat a bare %s target as the video picture',
+    (kind) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { owner, video, container } = xEntry();
+      const inline = { available: vi.fn(() => true), reveal: vi.fn() };
+      video.vsc.controlsManager = { inlinePlayer: inline };
+      video.getBoundingClientRect = () => ({
+        left: 20,
+        top: 40,
+        right: 320,
+        bottom: 240,
+        width: 300,
+        height: 200,
+      });
+      let target = container;
+      if (kind === 'arbitrary-overlay') {
+        target = document.createElement('div');
+        container.append(target);
+      }
+      register(owner);
+      const coordinates =
+        kind === 'missing-coordinates'
+          ? {}
+          : { clientX: kind === 'outside-picture' ? 400 : 100, clientY: 100 };
+      const event = explicitClick(Takeover.managers.get(window), target, coordinates);
+      expect(inline.reveal).not.toHaveBeenCalled();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(owner.open).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    'transport-play',
+    'transport-pause',
+    'unavailable',
+    'relinquished',
+    'synthetic',
+    'unknown-video',
+    'native-bypass',
+  ])('picture reveal preserves the original %s behavior', (kind) => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { owner, video, container } = xEntry();
+    const inline = { available: vi.fn(() => kind !== 'unavailable'), reveal: vi.fn() };
+    video.vsc.controlsManager = { inlinePlayer: inline };
+    let target = video;
+    if (kind.startsWith('transport-')) {
+      target = document.createElement('button');
+      target.setAttribute('aria-label', kind === 'transport-play' ? 'Play' : 'Pause');
+      container.querySelector('[class~="group/controls"]').append(target);
+    }
+    if (kind === 'relinquished') {
+      window.VSC.IOSPlayer.siteRelinquished.add(video);
+    }
+    if (kind === 'unknown-video') {
+      container.querySelector('[data-slot]').remove();
+    }
+    register(owner);
+    const manager = Takeover.managers.get(window);
+    let event;
+    const click = () => {
+      event = explicitClick(manager, target, kind === 'synthetic' ? { isTrusted: false } : {});
+    };
+    if (kind === 'native-bypass') {
+      Takeover.withNative(owner, click);
+    } else {
+      click();
+    }
+    expect(inline.reveal).not.toHaveBeenCalled();
+    expect(owner.open).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'play',
+    'settings',
+    'signin',
+    'pip',
+    'different-post',
+    'different-origin',
+    'missing-icon',
+    'second-video',
+    'iframe',
+    'relinquished',
+  ])('leaves modern X %s actions and ambiguous entries untouched', (kind) => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { owner, video, control, container } = xEntry();
+    let target = control;
+    if (kind === 'play') {
+      target = container.querySelector('button[aria-label="Play"]');
+    }
+    if (kind === 'settings') {
+      target = document.createElement('button');
+      target.setAttribute('aria-label', 'Settings');
+      control.parentElement.append(target);
+    }
+    if (kind === 'signin') {
+      control.href = '/i/jf/onboarding/web?mode=login';
+    }
+    if (kind === 'pip') {
+      control.setAttribute('aria-label', 'Picture-in-Picture');
+    }
+    if (kind === 'different-post') {
+      const post = document.createElement('article');
+      container.replaceWith(post);
+      post.innerHTML = '<a href="/example/status/456">Post</a>';
+      post.append(container);
+    }
+    if (kind === 'different-origin') {
+      control.href = 'https://example.invalid/example/status/123/video/1';
+    }
+    if (kind === 'missing-icon') {
+      container.querySelector('svg').remove();
+    }
+    if (kind === 'second-video' || kind === 'iframe') {
+      container.append(document.createElement(kind === 'iframe' ? 'iframe' : 'video'));
+    }
+    if (kind === 'relinquished') {
+      window.VSC.IOSPlayer.siteRelinquished.add(video);
+    }
+    register(owner);
+    const event = explicitClick(Takeover.managers.get(window), target);
+    expect(owner.open).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { isTrusted: false },
+    { eventPhase: 0 },
+    { button: 1 },
+    { metaKey: true },
+    { ctrlKey: true },
+    { shiftKey: true },
+    { altKey: true },
+    { defaultPrevented: true },
+  ])('rejects noncurrent or alternate X fullscreen intent: %j', (overrides) => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { owner, control } = xEntry();
+    register(owner);
+    explicitClick(Takeover.managers.get(window), control, overrides);
+    expect(owner.open).not.toHaveBeenCalled();
+  });
+
+  it.each(['false', 'throw'])(
+    'failed X open=%s preserves click and native API fallback',
+    async (failure) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { owner, video, control } = xEntry();
+      owner.open.mockImplementationOnce(() => {
+        if (failure === 'throw') {
+          throw new Error('site change');
+        }
+        return false;
+      });
+      register(owner);
+      const event = explicitClick(Takeover.managers.get(window), control);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+      await expect(video.requestFullscreen()).resolves.toBeUndefined();
+      expect(owner.open).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('keeps X bypass and consumed-intent scope and removes its one listener on last release', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { owner, control } = xEntry();
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const release = register(owner);
+    const manager = Takeover.managers.get(window);
+    expect(add.mock.calls.filter(([type]) => type === 'click')).toHaveLength(1);
+    Takeover.withNative(owner, () => explicitClick(manager, control));
+    expect(owner.open).not.toHaveBeenCalled();
+    const event = explicitClick(manager, control);
+    manager.routeXPlayerClick(event);
+    expect(owner.open).toHaveBeenCalledOnce();
+    const listener = manager.xPlayerClick;
+    release();
+    expect(remove).toHaveBeenCalledWith('click', listener, true);
+    explicitClick(manager, control);
+    expect(owner.open).toHaveBeenCalledOnce();
+  });
+
   it('stays inert before the first iOS player and restores exact descriptors on final release', () => {
     const { owner } = player();
     const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'requestFullscreen');

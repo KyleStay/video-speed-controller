@@ -297,6 +297,8 @@
                   </div>
                 </div>
                 <div class="extra-options" id="extra-options" data-ref="extra" role="group" aria-label="More video options" hidden>
+                  <button type="button" data-ref="frameBack" aria-label="Frame back" title="Frame back">|◀</button>
+                  <button type="button" data-ref="frameForward" aria-label="Frame forward" title="Frame forward">▶|</button>
                   <select class="captions" data-ref="captions" aria-label="Captions"><option value="off">Captions off</option></select>
                   <select data-ref="audio" aria-label="Audio language" hidden></select>
                   <button type="button" data-ref="live" aria-label="Go to live edge" hidden>Go live</button>

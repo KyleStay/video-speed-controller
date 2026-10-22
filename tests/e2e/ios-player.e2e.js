@@ -1,11 +1,145 @@
 /** Built Chrome extension with iPhone UA/touch input; actual iOS runs separately. */
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { assert, launchChromeWithExtension, monitorPageErrors } from './e2e-utils.js';
 import { startFixtureServer } from './fixture-server.js';
 
 const iphoneUA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+
+// CDP input uses visual-viewport coordinates; DOMRects use the layout viewport.
+// Mobile viewport panning after real wheel/zoom input can separate the origins.
+async function tapAt(page, x, y) {
+  const offset = await page.evaluate(() => ({
+    x: visualViewport?.offsetLeft || 0,
+    y: visualViewport?.offsetTop || 0,
+  }));
+  await page.touchscreen.tap(x - offset.x, y - offset.y);
+}
+
+function inlineTimelineGeometry() {
+  const video = window.__ownedOriginal;
+  const inline = video.vsc.controlsManager.inlinePlayer;
+  const rect = (node) => node.getBoundingClientRect().toJSON();
+  const media = video.getBoundingClientRect();
+  const shell = document.querySelector('.player').getBoundingClientRect();
+  return {
+    clip: {
+      left: Math.max(0, media.left, shell.left),
+      top: Math.max(0, media.top, shell.top),
+      right: Math.min(innerWidth, media.right, shell.right),
+      bottom: Math.min(innerHeight, media.bottom, shell.bottom),
+    },
+    layoutClip: inline.layout.clipped,
+    range: rect(inline.refs.timeline),
+    strip: rect(inline.root),
+    group: rect(inline.refs.timelineGroup),
+    hidden: inline.refs.timelineGroup.hidden,
+    active: inline.scrubber.active,
+    min: Number(inline.refs.timeline.min),
+    span: Number(inline.refs.timeline.max) - Number(inline.refs.timeline.min),
+    time: video.currentTime,
+  };
+}
+
+async function assertInlineProgress(page, expected, preview = false) {
+  try {
+    await page.waitForFunction(
+      (target, active) => {
+        const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+        const range = inline.refs.timeline;
+        const value = Number(range.value);
+        const fill = parseFloat(getComputedStyle(range).getPropertyValue('--seek-progress'));
+        const expectedFill =
+          (100 * (value - Number(range.min))) / (Number(range.max) - Number(range.min));
+        return (
+          inline.scrubber.active === active &&
+          Math.abs(value - target) < 0.15 &&
+          Math.abs(fill - expectedFill) < 0.002 &&
+          (active || Math.abs(window.__ownedOriginal.currentTime - target) < 0.3)
+        );
+      },
+      { timeout: 2500, polling: 'raf' },
+      expected,
+      preview
+    );
+    const state = await page.evaluate(() => {
+      const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+      return {
+        value: inline.scrubber.value,
+        selected: inline.refs.time.textContent,
+        hint: inline.refs.scrubHint.textContent,
+        described:
+          inline.refs.timeline.getAttribute('aria-describedby') === inline.refs.scrubHint.id,
+      };
+    });
+    if (preview) {
+      assert.true(
+        /\d+:\d{2}\.\d{2}/.test(state.selected) && state.described && !!state.hint,
+        `Inline preview must expose fractional selection and precision feedback: ${JSON.stringify(state)}`
+      );
+    }
+    return state;
+  } catch (error) {
+    const path = resolve(`tests/e2e/screenshots/ios-inline-progress-failure-${Date.now()}`);
+    let timer;
+    try {
+      await Promise.race([
+        (async () => {
+          const state = await page.evaluate(
+            (target, active) => {
+              const video = window.__ownedOriginal;
+              const inline = video?.vsc?.controlsManager?.inlinePlayer;
+              const scrubber = inline?.scrubber;
+              const range = inline?.refs.timeline;
+              return {
+                expected: target,
+                preview: active,
+                value: scrubber?.value,
+                rate: scrubber?.rate,
+                active: scrubber?.active,
+                lastX: scrubber?.lastX,
+                lastY: scrubber?.lastY,
+                pending: scrubber?.pending,
+                time: video?.currentTime,
+                paused: video?.paused,
+                fill: range && getComputedStyle(range).getPropertyValue('--seek-progress'),
+                rangeValue: range?.value,
+                min: range?.min,
+                max: range?.max,
+                range: range?.getBoundingClientRect().toJSON(),
+                transform: inline?.root.style.transform,
+                computedTransform: inline && getComputedStyle(inline.root).transform,
+                layout: inline?.layout,
+                hidden: inline?.refs.timelineGroup.hidden,
+                selected: inline?.refs.time.textContent,
+                hint: inline?.refs.scrubHint.textContent,
+                page: { x: scrollX, y: scrollY, width: innerWidth, height: innerHeight },
+                trace: window.__stayfastPrecision?.active?.points.slice(-12),
+              };
+            },
+            expected,
+            preview
+          );
+          console.error(`   Inline progress failure: ${JSON.stringify(state)}`);
+          await writeFile(`${path}.json`, JSON.stringify(state, null, 2));
+          await page.screenshot({ path: `${path}.png` });
+        })(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Inline failure capture exceeded 3000ms')),
+            3000
+          );
+        }),
+      ]);
+    } catch (captureError) {
+      console.error(`   Inline failure capture: ${captureError.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    throw error;
+  }
+}
 
 async function assertBottomTimeline(page, orientation) {
   const geometry = await page.evaluate(() => {
@@ -127,7 +261,7 @@ async function tapPlayer(page, ref, context = page) {
       document.querySelector('vsc-ios-player')?.hasAttribute('data-controls-hidden')
     ))
   ) {
-    await page.touchscreen.tap(20, 260);
+    await tapAt(page, 20, 260);
   }
   if (
     ref !== 'more' &&
@@ -181,7 +315,7 @@ async function tapPlayer(page, ref, context = page) {
     if (context !== page) {
       console.log(`   Frame control ${ref}: ${JSON.stringify({ local: bounds, mapped })}`);
     }
-    await page.touchscreen.tap(mapped.x + mapped.width / 2, mapped.y + mapped.height / 2);
+    await tapAt(page, mapped.x + mapped.width / 2, mapped.y + mapped.height / 2);
   } finally {
     await handle.dispose();
   }
@@ -235,7 +369,8 @@ async function tapInline(page, selector, mediaId = 'mobile-video', context = pag
       })}`
     );
   }
-  await page.touchscreen.tap(
+  await tapAt(
+    page,
     offset.x + bounds.x + bounds.width / 2,
     offset.y + bounds.y + bounds.height / 2
   );
@@ -250,7 +385,7 @@ async function tapInlinePlayer(page, ref) {
     const bounds = await handle.asElement()?.boundingBox();
     assert.exists(bounds, `Owned inline control ${ref}`);
     assert.true(bounds.width >= 44 && bounds.height >= 44, `${ref} must retain a 44px target`);
-    await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await tapAt(page, bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   } finally {
     await handle.dispose();
   }
@@ -415,7 +550,7 @@ async function assertScrollPosition(page, expected, label) {
 }
 
 async function exitBrowserFullscreen(page) {
-  await page.touchscreen.tap(318, 796);
+  await tapAt(page, 318, 796);
   try {
     await page.waitForFunction(() => !document.fullscreenElement, { timeout: 1500, polling: 100 });
   } catch {
@@ -462,13 +597,20 @@ async function exitBrowserFullscreen(page) {
   await page.waitForFunction(() => !document.fullscreenElement, { polling: 100 });
 }
 
-export default async function runIOSPlayer({ launch = launchChromeWithExtension } = {}) {
+export default async function runIOSPlayer({
+  launch = launchChromeWithExtension,
+  onlyChecks = null,
+} = {}) {
   let browser;
+  let page;
   let fixtures;
   let errors;
   let passed = 0;
   let failed = 0;
   const check = async (name, work) => {
+    if (onlyChecks && !onlyChecks.some((part) => name.includes(part))) {
+      return;
+    }
     try {
       errors.assertNone(`before ${name}`);
       await work();
@@ -477,6 +619,25 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       console.log(`   ✅ Owned player: ${name}`);
     } catch (error) {
       failed++;
+      const failureState = await page
+        .evaluate(() => ({
+          url: location.href,
+          scroll: [scrollX, scrollY],
+          viewport: [innerWidth, innerHeight],
+          configured: null,
+          fullscreen: !!document.fullscreenElement,
+          modals: document.querySelectorAll(':modal').length,
+          overflow: [
+            getComputedStyle(document.body).overflow,
+            getComputedStyle(document.documentElement).overflow,
+          ],
+          point: document.elementFromPoint(375, 740)?.outerHTML.slice(0, 300),
+        }))
+        .catch(() => null);
+      console.error(`   Failure state: ${JSON.stringify(failureState)}`);
+      await page
+        .screenshot({ path: resolve('tests/e2e/screenshots/ios-owned-last-failure.png') })
+        .catch(() => {});
       console.error(`   ❌ Owned player: ${name}: ${error.stack || error.message}`);
     }
   };
@@ -492,7 +653,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
     });
     const launched = await launch();
     browser = launched.browser;
-    const page = launched.page;
+    page = launched.page;
     errors = monitorPageErrors(page);
     await page.setUserAgent(iphoneUA);
     await page.setViewport({
@@ -613,7 +774,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           const bounds = await range.asElement()?.boundingBox();
           assert.exists(bounds, 'The owned inline timeline must be reachable');
           assert.true(bounds.height >= 44, 'Inline timeline must retain a 44px touch target');
-          await page.touchscreen.tap(bounds.x + bounds.width * 0.7, bounds.y + bounds.height / 2);
+          await tapAt(page, bounds.x + bounds.width * 0.7, bounds.y + bounds.height / 2);
         } finally {
           await range.dispose();
         }
@@ -651,6 +812,267 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           `Inline interaction must retain original media/source without fullscreen: ${JSON.stringify(inlineState)}`
         );
         await assertScrollPosition(page, before, 'owned inline interaction');
+      }
+    );
+    const prepareInlinePrecision = async () => {
+      await navigate('&takeover&precision&scroll=page');
+      await page.evaluate(() => {
+        document.querySelector('.player').style.cssText =
+          'position:relative;width:360px;height:420px;margin-left:15px;overflow:hidden;transform-origin:0 0;';
+        window.__ownedOriginal.style.cssText =
+          'width:360px;height:600px;aspect-ratio:auto;object-fit:cover;';
+        window.__ownedOriginal.currentTime = 30.25;
+        window.scrollTo(0, 840);
+      });
+      await page.waitForFunction(() => {
+        const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+        return (
+          !inline.refs.timelineGroup.hidden &&
+          Math.abs(Number(inline.refs.timeline.value) - 30.25) < 0.15
+        );
+      });
+      await painted(page);
+    };
+    await check(
+      'default inline timeline follows the clipped bottom through resize and unequal scaling',
+      async () => {
+        await prepareInlinePrecision();
+        const before = await scrollPosition(page);
+        for (const [name, width, height, transform] of [
+          ['tall', 360, 420, 'none'],
+          ['resized-clip', 300, 260, 'none'],
+          ['unequal-scale', 360, 300, 'scale(.9,1.1)'],
+        ]) {
+          await page.evaluate(
+            ({ width, height, transform }) => {
+              Object.assign(document.querySelector('.player').style, {
+                width: `${width}px`,
+                height: `${height}px`,
+                transform,
+              });
+            },
+            { width, height, transform }
+          );
+          await page.waitForFunction(() => {
+            const video = window.__ownedOriginal;
+            const inline = video.vsc.controlsManager.inlinePlayer;
+            const rail = inline.refs.timeline.getBoundingClientRect();
+            const bottom = Math.min(
+              innerHeight,
+              video.getBoundingClientRect().bottom,
+              document.querySelector('.player').getBoundingClientRect().bottom
+            );
+            return !inline.refs.timelineGroup.hidden && Math.abs(bottom - rail.bottom - 4) < 1;
+          });
+          const state = await page.evaluate(inlineTimelineGeometry);
+          assert.true(
+            state.range.width >= 44 - 0.02 &&
+              state.range.height >= 44 - 0.02 &&
+              state.range.left >= state.clip.left - 1 &&
+              state.range.right <= state.clip.right + 1 &&
+              state.range.bottom <= state.clip.bottom &&
+              state.range.top > state.strip.bottom + 8,
+            `Inline rail must remain a separate bottom target inside ${name}: ${JSON.stringify(state)}`
+          );
+          const target = state.min + state.span / 4;
+          await tapAt(
+            page,
+            state.range.x + state.range.width / 4,
+            state.range.y + state.range.height / 2
+          );
+          await assertInlineProgress(page, target);
+          await assertScrollPosition(page, before, `${name} inline timeline seek`);
+          await page.screenshot({
+            path: resolve(`tests/e2e/screenshots/ios-inline-bottom-${name}.png`),
+          });
+        }
+      }
+    );
+    await check(
+      'default inline precision is continuous, fractional and reversible without presentation or scroll changes',
+      async () => {
+        await prepareInlinePrecision();
+        const before = await scrollPosition(page);
+        const bar = await page.evaluate(inlineTimelineGeometry);
+        assert.true(
+          bar.range.y + bar.range.height / 2 - 150 >= 0,
+          'Inline fine path must stay on screen'
+        );
+        const session = await page.createCDPSession();
+        let ended = true;
+        const send = async (type, x, y) => {
+          await session.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints:
+              type === 'touchEnd' || type === 'touchCancel'
+                ? []
+                : [{ x, y, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+          });
+          ended = type === 'touchEnd' || type === 'touchCancel';
+        };
+        const center = bar.range.y + bar.range.height / 2;
+        let x = bar.range.x + bar.range.width * ((30.25 - bar.min) / bar.span);
+        let expected = 30.25;
+        try {
+          await send('touchStart', x, center);
+          for (const [index, [distance, rate, hint]] of [
+            [0, 1, 'Scrubbing'],
+            [60, 0.5, 'Half speed'],
+            [100, 0.25, 'Quarter speed'],
+            [150, 0.1, 'Tenth speed'],
+            [100, 0.25, 'Quarter speed'],
+            [60, 0.5, 'Half speed'],
+            [0, 1, 'Scrubbing'],
+          ].entries()) {
+            console.log(
+              `   Inline precision leg ${index} vertical: ${JSON.stringify({ x, y: center - distance, distance, rate, expected })}`
+            );
+            await send('touchMove', x, center - distance);
+            await page.waitForFunction(
+              (text) => {
+                const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+                return inline.scrubber.active && inline.refs.scrubHint.textContent.includes(text);
+              },
+              { timeout: 2500 },
+              hint
+            );
+            const vertical = await assertInlineProgress(page, expected, true);
+            assert.true(
+              Math.abs(vertical.value - expected) < 0.15,
+              'Vertical-only travel must not jump the inline selection'
+            );
+            const dx = index % 2 ? -15 : 15;
+            x += dx;
+            expected += ((dx * bar.span) / bar.range.width) * rate;
+            console.log(
+              `   Inline precision leg ${index} horizontal: ${JSON.stringify({ x, y: center - distance, dx, rate, expected, width: bar.range.width, span: bar.span })}`
+            );
+            await send('touchMove', x, center - distance);
+            const horizontal = await assertInlineProgress(page, expected, true);
+            console.log(
+              `   Inline precision leg ${index} accepted preview: ${JSON.stringify(horizontal)}`
+            );
+            if (rate === 0.1) {
+              await page.screenshot({
+                path: resolve('tests/e2e/screenshots/ios-inline-precision-tenth.png'),
+              });
+            }
+          }
+          await page.screenshot({
+            path: resolve('tests/e2e/screenshots/ios-inline-precision-preview.png'),
+          });
+          await send('touchEnd');
+          await assertInlineProgress(page, expected);
+          const report = await page.evaluate(() => window.__stayfastPrecision.report);
+          assert.true(
+            report?.mode === 'inline' &&
+              !report.truncated &&
+              report.maxError < 0.01 &&
+              report.verticalDrift < 0.01 &&
+              report.finalError < 0.15 &&
+              !report.active &&
+              report.paused &&
+              JSON.stringify(report.bands) === JSON.stringify([1, 0.5, 0.25, 0.1, 0.25, 0.5, 1]),
+            `Delivered inline path must match the independent precision oracle: ${JSON.stringify(report)}`
+          );
+          // Cancel a new genuine gesture and restore its own selected starting time.
+          const cancel = await page.evaluate(inlineTimelineGeometry);
+          const start = cancel.time;
+          const cx = cancel.range.x + cancel.range.width * ((start - cancel.min) / cancel.span);
+          const cy = cancel.range.y + cancel.range.height / 2;
+          await send('touchStart', cx, cy);
+          await send('touchMove', cx, cy - 100);
+          await page.waitForFunction(
+            () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.rate === 0.25
+          );
+          await send('touchMove', cx + 20, cy - 100);
+          await assertInlineProgress(
+            page,
+            start + ((20 * cancel.span) / cancel.range.width) * 0.25,
+            true
+          );
+          await send('touchCancel');
+          await assertInlineProgress(page, start);
+          assert.true(
+            await page.evaluate(() => window.__ownedOriginal.paused),
+            'Cancelled paused inline seek stays paused'
+          );
+          // A genuinely playing video must pause for the drag and resume once released.
+          await tapInlinePlayer(page, 'play');
+          await page.waitForFunction(
+            () => !window.__ownedOriginal.paused && window.__ownedOriginal.currentTime > 0
+          );
+          const playing = await page.evaluate(inlineTimelineGeometry);
+          const px =
+            playing.range.x + playing.range.width * ((playing.time - playing.min) / playing.span);
+          const py = playing.range.y + playing.range.height / 2;
+          await send('touchStart', px, py);
+          await page.waitForFunction(
+            () =>
+              window.__ownedOriginal.paused &&
+              window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active
+          );
+          const pausedAt = await page.evaluate(
+            () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.startTime
+          );
+          await send('touchMove', px + 10, py);
+          await assertInlineProgress(
+            page,
+            pausedAt + (10 * playing.span) / playing.range.width,
+            true
+          );
+          await send('touchEnd');
+          await page.waitForFunction(
+            (target) =>
+              !window.__ownedOriginal.paused &&
+              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+              window.__ownedOriginal.currentTime > target + 0.1,
+            {},
+            pausedAt + (10 * playing.span) / playing.range.width
+          );
+          await tapInlinePlayer(page, 'play');
+          await page.waitForFunction(() => window.__ownedOriginal.paused);
+          assert.true(
+            await page.evaluate(() => {
+              const video = window.__ownedOriginal;
+              return (
+                video === document.querySelector('video') &&
+                video.vsc === window.__ownedController &&
+                video.currentSrc === window.__stayfastOwnedFixture.source &&
+                !video.vsc.iosPlayer.active &&
+                !document.querySelector('vsc-ios-player') &&
+                !document.fullscreenElement &&
+                !video.vsc.controlsManager.inlinePlayer.refs.scrubHint.textContent
+              );
+            }),
+            'Inline precision must preserve media/source and clear feedback without opening fullscreen'
+          );
+          await assertScrollPosition(page, before, 'continuous/cancel/resume inline precision');
+          await writeFile(
+            resolve('tests/e2e/screenshots/ios-inline-precision-trace.json'),
+            JSON.stringify(
+              await page.evaluate(() => ({
+                report: window.__stayfastPrecision.report,
+                gestures: window.__stayfastPrecision.gestures,
+              })),
+              null,
+              2
+            )
+          );
+          console.log(`   Inline precision trace: ${JSON.stringify(report)}`);
+        } finally {
+          try {
+            if (!ended) {
+              await send('touchCancel');
+            }
+            await page.waitForFunction(
+              () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active,
+              { timeout: 2500 }
+            );
+          } finally {
+            await session.detach();
+          }
+        }
       }
     );
     await check(
@@ -1312,7 +1734,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             }
             const x = state.play.left + state.play.width / 2;
             const y = state.play.top + state.play.height / 2;
-            await page.touchscreen.tap(x, y);
+            await tapAt(page, x, y);
             await page.waitForFunction(
               (time, frames) =>
                 !window.__ownedOriginal.paused &&
@@ -1322,7 +1744,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
               state.time,
               state.frames
             );
-            await page.touchscreen.tap(x, y);
+            await tapAt(page, x, y);
             await page.waitForFunction(() => window.__ownedOriginal.paused);
             assert.true(
               await page.evaluate(
@@ -1428,7 +1850,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           .getBoundingClientRect();
         return { x, y, width, height };
       });
-      await page.touchscreen.tap(range.x + range.width * 0.5, range.y + range.height / 2);
+      await tapAt(page, range.x + range.width * 0.5, range.y + range.height / 2);
       await page.waitForFunction(
         () => window.__ownedOriginal.currentTime > 25 && window.__ownedOriginal.currentTime < 35
       );
@@ -1472,8 +1894,8 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         const doubleTap = async (fraction) => {
           const x = stage.x + stage.width * fraction;
           const y = stage.y + stage.height * 0.25;
-          await page.touchscreen.tap(x, y);
-          await page.touchscreen.tap(x, y);
+          await tapAt(page, x, y);
+          await tapAt(page, x, y);
         };
         const duration = await page.evaluate(() => window.__ownedOriginal.duration);
         for (const [side, start, expected, feedback] of [
@@ -1627,8 +2049,8 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             !player.ui.refs.unlock.hidden
           );
         });
-        await page.touchscreen.tap(before.playX, before.playY);
-        await page.touchscreen.tap(20, 260);
+        await tapAt(page, before.playX, before.playY);
+        await tapAt(page, 20, 260);
         const session = await page.createCDPSession();
         try {
           const points = (left, right) => [
@@ -1949,7 +2371,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         });
         assert.equal(range.pageDirection, 'rtl', 'The fixture page must actually use RTL layout');
         assert.equal(range.direction, 'ltr', 'RTL pages must preserve the timeline fill direction');
-        await page.touchscreen.tap(range.x + range.width / 4, range.y + range.height / 2);
+        await tapAt(page, range.x + range.width / 4, range.y + range.height / 2);
         await page.waitForFunction(
           (target) =>
             Math.abs(window.__ownedOriginal.currentTime - target) < 0.3 &&
@@ -2132,7 +2554,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           const { left, top, width, height } = window.__ownedOriginal.getBoundingClientRect();
           return { x: left + width * 0.1, y: top + height * 0.3 };
         });
-        await page.touchscreen.tap(point.x, point.y);
+        await tapAt(page, point.x, point.y);
         const state = await page.evaluate(() => ({
           siteTouchEnd: window.__siteTouchCount,
           paused: window.__ownedOriginal.paused,
@@ -2159,12 +2581,12 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
     });
     await check('playing HUD hides and a genuine stage tap reveals it', async () => {
       await tapPlayer(page, 'play');
-      await page.touchscreen.tap(20, 260);
+      await tapAt(page, 20, 260);
       await page.waitForFunction(
         () => document.querySelector('vsc-ios-player').hasAttribute('data-controls-hidden'),
         { timeout: 7000 }
       );
-      await page.touchscreen.tap(20, 260);
+      await tapAt(page, 20, 260);
       await page.waitForFunction(
         () => !document.querySelector('vsc-ios-player').hasAttribute('data-controls-hidden')
       );
@@ -2515,9 +2937,35 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
     );
     const prepareScrolledFixture = async (mode, extra = '') => {
       await navigate(`&scroll=${mode}${extra}`);
+      console.log(
+        `   Initial scroll fixture: ${JSON.stringify(
+          await page.evaluate(() => ({
+            scroll: [scrollX, scrollY],
+            viewport: [innerWidth, innerHeight],
+            extent: [document.scrollingElement.scrollWidth, document.scrollingElement.scrollHeight],
+            fullscreen: !!document.fullscreenElement,
+            modals: document.querySelectorAll(':modal').length,
+            overflow: [
+              getComputedStyle(document.body).overflow,
+              getComputedStyle(document.documentElement).overflow,
+            ],
+            hit: document.elementFromPoint(375, 740)?.outerHTML.slice(0, 240),
+          }))
+        )}`
+      );
       // Browser input creates the scroll; DOM evaluation only reads fixture state.
-      await page.mouse.move(375, 740);
+      const origin = await page.evaluate(() => ({
+        x: visualViewport?.offsetLeft || 0,
+        y: visualViewport?.offsetTop || 0,
+      }));
+      await page.mouse.move(375 - origin.x, 740 - origin.y);
       await page.mouse.wheel({ deltaY: 720 });
+      await painted(page);
+      // Mobile Chrome may consume part of a wheel delta panning its visual
+      // viewport before the document scrolls. Continue with genuine input.
+      if ((await page.evaluate(() => scrollY)) <= 600) {
+        await page.mouse.wheel({ deltaY: 180 });
+      }
       await page.waitForFunction(() => scrollY > 600);
       await painted(page);
       if (mode === 'nested') {
@@ -2525,7 +2973,14 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           const { x, y, width, height } = node.getBoundingClientRect();
           return { x, y, width, height };
         });
-        await page.mouse.move(bounds.x + bounds.width - 15, bounds.y + bounds.height / 2);
+        const origin = await page.evaluate(() => ({
+          x: visualViewport?.offsetLeft || 0,
+          y: visualViewport?.offsetTop || 0,
+        }));
+        await page.mouse.move(
+          bounds.x + bounds.width - 15 - origin.x,
+          bounds.y + bounds.height / 2 - origin.y
+        );
         await page.mouse.wheel({ deltaY: 220, deltaX: 70 });
         await page.waitForFunction(() => {
           const node = document.querySelector('#scroll-container');
@@ -2602,7 +3057,8 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           const { x, y, width, height } = button.getBoundingClientRect();
           return { x, y, width, height };
         });
-        await page.touchscreen.tap(
+        await tapAt(
+          page,
           frameBounds.x + prepare.x + prepare.width / 2,
           frameBounds.y + prepare.y + prepare.height / 2
         );

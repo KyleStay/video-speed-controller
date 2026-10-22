@@ -84,10 +84,36 @@ class IOSPlayerScrubber {
       this.owner.ui === this.ui &&
       this.owner.video === this.video &&
       this.owner.session === this.session &&
+      this.matchesSource(this.source) &&
       this.ui.host.isConnected &&
       this.range.isConnected &&
       this.video.isConnected
     );
+  }
+
+  captureSource() {
+    try {
+      return {
+        src: this.video.getAttribute('src'),
+        currentSrc: this.video.currentSrc,
+        srcObject: this.video.srcObject,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  matchesSource(source) {
+    try {
+      return Boolean(
+        source &&
+        this.video.getAttribute('src') === source.src &&
+        this.video.currentSrc === source.currentSrc &&
+        this.video.srcObject === source.srcObject
+      );
+    } catch {
+      return false;
+    }
   }
 
   consume(event) {
@@ -98,6 +124,7 @@ class IOSPlayerScrubber {
   start(event) {
     if (
       this.active ||
+      this.finishing ||
       this.range.disabled ||
       event.isPrimary === false ||
       (event.button !== undefined && event.button !== 0) ||
@@ -107,6 +134,9 @@ class IOSPlayerScrubber {
     ) {
       return;
     }
+    // Native loadstart/emptied notifications are queued. A page-wrapped seek or
+    // pause can replace the source synchronously before those events arrive.
+    this.source = this.captureSource();
     this.session = this.owner.session;
     const bounds = this.bounds();
     const rect = this.geometry();
@@ -128,6 +158,11 @@ class IOSPlayerScrubber {
       this.video.pause();
     } catch {
       this.finish(null, false, false);
+      return;
+    }
+    // Page-wrapped pause methods can synchronously close or replace the session.
+    if (!this.active || !this.currentPresentation()) {
+      this.finish(null, false, false, false);
       return;
     }
     try {
@@ -235,14 +270,24 @@ class IOSPlayerScrubber {
     this.range.max = String(bounds[1]);
     this.range.value = String(this.value);
     this.ui.updateSeekProgress?.();
-    const format = (time) =>
-      this.owner.formatTime?.(time) ??
-      `${Math.floor(time / 60)}:${String(Math.floor(time % 60)).padStart(2, '0')}`;
+    const format = (time) => this.formatTime(time);
     if (this.ui.refs.current) {
       this.ui.refs.current.textContent = format(this.value);
     }
-    this.range.setAttribute('aria-valuetext', `${format(this.value)} of ${format(bounds[1])}`);
+    this.range.setAttribute(
+      'aria-valuetext',
+      `${format(this.value)} of ${this.formatTime(bounds[1], false)}`
+    );
     return true;
+  }
+
+  formatTime(time, precise = true) {
+    const ticks = Math.round(Math.max(0, time) * 100);
+    const shown = precise ? Math.floor(ticks / 100) : time;
+    const whole =
+      this.owner.formatTime?.(shown) ??
+      `${Math.floor(shown / 60)}:${String(Math.floor(shown % 60)).padStart(2, '0')}`;
+    return precise ? `${whole}.${String(ticks % 100).padStart(2, '0')}` : whole;
   }
 
   write(value) {
@@ -250,10 +295,15 @@ class IOSPlayerScrubber {
       return;
     }
     this.owner.seekTo(this.value);
+    if (!this.currentPresentation()) {
+      return;
+    }
     this.owner.update?.();
     // Site seek handlers can be asynchronous. Keep the selected time visible
     // even when the media's old currentTime has not caught up to the decoder.
-    this.preview(this.value);
+    if (this.currentPresentation()) {
+      this.preview(this.value);
+    }
   }
 
   queue(value) {
@@ -282,45 +332,58 @@ class IOSPlayerScrubber {
   }
 
   finish(event, cancelled = false, resume = true, flush = true) {
-    if (!this.active || (event && event.pointerId !== this.pointerId)) {
+    if (!this.active || this.finishing || (event && event.pointerId !== this.pointerId)) {
       return;
     }
-    if (event) {
-      this.consume(event);
-    }
-    const current = this.currentPresentation();
-    const pending = this.pending;
-    this.cancelPending();
-    if (current) {
-      if (cancelled) {
-        this.write(this.startTime);
-      } else if (flush && pending !== null) {
-        this.write(pending);
-      }
-    }
-    this.active = false;
-    const pointerId = this.pointerId;
-    this.pointerId = null;
-    for (const remove of this.gestureListeners.splice(0)) {
-      remove();
-    }
+    this.finishing = true;
     try {
-      this.range.releasePointerCapture?.(pointerId);
-    } catch {
-      // The browser may already have released capture for cancel/up.
-    }
-    if (this.ui.refs.scrubHint) {
-      this.ui.refs.scrubHint.textContent = '';
-    }
-    if (current) {
-      this.owner.update?.();
-      this.owner.showControls();
-      if (resume && this.wasPlaying && this.range.ownerDocument.visibilityState !== 'hidden') {
-        this.owner.play();
+      if (event) {
+        this.consume(event);
       }
+      const current = this.currentPresentation();
+      const pending = this.pending;
+      this.cancelPending();
+      if (current) {
+        if (cancelled) {
+          this.write(this.startTime);
+        } else if (flush && pending !== null) {
+          this.write(pending);
+        }
+      }
+      this.active = false;
+      const pointerId = this.pointerId;
+      this.pointerId = null;
+      for (const remove of this.gestureListeners.splice(0)) {
+        remove();
+      }
+      try {
+        this.range.releasePointerCapture?.(pointerId);
+      } catch {
+        // The browser may already have released capture for cancel/up.
+      }
+      this.owner.onScrubFinish?.(cancelled);
+      if (this.ui.refs.scrubHint) {
+        this.ui.refs.scrubHint.textContent = '';
+      }
+      if (current && this.currentPresentation()) {
+        this.owner.update?.();
+        if (this.currentPresentation()) {
+          this.owner.showControls();
+        }
+        if (
+          resume &&
+          this.wasPlaying &&
+          this.currentPresentation() &&
+          this.range.ownerDocument.visibilityState !== 'hidden'
+        ) {
+          this.owner.play();
+        }
+      }
+      this.wasPlaying = false;
+      this.rate = null;
+    } finally {
+      this.finishing = false;
     }
-    this.wasPlaying = false;
-    this.rate = null;
   }
 
   cleanup() {

@@ -27,19 +27,36 @@ export function installPrecisionTrace(video) {
   const gestureTypes = ['pointermove', 'pointerup', 'pointercancel'];
   let boundRange;
   let boundListener;
+  let gestureSurface;
+  const surfaceFor = (range) => {
+    if (!range) {
+      return null;
+    }
+    const owner = video.vsc?.iosPlayer;
+    if (owner?.scrubber?.range === range) {
+      return { owner, scrubber: owner.scrubber, mode: 'fullscreen' };
+    }
+    const inline = video.vsc?.controlsManager?.inlinePlayer;
+    if (inline?.scrubber?.range === range) {
+      return { owner: inline.scrubber.owner, scrubber: inline.scrubber, mode: 'inline' };
+    }
+    return null;
+  };
   const stopGesture = () => {
     for (const type of gestureTypes) {
       window.removeEventListener(type, record, true);
     }
   };
   function record(event) {
-    const player = video.vsc?.iosPlayer;
-    const range = player?.ui?.refs.seek;
-    if (!range) {
+    const surface = event.type === 'pointerdown' ? surfaceFor(boundRange) : gestureSurface;
+    if (!surface) {
       return;
     }
-    if (event.type === 'pointerdown' && player.scrubber.active) {
+    const { owner: player, scrubber, mode } = surface;
+    const range = scrubber.range;
+    if (event.type === 'pointerdown' && scrubber.active) {
       stopGesture();
+      gestureSurface = surface;
       // Registered after the product's capture listeners, so snapshots are
       // synchronous and observe each delivered event after its seek preview.
       for (const type of gestureTypes) {
@@ -48,6 +65,7 @@ export function installPrecisionTrace(video) {
       const gesture = {
         number: ++trace.sequence,
         pointer: event.pointerId,
+        mode,
         points: [],
         truncated: false,
       };
@@ -71,9 +89,16 @@ export function installPrecisionTrace(video) {
       width: rect.width,
       bounds,
     };
-    point.value = player.scrubber.value;
-    point.rate = player.scrubber.rate;
-    point.active = player.scrubber.active;
+    point.value = scrubber.value;
+    point.rate = scrubber.rate;
+    point.active = scrubber.active;
+    point.hint = player.ui.refs.scrubHint?.textContent || '';
+    point.selectedTime =
+      (mode === 'inline'
+        ? video.vsc?.controlsManager?.inlinePlayer?.refs.time
+        : player.ui.refs.current
+      )?.textContent || '';
+    point.fill = parseFloat(getComputedStyle(range).getPropertyValue('--seek-progress'));
     if (gesture.points.length < 512) {
       gesture.points.push(point);
     } else {
@@ -83,6 +108,7 @@ export function installPrecisionTrace(video) {
       return;
     }
     trace.active = null;
+    gestureSurface = null;
     stopGesture();
     let maxError = 0;
     let verticalDrift = 0;
@@ -112,26 +138,31 @@ export function installPrecisionTrace(video) {
     const last = gesture.points.at(-1);
     trace.report = {
       gesture: gesture.number,
+      mode,
       samples: gesture.points.length,
       truncated: gesture.truncated,
       bands,
+      fractionalFeedback: gesture.points.some(
+        (point) => point.active && /\d+:\d{2}\.\d{2}/.test(point.selectedTime)
+      ),
       maxError: Number(maxError.toFixed(6)),
       verticalDrift: Number(verticalDrift.toFixed(6)),
       finalError: Number(Math.abs(video.currentTime - last.value).toFixed(6)),
       delta: Number((last.value - gesture.points[0].value).toFixed(6)),
-      active: player.scrubber.active,
+      active: scrubber.active,
       paused: video.paused,
     };
     trace.onReport?.();
   }
   trace.bind = (range) => {
-    const listener = video.vsc?.iosPlayer?.scrubber?.listeners[0];
+    const listener = surfaceFor(range)?.scrubber.listeners[0];
     if (!listener || (range === boundRange && listener === boundListener)) {
       return;
     }
     boundRange?.removeEventListener('pointerdown', record);
     stopGesture();
     trace.active = null;
+    gestureSurface = null;
     boundRange = range;
     boundListener = listener;
     range.addEventListener('pointerdown', record);
@@ -144,6 +175,7 @@ export function installPrecisionTrace(video) {
       boundRange = null;
       boundListener = null;
       trace.active = null;
+      gestureSurface = null;
     },
     { once: true }
   );

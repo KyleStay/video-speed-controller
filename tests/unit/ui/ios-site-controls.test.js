@@ -30,6 +30,82 @@ afterEach(() => {
 });
 
 describe('scoped iOS site controls', () => {
+  function modernX() {
+    const result = fixture('');
+    const trigger = document.createElement('div');
+    trigger.dataset.slot = 'xds-context-menu-trigger';
+    trigger.innerHTML =
+      '<button aria-label="Play"></button><div class="group/controls"><button aria-label="Settings"></button></div>';
+    result.container.append(trigger);
+    return { ...result, trigger, play: trigger.firstChild, group: trigger.lastChild };
+  }
+
+  it('recognizes modern X siblings, hiding exact transport while retaining captions and unrelated actions', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { container, video, owner, trigger, play, group, caption, button } = modernX();
+    const source = video.src;
+    expect(owner.acquire()).toBe(true);
+    expect(owner.container).toBe(container);
+    expect(getComputedStyle(play).display).toBe('none');
+    expect(getComputedStyle(group).display).toBe('none');
+    expect(getComputedStyle(trigger).display).not.toBe('none');
+    expect(getComputedStyle(caption).display).not.toBe('none');
+    expect(getComputedStyle(button).display).not.toBe('none');
+    expect(video.parentNode).toBe(container);
+    expect(video.src).toBe(source);
+    owner.release();
+    expect(getComputedStyle(play).display).not.toBe('none');
+  });
+
+  it.each([
+    'other-site',
+    'second-video',
+    'iframe',
+    'nested-trigger',
+    'missing-play',
+    'missing-group',
+    'duplicate-trigger',
+  ])('does not recognize a modern X lookalike with %s', (kind) => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(kind !== 'other-site');
+    const { container, owner, trigger, play, group } = modernX();
+    if (kind === 'second-video' || kind === 'iframe') {
+      container.append(document.createElement(kind === 'iframe' ? 'iframe' : 'video'));
+    }
+    if (kind === 'nested-trigger') {
+      const wrapper = document.createElement('div');
+      container.append(wrapper);
+      wrapper.append(trigger);
+    }
+    if (kind === 'missing-play') {
+      play.remove();
+    }
+    if (kind === 'missing-group') {
+      group.remove();
+    }
+    if (kind === 'duplicate-trigger') {
+      container.append(trigger.cloneNode(true));
+    }
+    expect(owner.acquire()).toBe(false);
+    expect(container.hasAttribute(marker)).toBe(false);
+  });
+
+  it('recognizes only actual X/Twitter hosts and guards inaccessible locations', () => {
+    const supported = ['x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com'];
+    const unsupported = [
+      'notx.com',
+      'x.com.example.test',
+      'twitter.com.example.test',
+      'example.test',
+    ];
+    for (const hostname of supported) {
+      expect(window.VSC.IOSSiteControls.isXDocument({ location: { hostname } })).toBe(true);
+    }
+    for (const hostname of unsupported) {
+      expect(window.VSC.IOSSiteControls.isXDocument({ location: { hostname } })).toBe(false);
+    }
+    expect(window.VSC.IOSSiteControls.isXDocument(null)).toBe(false);
+  });
+
   it.each([
     ['html5-video-player', 'ytp-chrome-bottom'],
     ['video-js', 'vjs-control-bar'],

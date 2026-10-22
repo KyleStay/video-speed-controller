@@ -858,6 +858,8 @@ class VideoSpeedExtension {
 
     return {
       mediaCount: videos.length,
+      pausedVideoCount: videos.filter((video) => window.VSC.ControlsManager.canStepFrame(video))
+        .length,
       currentSpeed: speeds.length === 1 ? speeds[0] : null,
       speeds,
     };
@@ -938,6 +940,30 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
           }
           break;
 
+        case window.VSC.Constants.MESSAGE_TYPES.STEP_FRAME: {
+          const direction = message.payload?.direction;
+          if ((direction !== -1 && direction !== 1) || !extension.actionHandler?.stepFrame) {
+            handled = false;
+            break;
+          }
+          const action = direction < 0 ? 'rewindFrame' : 'advanceFrame';
+          const fallbackFps = extension.config?.getKeyBinding(action);
+          let stepped = false;
+          videos.forEach((video) => {
+            try {
+              if (!window.VSC.ControlsManager.canStepFrame(video)) {
+                return;
+              }
+              extension.actionHandler.stepFrame(video, direction, fallbackFps);
+              stepped = true;
+            } catch {
+              // One inaccessible page-owned media element must not block its peers.
+            }
+          });
+          handled = stepped;
+          break;
+        }
+
         case window.VSC.Constants.MESSAGE_TYPES.GET_STATUS: {
           message._status = extension.getMediaStatus(videos);
           break;
@@ -968,6 +994,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
               requestId: message.requestId,
               ok: handled,
               mediaCount: status.mediaCount,
+              pausedVideoCount: status.pausedVideoCount,
               currentSpeed: status.currentSpeed,
               speeds: status.speeds,
               ...(diagnostics ? { diagnostics } : {}),

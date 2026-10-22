@@ -48,6 +48,7 @@ describe('Popup commands across frames', () => {
     await expect(result).resolves.toEqual({
       ok: true,
       mediaCount: 1,
+      pausedVideoCount: 0,
       currentSpeed: 1.5,
       speeds: [1.5],
     });
@@ -65,6 +66,7 @@ describe('Popup commands across frames', () => {
     await expect(result).resolves.toEqual({
       ok: true,
       mediaCount: 3,
+      pausedVideoCount: 0,
       currentSpeed: null,
       speeds: [1, 2],
     });
@@ -99,6 +101,19 @@ describe('Popup commands across frames', () => {
     const result = sendTabCommand(1, { type: 'VSC_GET_STATUS' });
     await vi.advanceTimersByTimeAsync(350);
     await expect(result).resolves.toMatchObject({ ok: true, mediaCount: 1, currentSpeed: 2 });
+  });
+
+  it('aggregates paused video eligibility across frames and rejects invalid counts', async () => {
+    const result = sendTabCommand(1, { type: 'VSC_STEP_FRAME', payload: { direction: 1 } });
+    reply(0, { ok: true, mediaCount: 1, pausedVideoCount: 0 });
+    reply(2, { ok: true, mediaCount: 2, pausedVideoCount: 1 });
+    reply(2, { ok: true, mediaCount: 2, pausedVideoCount: 2 });
+    reply(3, { ok: true, mediaCount: 1, pausedVideoCount: 10 });
+    reply(4, { ok: true, mediaCount: 1, pausedVideoCount: -1 });
+    reply(5, { ok: true, mediaCount: 1, pausedVideoCount: 0.5 });
+    await vi.advanceTimersByTimeAsync(350);
+    await expect(result).resolves.toMatchObject({ mediaCount: 6, pausedVideoCount: 2 });
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it('cleans up after API exceptions, channel errors, and popup closure', async () => {

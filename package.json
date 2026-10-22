@@ -36,6 +36,7 @@
     "clean": "node scripts/clean.mjs dist release",
     "prepare": "husky",
     "test:e2e:browsers": "npm run build:release:browsers && node tests/e2e/run-browser-fixtures.js all",
+    "test:e2e:player-controls": "npm run build:release:browsers && node tests/e2e/run-player-controls.js",
     "test:performance": "npm run build:release:browsers && node tests/e2e/run-performance-benchmark.js",
     "build:safari:native": "node scripts/safari-native.mjs",
     "build:safari:ios": "node scripts/safari-native.mjs --platform=ios-simulator",

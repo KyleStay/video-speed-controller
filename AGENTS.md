@@ -96,6 +96,9 @@ with direct `chrome.*` access.
   Popup response generations prevent stale replies from changing the UI;
   separate lifecycle generations cancel pending dispatch only on power changes
   or popup close, so rapid relative-speed clicks each reach the media.
+  Frame-step completion triggers one bounded status read, without repeating the
+  action, so stale eligibility and rejected frames cannot disable speed controls
+  or hide mixed playback rates.
 - **Trust boundary**: the MAIN world may write **only `lastSpeed`** back to
   storage (`VSC_WRITE_STORAGE`); everything else is read-only from MAIN.
 
@@ -119,6 +122,8 @@ with direct `chrome.*` access.
     `stepFrame` (the `,`/`.` frame-step actions) seeks by `1/fps` **video-only**
     and **only while paused**; it writes `currentTime` via the seek path, never
     `playbackRate`, so it never touches the ratechange cooldown/fight machinery.
+    Expanded controllers, the toolbar popup and owned-player More panel expose
+    Frame back/Frame forward buttons through this same paused-video action.
   - `video-controller.js` — per-media controller + DOM insertion. Also runs a
     **frame-rate detection burst** (`requestVideoFrameCallback`) that measures
     real fps while the video plays, snaps to a common rate, caches it on
@@ -148,7 +153,7 @@ with direct `chrome.*` access.
   `ios-player` owns iOS video presentation/lifecycle; `ios-player-view` builds its
   accessible shadow-DOM dialog; `ios-player-scroll` preserves scroll around
   presentation changes and loads before `ios-player-frames`, which expands permitted
-  same-origin iframe ancestors; `ios-player-scrubber` owns precision seeking;
+  same-origin iframe ancestors; `ios-player-scrubber` owns shared inline/fullscreen precision seeking;
   `ios-player-gestures` owns stage touch gestures. `ios-player-fullscreen` owns
   optional container DOM fullscreen, scoped to the active UI/session and target.
   `ios-inline-player` owns responsive inline transport; `ios-site-controls`
@@ -304,7 +309,11 @@ with direct `chrome.*` access.
   fullscreen requests synchronously during the current trusted click/keydown to
   the owned player. Authorize once using native `view.event` in dispatch phase
   1–3 and the available UserActivation guard. Keep no stored authorization,
-  gesture listeners or authorization timers; asynchronous requests have no routing
+  authorization timers; one lazy X-only click listener reveals inline controls on
+  recognized picture taps and routes only explicit recognized fullscreen actions.
+  Modern X recognition requires exact direct-video/XDS siblings and single-media
+  ownership; navigation links are same-origin/post-scoped. The last owner removes
+  that listener. Asynchronous requests have no routing
   guarantee. Requests without the current event are suppressed. Use site player restores controls
   and native passthrough. Last-owner cleanup restores only hooks still owned by
   StayFast, preserving later page patches. Captured APIs, inaccessible media and
@@ -378,7 +387,12 @@ with direct `chrome.*` access.
   origins dispose the stale controller.
   Frame expansion accepts only a validated direct same-origin child; cross-origin
   and opaque frames remain local. A child token alone grants no parent authority.
-- **iOS player interaction**: precision seeking captures one pointer and applies
+- **iOS player interaction**: inline and fullscreen share `IOSPlayerScrubber`; an
+  inline adapter scopes activity to ownership/source generation and releases it
+  on handback, source changes, fullscreen and cleanup. Its absolute 44px timeline
+  sits at the clipped video bottom, independent of the compact top strip; placement
+  applies final occlusion and scale before rail offsets. Fractional selected time
+  and the active mode remain visible while scrubbing. Precision seeking captures one pointer and applies
   incremental horizontal movement at normal/half/quarter/tenth sensitivity as
   vertical distance from the timeline increases in either direction. Average
   gain across each delivered diagonal segment so event grouping cannot skip
@@ -469,6 +483,7 @@ npm run test:unit      # unit only
 npm run test:integration
 npm run test:e2e       # builds, then Puppeteer E2E (needs Chrome)
 npm run test:e2e:ios-player # built owned iOS player in disposable mobile-emulated Chrome
+npm run test:e2e:player-controls -- all # Chrome/Firefox frame buttons + controlled X touch routing
 npm run test:e2e:isolated # release build, disposable macOS Chrome fixtures + live YouTube
 npm run test:e2e:browsers # deterministic Chrome + Firefox regression matrix
 npm run test:performance # paired enabled/disabled Chrome measurements

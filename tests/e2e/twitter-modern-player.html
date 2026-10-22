@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Controlled modern X player</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px system-ui;
+        background: #eef4f8;
+      }
+      h1 {
+        margin: 16px;
+        font-size: 22px;
+      }
+      .lead {
+        height: 700px;
+      }
+      .tail {
+        height: 1300px;
+      }
+      article {
+        height: 340px;
+        margin: 12px;
+      }
+      #modern-player {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        background: #111;
+      }
+      video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        touch-action: pan-y;
+      }
+      [data-slot='xds-context-menu-trigger'] {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      #picture-cover {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: auto;
+        background: transparent;
+        border: 0;
+      }
+      .site-controls {
+        position: absolute;
+        inset: auto 0 0;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #000c;
+        pointer-events: auto;
+      }
+      button,
+      .interactive-link,
+      .expand-slot {
+        box-sizing: border-box;
+        min-width: 44px;
+        min-height: 44px;
+      }
+      .expand-slot {
+        position: relative;
+        margin-left: auto;
+      }
+      #x-fullscreen {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+      }
+      .expand-slot button {
+        width: 44px;
+        height: 44px;
+      }
+      .expand-slot svg {
+        width: 20px;
+        height: 20px;
+      }
+      .retained-entry {
+        position: absolute;
+        right: 8px;
+        /* Controlled visible-entry variant: use the picture's middle gap,
+           clear of both StayFast's top strip and bottom timeline. */
+        top: 72px;
+        pointer-events: auto;
+      }
+      #overlay-action,
+      #post-link {
+        position: absolute;
+        top: 112px;
+        pointer-events: auto;
+        z-index: 3;
+      }
+      #overlay-action {
+        left: 8px;
+      }
+      #post-link {
+        right: 64px;
+        padding: 12px;
+        color: white;
+        background: #000c;
+        text-decoration: none;
+      }
+      #caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 52px;
+        text-align: center;
+        color: white;
+        pointer-events: none;
+      }
+      dialog {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        padding: 8px;
+        box-sizing: border-box;
+        background: #111;
+        color: white;
+      }
+      dialog::backdrop {
+        background: #000c;
+      }
+    </style>
+    <script>
+      window.__modernX = {
+        nativeCalls: [],
+        surfaceClicks: 0,
+        transportClicks: 0,
+        theaters: 0,
+        swipes: 0,
+        overlayClicks: 0,
+        linkClicks: 0,
+        events: [],
+      };
+      const nativeCalls = window.__modernX.nativeCalls;
+      for (const name of ['webkitEnterFullscreen', 'webkitEnterFullScreen']) {
+        HTMLVideoElement.prototype[name] = function () {
+          nativeCalls.push({ name, media: this.id });
+        };
+      }
+      HTMLVideoElement.prototype.webkitSetPresentationMode = function (mode) {
+        if (mode === 'fullscreen') nativeCalls.push({ name: 'presentation', media: this.id });
+      };
+      const nativeRequest = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen = function (...args) {
+        const root = this.getRootNode();
+        nativeCalls.push({
+          name: 'requestFullscreen',
+          media: this.id,
+          owned: root.host?.localName === 'vsc-ios-player',
+        });
+        return nativeRequest.apply(this, args);
+      };
+    </script>
+  </head>
+  <body>
+    <h1>Controlled modern X player</h1>
+    <div class="lead" aria-hidden="true"></div>
+    <article>
+      <a id="post-permalink" href="/creator/status/123">Post 123</a>
+      <div id="modern-player" class="group relative isolate aspect-video overflow-hidden">
+        <video
+          id="modern-video"
+          controls
+          muted
+          loop
+          preload="auto"
+          src="/__stayfast_modern.webm"
+        ></video>
+        <div data-slot="xds-context-menu-trigger">
+          <button id="picture-cover" aria-label="Play"></button>
+          <div class="group/controls site-controls">
+            <button id="site-play" data-slot="xds-button" aria-label="Play">
+              <svg aria-hidden="true"><path d="M0 0h1v1H0z"></path></svg>
+            </button>
+            <button data-slot="xds-button" aria-label="Mute">Mute</button>
+            <span class="expand-slot">
+              <a id="x-fullscreen" aria-label="Full screen" href="/creator/status/123/video/1"></a>
+              <span inert
+                ><button data-slot="xds-button">
+                  <svg data-icon="icon-media-expand"><path d="M0 0h1v1H0z"></path></svg></button
+              ></span>
+            </span>
+          </div>
+          <button id="overlay-action" aria-label="Bookmark video">Save</button>
+          <a id="post-link" class="interactive-link" href="/creator/status/999">Other post</a>
+          <div id="caption">Caption remains visible</div>
+        </div>
+      </div>
+    </article>
+    <div class="tail" aria-hidden="true"></div>
+    <script>
+      const trace = window.__modernX;
+      const video = document.querySelector('#modern-video');
+      const player = document.querySelector('#modern-player');
+      const trigger = player.querySelector('[data-slot="xds-context-menu-trigger"]');
+      const cover = document.querySelector('#picture-cover');
+      trace.video = video;
+      trace.player = player;
+      trace.source = video.src;
+      trace.retained = new URLSearchParams(location.search).has('retained');
+      if (trace.retained) {
+        // Controlled variant: retain a visible entry outside the hidden transport
+        // group. The observed live layout is the default, unmodified variant.
+        const slot = document.querySelector('.expand-slot');
+        slot.classList.add('retained-entry');
+        trigger.append(slot);
+      }
+      const record = (kind, event) => {
+        trace.events.push({ kind, trusted: event.isTrusted, target: event.target.id });
+        if (trace.events.length > 40) trace.events.shift();
+      };
+      const toggle = () => {
+        if (video.paused) void video.play();
+        else video.pause();
+      };
+      cover.addEventListener('click', (event) => {
+        trace.surfaceClicks++;
+        record('picture', event);
+        toggle();
+      });
+      video.addEventListener('click', (event) => {
+        trace.surfaceClicks++;
+        record('picture', event);
+        toggle();
+      });
+      document.querySelector('#site-play').addEventListener('click', (event) => {
+        trace.transportClicks++;
+        record('transport', event);
+        toggle();
+      });
+      document.querySelector('#overlay-action').addEventListener('click', (event) => {
+        trace.overlayClicks++;
+        record('overlay', event);
+      });
+      document.querySelector('#post-link').addEventListener('click', (event) => {
+        event.preventDefault();
+        trace.linkClicks++;
+        record('post-link', event);
+      });
+      document
+        .querySelector('#post-permalink')
+        .addEventListener('click', (event) => event.preventDefault());
+      player.addEventListener(
+        'touchmove',
+        () => {
+          trace.swipes++;
+        },
+        { passive: true }
+      );
+      document.querySelector('#x-fullscreen').addEventListener('click', (event) => {
+        event.preventDefault();
+        record('theater', event);
+        trace.theaters++;
+        // X's link is page/CSS theater navigation, not a native fullscreen API.
+        const anchor = document.createComment('site theater origin');
+        player.before(anchor);
+        const dialog = document.createElement('dialog');
+        dialog.id = 'site-theater';
+        dialog.setAttribute('aria-label', 'Site theater');
+        const close = document.createElement('button');
+        close.id = 'close-site-theater';
+        close.textContent = 'Close site theater';
+        close.addEventListener('click', () => {
+          anchor.replaceWith(player);
+          dialog.close();
+          dialog.remove();
+        });
+        dialog.append(close, player);
+        document.body.append(dialog);
+        dialog.showModal();
+      });
+      video.addEventListener('play', () => {
+        cover.setAttribute('aria-label', 'Pause');
+      });
+      video.addEventListener('pause', () => {
+        cover.setAttribute('aria-label', 'Play');
+      });
+    </script>
+  </body>
+</html>

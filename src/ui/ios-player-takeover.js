@@ -91,6 +91,10 @@ class IOSPlayerTakeover {
     this.hooks = [];
     this.consumedEvents = new WeakSet();
     this.stopped = false;
+    if (window.VSC.IOSSiteControls?.isXDocument(this.doc)) {
+      this.xPlayerClick = (event) => this.routeXPlayerClick(event);
+      this.view.addEventListener('click', this.xPlayerClick, true);
+    }
     for (const [constructor, names] of [
       ['Element', ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen']],
       [
@@ -215,6 +219,61 @@ class IOSPlayerTakeover {
     }
   }
 
+  /** Picture taps reveal controls; only X's explicit fullscreen action opens a player. */
+  routeXPlayerClick(event) {
+    try {
+      if (
+        this.stopped ||
+        event.type !== 'click' ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        this.view.event !== event ||
+        !this.trustedGesture(event)
+      ) {
+        return;
+      }
+      const fullscreen = window.VSC.IOSSiteControls?.xFullscreenControl(event.target);
+      const entry = fullscreen || window.VSC.IOSSiteControls?.xSurfaceControl(event.target, event);
+      const owner = entry && this.ownerFor(entry.node);
+      if (!owner || owner.video !== entry.video || owner.nativeSession || this.routing.has(owner)) {
+        return;
+      }
+      if (!fullscreen) {
+        const inline = owner.video.vsc?.controlsManager?.inlinePlayer;
+        if (!inline?.available?.() || typeof inline.reveal !== 'function') {
+          return;
+        }
+        inline.reveal();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (!this.consumeIntent()) {
+        return;
+      }
+      let opened = false;
+      this.routing.add(owner);
+      try {
+        opened = owner.open({ fullscreen: true }) === true;
+      } finally {
+        this.routing.delete(owner);
+        if (!opened) {
+          this.consumedEvents.delete(event);
+        }
+      }
+      if (opened) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    } catch {
+      // A failed/changed site entry retains its original click behavior.
+    }
+  }
+
   ownerFor(target) {
     if (this.stopped) {
       return null;
@@ -267,6 +326,14 @@ class IOSPlayerTakeover {
 
   cleanup() {
     this.stopped = true;
+    if (this.xPlayerClick) {
+      try {
+        this.view.removeEventListener('click', this.xPlayerClick, true);
+      } catch {
+        // Page edits must not interrupt independent prototype-hook cleanup.
+      }
+      this.xPlayerClick = null;
+    }
     for (const { target, name, descriptor, wrapper } of this.hooks.splice(0).reverse()) {
       try {
         const current = Object.getOwnPropertyDescriptor(target, name);
