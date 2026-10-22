@@ -4,7 +4,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import runBasic from './basic.e2e.js';
 import runStartup from './startup.e2e.js';
 import runResume from './resume.e2e.js';
@@ -71,6 +71,21 @@ let cleaning = null;
 let activeExternal = null;
 let activeLauncher = null;
 let interrupted = false;
+
+async function resolveChromeExecutable() {
+  // Resolve through the trusted runner before launch, including standalone
+  // recovery where no launch result exists. Dry-run allocates no profile.
+  const { stdout } = await execFileAsync(
+    'python3',
+    [runner, '--extension', extensionDirectory, '--dry-run'],
+    { timeout: 10000 }
+  );
+  const executable = JSON.parse(stdout).command?.[0];
+  if (typeof executable !== 'string' || !isAbsolute(executable)) {
+    throw new Error('Runner did not provide an absolute Chrome executable');
+  }
+  return executable;
+}
 
 async function processRows() {
   const { stdout } = await execFileAsync('ps', ['-axww', '-o', 'pid=,ppid=,lstart=,command=']);
@@ -276,7 +291,7 @@ for (const name of names) {
           'Cleanup requires an exact generated disposable profile in the temporary directory'
         );
       }
-      owned = { profile };
+      owned = { profile, executable: await resolveChromeExecutable() };
       await cleanup();
       continue;
     }
@@ -289,6 +304,7 @@ for (const name of names) {
       launch: async ({ bridgeHooks = false } = {}) => {
         const profile = await mkdtemp(join(tmpdir(), 'stayfast-browser-qa-'));
         owned = { profile };
+        owned.executable = await resolveChromeExecutable();
         let loadDirectory = extensionDirectory;
         if (bridgeHooks) {
           loadDirectory = join(profile, 'extension-under-test');
@@ -303,6 +319,8 @@ for (const name of names) {
             'python3',
             [
               runner,
+              '--chrome',
+              owned.executable,
               '--extension',
               loadDirectory,
               '--profile',

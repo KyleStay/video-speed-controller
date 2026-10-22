@@ -26,6 +26,7 @@ jobs:
       - run: npm run lint
       - run: npm run build:release:browsers
       - run: npm test
+      - run: python3 tests/unit/e2e/browser-process-info.test.py
       - run: xvfb-run -a node tests/e2e/run-browser-fixtures.js chrome
       - run: xvfb-run -a node tests/e2e/run-player-controls.js chrome
       - run: mkdir -p test-results && xvfb-run -a node tests/e2e/run-performance-benchmark.js

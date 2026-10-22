@@ -303,3 +303,62 @@ describe('isolated native inventory failure', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 });
+
+describe('standalone recovery executable identity', () => {
+  const source = readFileSync(resolve('tests/e2e/run-isolated.js'), 'utf8');
+  function prepare(stdout) {
+    const start = source.indexOf('async function resolveChromeExecutable()');
+    const end = source.indexOf('\nasync function processRows()', start);
+    const execFileAsync = vi.fn(async () => ({ stdout }));
+    const context = {
+      execFileAsync,
+      runner: '/trusted/runner.py',
+      extensionDirectory: '/owned/extension',
+      isAbsolute: (value) => value.startsWith('/'),
+    };
+    vm.runInNewContext(
+      `${source.slice(start, end)}\nglobalThis.resolve = resolveChromeExecutable;`,
+      context
+    );
+    return { context, execFileAsync };
+  }
+  it('resolves the trusted runner before standalone cleanup discovers any processes', async () => {
+    const { context, execFileAsync } = prepare(JSON.stringify({ command: ['/owned/Chrome'] }));
+    expect(await context.resolve()).toBe('/owned/Chrome');
+    expect(execFileAsync).toHaveBeenCalledWith(
+      'python3',
+      ['/trusted/runner.py', '--extension', '/owned/extension', '--dry-run'],
+      { timeout: 10000 }
+    );
+    const start = source.indexOf("if (name === 'cleanup')");
+    const end = source.indexOf('    if (externalSuites[name])', start);
+    const cleanup = vi.fn();
+    const recovery = {
+      ...context,
+      process: { env: { STAYFAST_CLEANUP_PROFILE: '/tmp/stayfast-browser-qa-ABC' } },
+      resolve: (value) => value,
+      dirname: () => '/tmp',
+      basename: () => 'stayfast-browser-qa-ABC',
+      tmpdir: () => '/tmp',
+      name: 'cleanup',
+      cleanup,
+      owned: null,
+      resolveChromeExecutable: context.resolve,
+    };
+    await vm.runInNewContext(
+      `(async () => { for (let once = true; once; once = false) { ${source.slice(start, end)} } })()`,
+      recovery
+    );
+    expect(recovery.owned).toEqual({
+      profile: '/tmp/stayfast-browser-qa-ABC',
+      executable: '/owned/Chrome',
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+  it.each(['{}', '{"command":[]}', '{"command":["relative/Chrome"]}', 'null'])(
+    'never admits missing or relative runner identity: %s',
+    async (stdout) => {
+      await expect(prepare(stdout).context.resolve()).rejects.toThrow();
+    }
+  );
+});
