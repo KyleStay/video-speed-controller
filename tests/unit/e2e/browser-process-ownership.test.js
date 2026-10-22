@@ -112,6 +112,51 @@ describe('native executable and argument verification', () => {
       await profileRoots([{ ...row, command }], profile, executable, { firefox: true })
     ).toEqual([]);
   });
+  it('admits a verified root while its helper uses a different executable and the same profile', async () => {
+    const root = { ...row, pid: 123, parent: 1 };
+    const helper = {
+      ...row,
+      pid: 124,
+      parent: 123,
+      command: `Chrome Helper --user-data-dir=${profile}`,
+    };
+    mocks.exec.mockResolvedValue({
+      stdout: JSON.stringify({
+        123: verified([executable, `--user-data-dir=${profile}`]),
+        124: {
+          status: 'different-executable',
+          argv: ['/owned/Chrome Helper', `--user-data-dir=${profile}`],
+        },
+      }),
+    });
+    expect(await profileRoots([root, helper], profile, executable)).toEqual([root]);
+  });
+
+  it('retains known helper identity after its verified root exits', async () => {
+    const helper = {
+      ...row,
+      pid: 124,
+      parent: 1,
+      command: `Chrome Helper --user-data-dir=${profile}`,
+    };
+    mocks.exec.mockResolvedValue({
+      stdout: JSON.stringify({
+        124: {
+          status: 'different-executable',
+          argv: ['/owned/Chrome Helper', `--user-data-dir=${profile}`],
+        },
+      }),
+    });
+    expect(
+      await profileRoots([helper], profile, executable, { retained: new Map([[124, helper]]) })
+    ).toEqual([]);
+    await expect(
+      profileRoots([helper], profile, executable, {
+        retained: new Map([[124, { ...helper, start: 'old birth' }]]),
+      })
+    ).rejects.toThrow(/retained/);
+  });
+
   it('retains a live profile after the runner default executable changes', async () => {
     mocks.exec.mockResolvedValue({
       stdout: JSON.stringify({

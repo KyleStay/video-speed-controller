@@ -35,6 +35,7 @@ async function collectOwned(profile, retained, executable, browserName) {
   const rows = await processRows();
   const roots = await profileRoots(rows, profile, executable, {
     firefox: browserName === 'firefox',
+    retained,
   });
   const current = roots.length ? await processRows() : rows;
   for (const root of roots) {

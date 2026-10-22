@@ -158,7 +158,9 @@ async function cleanup() {
     const identities = new Map(owned.identities || []);
     let inventoryError;
     try {
-      const roots = await profileRoots(await processRows(), profile, owned.executable);
+      const roots = await profileRoots(await processRows(), profile, owned.executable, {
+        retained: owned.identities,
+      });
       for (const root of roots) {
         for (const [child, identity] of await processTree(root.pid, profile, owned.executable)) {
           identities.set(child, identity);
@@ -197,7 +199,13 @@ async function cleanup() {
       );
     }
     // A launch must settle before this inventory, including during signals.
-    if ((await profileRoots(await processRows(), profile, owned.executable)).length) {
+    if (
+      (
+        await profileRoots(await processRows(), profile, owned.executable, {
+          retained: owned.identities,
+        })
+      ).length
+    ) {
       throw new Error(`Chrome still owns ${profile}; retained the disposable profile`);
     }
     await rm(profile, { recursive: true, force: true });

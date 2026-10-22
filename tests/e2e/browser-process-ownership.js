@@ -59,7 +59,8 @@ export async function profileRoots(rows, profile, executable, options = {}) {
   } catch (error) {
     throw new Error(`Native browser argument read failed; retained ${profile}`, { cause: error });
   }
-  return candidates.filter((row) => {
+  const conflicts = [];
+  const roots = candidates.filter((row) => {
     const info = details[row.pid];
     if (!info || !['verified', 'different-executable', 'gone'].includes(info.status)) {
       throw new Error(
@@ -89,10 +90,30 @@ export async function profileRoots(rows, profile, executable, options = {}) {
     const matches = hasProfileArgument(info.argv, profile, options);
     if (info.status === 'different-executable') {
       if (matches) {
-        throw new Error(`Another browser executable uses the profile; retained ${profile}`);
+        conflicts.push(row);
       }
       return false;
     }
     return matches;
   });
+  const rootPids = new Set(roots.map((row) => row.pid));
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  for (const row of conflicts) {
+    const retained = options.retained?.get(row.pid);
+    if (retained?.start === row.start && retained?.command === row.command) {
+      continue;
+    }
+    // Chrome helpers inherit the profile flag but have distinct executables.
+    // Only an observed ancestry chain to a verified root admits a new helper.
+    const seen = new Set([row.pid]);
+    let parent = row.parent;
+    while (byPid.has(parent) && !rootPids.has(parent) && !seen.has(parent)) {
+      seen.add(parent);
+      parent = byPid.get(parent).parent;
+    }
+    if (!rootPids.has(parent)) {
+      throw new Error(`Another browser executable uses the profile; retained ${profile}`);
+    }
+  }
+  return roots;
 }
