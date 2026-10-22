@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../../src/ui/ios-inline-player.js';
 
 describe('owned iOS inline transport', () => {
@@ -20,6 +20,14 @@ describe('owned iOS inline transport', () => {
   };
   const touch = (node) =>
     node.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
+
+  beforeAll(async () => {
+    // Module loading starts initialization without awaiting its storage migrations.
+    // Settle those real-timer callbacks before teardown switches to fake timers.
+    await vi.waitFor(() => {
+      expect(window.VSC_controller.initializationInProgress).toBe(false);
+    });
+  });
 
   beforeEach(() => {
     window.VSC_controller.teardown();
