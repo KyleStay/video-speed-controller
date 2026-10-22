@@ -103,6 +103,48 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
     await page.waitForFunction(() => window.VSC_controller?.mutationObserver?.observer);
   };
 
+  await runTest('Delayed metadata retains newer preferences and per-media commands', async () => {
+    await loadFixture();
+    const result = await page.evaluate(() => {
+      const extension = window.VSC_controller;
+      const { config, actionHandler } = extension;
+      const previous = { ...config.settings };
+      const revision = config.speedPreferenceRevision;
+      const videos = [];
+      const attach = () => {
+        const video = document.createElement('video');
+        document.body.append(video);
+        const controller = new window.VSC.VideoController(video, null, config, actionHandler);
+        videos.push(video);
+        if (!controller.initMetadataHandler) throw new Error('metadata must be pending');
+        return video;
+      };
+      try {
+        config.settings.lastSpeed = 1.5;
+        const external = attach();
+        config.settings.lastSpeed = 2.25;
+        config.speedPreferenceRevision++;
+        external.dispatchEvent(new Event('loadedmetadata'));
+        const externalRate = external.playbackRate;
+        const local = attach();
+        actionHandler.adjustSpeed(local, 2.5, { source: 'init' });
+        const sibling = attach();
+        actionHandler.adjustSpeed(sibling, 3, { source: 'init' });
+        local.dispatchEvent(new Event('loadedmetadata'));
+        return { externalRate, localRate: local.playbackRate };
+      } finally {
+        for (const video of videos) {
+          video.vsc?.remove();
+          video.remove();
+        }
+        config.settings = previous;
+        config.speedPreferenceRevision = revision;
+      }
+    });
+    assert.equal(result.externalRate, 2.25, 'metadata uses the current external preference');
+    assert.equal(result.localRate, 2.5, 'metadata retains the media command');
+  });
+
   await runTest('Scrolling an X feed attaches ready videos before idle work', async () => {
     // All requests are intercepted above; this fixture never contacts X.
     await loadFixture('https://x.com/home');

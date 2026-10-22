@@ -6,6 +6,13 @@ tester availability; a successful build alone does not complete the latter two.
 
 ## Current release preparation — October 22, 2026
 
+**0.11.4 (18)** is the next candidate. Delayed media initialization now reads
+current speed preferences when metadata arrives and preserves a newer command
+for that video. A removed or replaced controller cannot apply its old callback.
+Build 17 is confirmed Testing in Personal Auto for both existing testers.
+Record build 18 archive, export, upload, processing and tester availability in
+`build/safari/testflight/0.11.4-build18/`; preparation alone does not prove Testing.
+
 **0.11.4 (17)** is the inline-player candidate. It places the thin inline
 timeline at the video's bottom and shares distance-sensitive precision seeking
 with fullscreen. Moving away selects half, quarter or fine sensitivity; selected
