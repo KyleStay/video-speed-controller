@@ -1220,6 +1220,127 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.ui.refs.play.getAttribute('aria-label')).toBe('Pause video');
   });
 
+  it('does not report a synchronous play failure into a replacement presentation', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const oldUI = player.ui;
+    video.play.mockImplementationOnce(() => {
+      player.close();
+      player.open();
+      throw new Error('Page play override failed after reopening');
+    });
+
+    player.play();
+
+    expect(player.active).toBe(true);
+    expect(player.session).toBe(2);
+    expect(player.ui).not.toBe(oldUI);
+    expect(player.ui.refs.status.textContent).toBe('');
+  });
+
+  it('reports a synchronous play failure while its presentation is still current', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const session = player.session;
+    const ui = player.ui;
+    video.play.mockImplementationOnce(() => {
+      throw new Error('Page play override failed');
+    });
+
+    player.play();
+
+    expect(player.active).toBe(true);
+    expect(player.session).toBe(session);
+    expect(player.ui).toBe(ui);
+    expect(ui.refs.status.textContent).toBe('Tap Play to continue playback.');
+  });
+
+  it('contains a throwing currentTime setter and releases a completed scrub gesture', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const scrubber = player.scrubber;
+    const range = player.ui.refs.seek;
+    const currentTimeDescriptor = Object.getOwnPropertyDescriptor(video, 'currentTime');
+    const currentTime = video.currentTime;
+    const errors = [];
+    const onError = (event) => {
+      errors.push(event.message);
+      event.preventDefault();
+    };
+    const pointer = (type, x, y) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      for (const [key, value] of Object.entries({
+        pointerId: 7,
+        clientX: x,
+        clientY: y,
+        button: 0,
+        isPrimary: true,
+      })) {
+        Object.defineProperty(event, key, { value });
+      }
+      return event;
+    };
+
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTime,
+      set: () => {
+        throw new Error('Page currentTime setter rejected seek');
+      },
+    });
+    range.getBoundingClientRect = () => ({ left: 10, top: 100, width: 300, height: 44 });
+    range.setPointerCapture = vi.fn();
+    range.releasePointerCapture = vi.fn();
+    window.addEventListener('error', onError);
+    try {
+      range.dispatchEvent(pointer('pointerdown', 41.25, 122));
+      window.dispatchEvent(pointer('pointermove', 81.25, 122));
+      window.dispatchEvent(pointer('pointerup', 81.25, 122));
+
+      expect(errors).toEqual([]);
+      expect(scrubber.active).toBe(false);
+      expect(scrubber.gestureListeners).toHaveLength(0);
+      expect(range.setPointerCapture).toHaveBeenCalledWith(7);
+      expect(range.releasePointerCapture).toHaveBeenCalledOnce();
+      expect(range.releasePointerCapture).toHaveBeenCalledWith(7);
+      expect(scrubber.pointerId).toBeNull();
+      expect(scrubber.timer).toBeNull();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(player.ui.refs.status.textContent).toBe(
+        'Seeking failed. Try again or return to the site player.'
+      );
+    } finally {
+      window.removeEventListener('error', onError);
+      if (currentTimeDescriptor) {
+        Object.defineProperty(video, 'currentTime', currentTimeDescriptor);
+      } else {
+        delete video.currentTime;
+      }
+    }
+  });
+
+  it('does not report a synchronous seek failure into a replacement presentation', () => {
+    const { player, controller } = makeController();
+    player.attach();
+    player.open();
+    const oldUI = player.ui;
+    controller.actionHandler.seek.mockImplementationOnce(() => {
+      player.close();
+      player.open();
+      throw new Error('Page seek override failed after reopening');
+    });
+
+    player.seekTo(30);
+
+    expect(player.active).toBe(true);
+    expect(player.session).toBe(2);
+    expect(player.ui).not.toBe(oldUI);
+    expect(player.ui.refs.status.textContent).toBe('');
+  });
+
   it('keeps playing and video clicks inline until custom player is explicitly chosen', async () => {
     const { player, video, parent } = makeController();
     await video.play();

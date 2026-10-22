@@ -1251,7 +1251,7 @@ class IOSPlayer {
         }
       });
     } catch {
-      if (this.active) {
+      if (this.active && this.session === session && this.ui === ui) {
         this.ui.refs.status.textContent = 'Tap Play to continue playback.';
       }
     }
@@ -1341,8 +1341,17 @@ class IOSPlayer {
     if (!bounds || !Number.isFinite(value)) {
       return;
     }
-    const target = Math.max(bounds[0], Math.min(bounds[1], value));
-    this.controller.actionHandler.seek(this.video, target - this.video.currentTime);
+    const session = this.session;
+    const ui = this.ui;
+    try {
+      const target = Math.max(bounds[0], Math.min(bounds[1], value));
+      this.controller.actionHandler.seek(this.video, target - this.video.currentTime);
+    } catch {
+      if (this.active && this.session === session && this.ui === ui) {
+        ui.refs.status.textContent = 'Seeking failed. Try again or return to the site player.';
+      }
+      return;
+    }
     this.showControls();
   }
 
