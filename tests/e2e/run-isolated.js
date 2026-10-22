@@ -9,6 +9,7 @@ import runBasic from './basic.e2e.js';
 import runStartup from './startup.e2e.js';
 import runResume from './resume.e2e.js';
 import { installBridgeTestHooks } from './bridge-test-hooks.js';
+import { profileRoots } from './browser-process-ownership.js';
 import runYouTube from './youtube.e2e.js';
 import runMobile from './mobile.e2e.js';
 import runIOSPlayer from './ios-player.e2e.js';
@@ -81,25 +82,31 @@ async function processRows() {
   });
 }
 
-async function processTree(pid, profile) {
+async function processTree(pid, profile, executable) {
   const rows = await processRows();
-  const ownedPids = new Set(
-    rows.filter((row) => row.command.includes(`--user-data-dir=${profile}`)).map((row) => row.pid)
-  );
+  const roots = await profileRoots(rows, profile, executable);
+  const current = roots.length ? await processRows() : rows;
+  for (const root of roots) {
+    const now = current.find((row) => row.pid === root.pid);
+    if (!now || now.start !== root.start || now.command !== root.command) {
+      throw new Error(`Browser identity changed during inspection; retained ${profile}`);
+    }
+  }
+  const ownedPids = new Set(roots.map((row) => row.pid));
   // A recycled root PID cannot establish ownership without the exact profile.
   if (!ownedPids.has(pid)) {
     return new Map();
   }
   for (let grew = true; grew;) {
     grew = false;
-    for (const row of rows) {
+    for (const row of current) {
       if (ownedPids.has(row.parent) && !ownedPids.has(row.pid)) {
         ownedPids.add(row.pid);
         grew = true;
       }
     }
   }
-  return new Map(rows.filter((row) => ownedPids.has(row.pid)).map((row) => [row.pid, row]));
+  return new Map(current.filter((row) => ownedPids.has(row.pid)).map((row) => [row.pid, row]));
 }
 
 async function liveOwned(identities) {
@@ -134,13 +141,16 @@ async function cleanup() {
   cleaning = (async () => {
     const { browser, profile } = owned;
     const identities = new Map(owned.identities || []);
-    const roots = (await processRows()).filter((row) =>
-      row.command.includes(`--user-data-dir=${profile}`)
-    );
-    for (const root of roots) {
-      for (const [child, identity] of await processTree(root.pid, profile)) {
-        identities.set(child, identity);
+    let inventoryError;
+    try {
+      const roots = await profileRoots(await processRows(), profile, owned.executable);
+      for (const root of roots) {
+        for (const [child, identity] of await processTree(root.pid, profile, owned.executable)) {
+          identities.set(child, identity);
+        }
       }
+    } catch (error) {
+      inventoryError = error;
     }
     if (browser) {
       try {
@@ -149,6 +159,11 @@ async function cleanup() {
       } catch {
         // Suites may already have closed the browser in their finally block.
       }
+    }
+    // Close the known browser even when native inspection failed, but retain
+    // its profile and never signal discovered identities on incomplete proof.
+    if (inventoryError) {
+      throw inventoryError;
     }
     if (!browser) {
       await terminateExact(identities);
@@ -167,7 +182,7 @@ async function cleanup() {
       );
     }
     // A launch must settle before this inventory, including during signals.
-    if ((await processRows()).some((row) => row.command.includes(`--user-data-dir=${profile}`))) {
+    if ((await profileRoots(await processRows(), profile, owned.executable)).length) {
       throw new Error(`Chrome still owns ${profile}; retained the disposable profile`);
     }
     await rm(profile, { recursive: true, force: true });
@@ -310,6 +325,7 @@ for (const name of names) {
         }
         const info = JSON.parse(stdout);
         owned.pid = info.pid;
+        owned.executable = info.command?.[0];
         if (!info.debugger_ready || !info.extension_loaded) {
           throw new Error(`Extension failed to load; inspect ${info.log_file}`);
         }
@@ -319,14 +335,22 @@ for (const name of names) {
           protocolTimeout: 30000,
         });
         owned.browser = browser;
-        owned.identities = await processTree(info.pid, profile);
+        owned.identities = await processTree(info.pid, profile, owned.executable);
         const close = browser.close.bind(browser);
         browser.close = async () => {
-          const current = await processTree(info.pid, profile);
-          for (const [pid, identity] of current) {
-            owned.identities.set(pid, identity);
+          let inventoryError;
+          try {
+            const current = await processTree(info.pid, profile, owned.executable);
+            for (const [pid, identity] of current) {
+              owned.identities.set(pid, identity);
+            }
+          } catch (error) {
+            inventoryError = error;
           }
           await close();
+          if (inventoryError) {
+            throw inventoryError;
+          }
         };
         const page = (await browser.pages())[0] || (await browser.newPage());
         await page.setViewport({ width: 1280, height: 800 });

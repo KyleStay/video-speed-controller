@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { profileRoots } from './browser-process-ownership.js';
 
 const execFileAsync = promisify(execFile);
 const owners = new Set();
@@ -30,40 +31,49 @@ function sameProcess(a, b) {
   return a && b && a.pid === b.pid && a.start === b.start && a.command === b.command;
 }
 
-async function collectOwned(profile, retained) {
+async function collectOwned(profile, retained, executable, browserName) {
   const rows = await processRows();
-  const marker = `--user-data-dir=${profile}`;
-  const owned = new Set(
-    rows
-      .filter(
-        (row) =>
-          sameProcess(retained.get(row.pid), row) ||
-          row.command.includes(marker) ||
-          row.command.includes(`-profile ${profile}`)
+  const roots = await profileRoots(rows, profile, executable, {
+    firefox: browserName === 'firefox',
+  });
+  const current = roots.length ? await processRows() : rows;
+  for (const root of roots) {
+    if (
+      !sameProcess(
+        root,
+        current.find((row) => row.pid === root.pid)
       )
+    ) {
+      throw new Error(`Browser identity changed during inspection; retained ${profile}`);
+    }
+  }
+  const rootPids = new Set(roots.map((row) => row.pid));
+  const owned = new Set(
+    current
+      .filter((row) => rootPids.has(row.pid) || sameProcess(retained.get(row.pid), row))
       .map((row) => row.pid)
   );
   for (let changed = true; changed;) {
     changed = false;
-    for (const row of rows) {
+    for (const row of current) {
       if (owned.has(row.parent) && !owned.has(row.pid)) {
         owned.add(row.pid);
         changed = true;
       }
     }
   }
-  for (const row of rows) {
+  for (const row of current) {
     if (owned.has(row.pid)) {
       retained.set(row.pid, row);
     }
   }
-  return rows.filter((row) => sameProcess(retained.get(row.pid), row));
+  return current.filter((row) => sameProcess(retained.get(row.pid), row));
 }
 
-async function waitForExit(profile, retained, attempts = 50) {
+async function waitForExit(profile, retained, executable, browserName, attempts = 50) {
   let zeroSamples = 0;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    if ((await collectOwned(profile, retained)).length === 0) {
+    if ((await collectOwned(profile, retained, executable, browserName)).length === 0) {
       if (++zeroSamples === 3) {
         return true;
       }
@@ -92,6 +102,7 @@ export async function launchFixtureBrowser(browserName, options = {}) {
   const retained = new Map();
   const controller = new AbortController();
   let browser;
+  let executable;
   let originalClose;
   let launching;
   let closing;
@@ -100,13 +111,22 @@ export async function launchFixtureBrowser(browserName, options = {}) {
       return closing;
     }
     closing = (async () => {
-      await collectOwned(profile, retained);
+      let inventoryError;
+      try {
+        await collectOwned(profile, retained, executable, browserName);
+      } catch (error) {
+        inventoryError = error;
+      }
       if (!browser) {
         controller.abort();
       }
       // A signal may arrive before Puppeteer hands back its browser handle.
       await launching?.catch(() => undefined);
-      await collectOwned(profile, retained);
+      try {
+        await collectOwned(profile, retained, executable, browserName);
+      } catch (error) {
+        inventoryError ||= error;
+      }
       try {
         if (originalClose) {
           await Promise.race([originalClose(), sleep(5000)]);
@@ -114,15 +134,22 @@ export async function launchFixtureBrowser(browserName, options = {}) {
       } catch {
         /* Exact owned-process fallback below. */
       }
-      if (!(await waitForExit(profile, retained, 10))) {
-        for (const row of (await collectOwned(profile, retained)).reverse()) {
+      // The returned browser handle is ours to close even if native inspection
+      // failed. Do not signal discovered PIDs or remove an ambiguous profile.
+      if (inventoryError) {
+        throw inventoryError;
+      }
+      if (!(await waitForExit(profile, retained, executable, browserName, 10))) {
+        for (const row of (
+          await collectOwned(profile, retained, executable, browserName)
+        ).reverse()) {
           const current = (await processRows()).find((item) => item.pid === row.pid);
           if (sameProcess(row, current)) {
             process.kill(row.pid, 'SIGTERM');
           }
         }
       }
-      if (!(await waitForExit(profile, retained))) {
+      if (!(await waitForExit(profile, retained, executable, browserName))) {
         throw new Error(`Owned ${browserName} processes remain; retained ${profile}`);
       }
       await rm(profile, { recursive: true, force: true });
@@ -161,6 +188,15 @@ export async function launchFixtureBrowser(browserName, options = {}) {
     if (browserName === 'firefox' && process.env.FIREFOX_BIN) {
       launchOptions.executablePath = process.env.FIREFOX_BIN;
     }
+    executable =
+      launchOptions.executablePath ||
+      (await puppeteer.executablePath(
+        launchOptions.channel || { browser: browserName, headless: launchOptions.headless }
+      ));
+    launchOptions.executablePath = executable;
+    if (controller.signal.aborted) {
+      throw new Error('Browser launch canceled');
+    }
     launching = puppeteer.launch(launchOptions).then((launched) => {
       browser = launched;
       originalClose = browser.close.bind(browser);
@@ -168,7 +204,7 @@ export async function launchFixtureBrowser(browserName, options = {}) {
       return launched;
     });
     await launching;
-    await collectOwned(profile, retained);
+    await collectOwned(profile, retained, executable, browserName);
     const pid = browser.process()?.pid;
     const extensionId = await browser.installExtension(
       options.extensionPath || extensionBuildPath(browserName)
