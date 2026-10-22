@@ -204,6 +204,7 @@ class IOSPlayerScrubber {
     this.range.min = String(bounds[0]);
     this.range.max = String(bounds[1]);
     this.range.value = String(this.value);
+    this.ui.updateSeekProgress?.();
     const format = (time) =>
       this.owner.formatTime?.(time) ??
       `${Math.floor(time / 60)}:${String(Math.floor(time % 60)).padStart(2, '0')}`;

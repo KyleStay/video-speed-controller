@@ -182,6 +182,26 @@
             accent-color: #67e8f9;
             cursor: pointer;
           }
+          input[data-ref='seek'] { -webkit-appearance: none; appearance: none; }
+          input[data-ref='seek']::-webkit-slider-runnable-track {
+            height: 3px;
+            border-radius: 999px;
+            background: linear-gradient(to right, #67e8f9 var(--seek-progress, 0%), #ffffff45 var(--seek-progress, 0%));
+          }
+          input[data-ref='seek']::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 12px; height: 12px; margin-top: -4.5px;
+            border: 0; border-radius: 50%; background: #fff;
+          }
+          input[data-ref='seek']::-moz-range-track {
+            height: 3px; border-radius: 999px; background: #ffffff45;
+          }
+          input[data-ref='seek']::-moz-range-progress {
+            height: 3px; border-radius: 999px; background: #67e8f9;
+          }
+          input[data-ref='seek']::-moz-range-thumb {
+            width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff;
+          }
           .options { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
           select {
             -webkit-appearance: none; appearance: none;
@@ -253,12 +273,6 @@
                 <button type="button" data-ref="forward" aria-label="Forward 10 seconds">+10s</button>
               </div>
               <footer>
-                <div class="timeline">
-                  <span class="time" data-ref="current">0:00</span>
-                  <input type="range" data-ref="seek" aria-label="Seek video" aria-describedby="scrub-hint" min="0" max="100" step="0.1" value="0" />
-                  <button type="button" class="time time-toggle" data-ref="duration" aria-label="Show remaining time">--:--</button>
-                </div>
-                <p class="scrub-hint" id="scrub-hint" data-ref="scrubHint" role="status" aria-live="polite">Drag away from the timeline for finer scrubbing.</p>
                 <div class="options" role="group" aria-label="Video options">
                   <select class="speed" data-ref="speed" aria-label="Playback speed">
                     <option value="0.5">0.5×</option><option value="0.75">0.75×</option>
@@ -293,6 +307,12 @@
                   <button type="button" class="escape" data-ref="site">Use site player</button>
                 </div>
                 <p class="status" data-ref="status" role="status" aria-live="polite" aria-atomic="true"></p>
+                <p class="scrub-hint" id="scrub-hint" data-ref="scrubHint" role="status" aria-live="polite">Drag away from the timeline for finer scrubbing.</p>
+                <div class="timeline">
+                  <span class="time" data-ref="current">0:00</span>
+                  <input type="range" data-ref="seek" aria-label="Seek video" aria-describedby="scrub-hint" min="0" max="100" step="0.1" value="0" />
+                  <button type="button" class="time time-toggle" data-ref="duration" aria-label="Show remaining time">--:--</button>
+                </div>
               </footer>
             </div>
             <button type="button" class="unlock" data-ref="unlock" aria-label="Unlock playback controls" hidden>Unlock</button>
@@ -307,6 +327,21 @@
       this.refs = {};
       for (const element of this.shadow.querySelectorAll('[data-ref]')) {
         this.refs[element.dataset.ref] = element;
+      }
+    }
+
+    updateSeekProgress() {
+      const range = this.refs.seek;
+      const min = Number(range.min);
+      const max = Number(range.max);
+      const value = Number(range.value);
+      const fraction =
+        !range.disabled && Number.isFinite(value) && max > min
+          ? Math.max(0, Math.min(1, (value - min) / (max - min)))
+          : 0;
+      const progress = `${Math.round(fraction * 100000) / 1000}%`;
+      if (range.style.getPropertyValue('--seek-progress') !== progress) {
+        range.style.setProperty('--seek-progress', progress);
       }
     }
 

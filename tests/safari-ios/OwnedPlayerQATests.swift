@@ -336,6 +336,23 @@ import XCTest
         wait(safari, ["owner active: false", "owned hosts: 0", "native controls: false", "errors: 0"])
         capture(safari, "custom-reopen-after-site-handback")
     }
+    func testThinBottomTimeline() {
+        openAndVerifyPlayback()
+        checkTransportAndMute()
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        wait(safari, ["timeline height: 44", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
+        target(safari.sliders["Seek video"])
+        capture(safari, "thin-bottom-timeline-portrait")
+        checkPrecisionScrubbing()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        wait(safari, ["timeline height: 44", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
+        target(safari.sliders["Seek video"])
+        capture(safari, "thin-bottom-timeline-landscape")
+        safari.buttons["Close StayFast video player"].tap()
+        wait(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "errors: 0"])
+    }
+
     func testOwnedPlayerRuntime() {
         print("OWNED CHECK explicit custom original-video playback")
         openAndVerifyPlayback()

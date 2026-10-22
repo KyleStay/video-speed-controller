@@ -7,6 +7,93 @@ import { startFixtureServer } from './fixture-server.js';
 const iphoneUA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
+async function assertBottomTimeline(page, orientation) {
+  const geometry = await page.evaluate(() => {
+    const ui = window.__ownedOriginal.vsc.iosPlayer.ui;
+    const timeline = ui.refs.seek.closest('.timeline');
+    const footer = timeline.closest('footer');
+    const rect = (node) => {
+      const { top, bottom, left, right, width, height } = node.getBoundingClientRect();
+      return { top, bottom, left, right, width, height };
+    };
+    return {
+      lastRow: footer.lastElementChild === timeline,
+      timeline: rect(timeline),
+      footer: rect(footer),
+      options: rect(ui.shadow.querySelector('.options')),
+      seek: rect(ui.refs.seek),
+      dialog: rect(ui.dialog),
+      bottomPadding: parseFloat(getComputedStyle(ui.shadow.querySelector('.hud')).paddingBottom),
+    };
+  });
+  const detail = `${orientation} timeline: ${JSON.stringify(geometry)}`;
+  assert.true(geometry.lastRow, `Timeline must be the last footer row; ${detail}`);
+  assert.true(
+    geometry.timeline.top >= geometry.options.bottom &&
+      Math.abs(geometry.footer.bottom - geometry.timeline.bottom) < 1,
+    `Timeline must follow option controls without a trailing footer row; ${detail}`
+  );
+  assert.true(
+    Math.abs(geometry.dialog.bottom - geometry.timeline.bottom - geometry.bottomPadding) < 2,
+    `Timeline must sit at the bottom safe edge; ${detail}`
+  );
+  assert.true(
+    geometry.seek.width >= 44 &&
+      geometry.seek.height >= 44 &&
+      geometry.seek.left >= geometry.dialog.left &&
+      geometry.seek.right <= geometry.dialog.right &&
+      geometry.seek.top >= geometry.timeline.top &&
+      geometry.seek.bottom <= geometry.timeline.bottom,
+    `Timeline must retain an unclipped 44px slider target; ${detail}`
+  );
+  console.log(`   ${detail}`);
+}
+
+async function assertSeekProgress(page, label, expectedTime, preview = false) {
+  if (preview) {
+    // CDP can acknowledge touchMove before Chrome delivers its pointer event.
+    // Wait only for the active UI preview, independently of decoder seek writes.
+    await page.waitForFunction(
+      (target) => {
+        const player = window.__ownedOriginal.vsc.iosPlayer;
+        const range = player.ui.refs.seek;
+        const value = Number(range.value);
+        const progress = parseFloat(getComputedStyle(range).getPropertyValue('--seek-progress'));
+        const expected =
+          (100 * (value - Number(range.min))) / (Number(range.max) - Number(range.min));
+        return (
+          player.scrubber.active &&
+          Math.abs(value - target) < 0.15 &&
+          Number.isFinite(progress) &&
+          Math.abs(progress - expected) < 0.002
+        );
+      },
+      { timeout: 2000, polling: 'raf' },
+      expectedTime
+    );
+  }
+  const state = await page.evaluate(() => {
+    const player = window.__ownedOriginal.vsc.iosPlayer;
+    const range = player.ui.refs.seek;
+    return {
+      value: Number(range.value),
+      min: Number(range.min),
+      max: Number(range.max),
+      progress: parseFloat(getComputedStyle(range).getPropertyValue('--seek-progress')),
+      time: window.__ownedOriginal.currentTime,
+      active: player.scrubber.active,
+    };
+  });
+  const expectedProgress = (100 * (state.value - state.min)) / (state.max - state.min);
+  assert.true(
+    Math.abs(state.value - expectedTime) < 0.15 &&
+      Number.isFinite(state.progress) &&
+      Math.abs(state.progress - expectedProgress) < 0.002 &&
+      (preview ? state.active : Math.abs(state.value - state.time) < 0.3),
+    `${label} must paint the ${preview ? 'active preview' : 'accepted seek'} progress: ${JSON.stringify(state)}`
+  );
+}
+
 async function tapPlayer(page, ref, context = page) {
   if (
     ref !== 'unlock' &&
@@ -1320,6 +1407,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         () => window.__ownedOriginal.currentTime > 25 && window.__ownedOriginal.currentTime < 35
       );
       const start = await page.evaluate(() => window.__ownedOriginal.currentTime);
+      await assertSeekProgress(page, 'Genuine timeline tap', start);
       await tapPlayer(page, 'back');
       await page.waitForFunction(
         (time) => Math.abs(window.__ownedOriginal.currentTime - (time - 10)) < 1,
@@ -1606,6 +1694,10 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
                 duration: Number(range.max) - Number(range.min),
               };
             });
+            assert.true(
+              bar.y - distance >= 0 && bar.y < page.viewport().height,
+              'Bottom timeline precision gestures must stay inside the viewport'
+            );
             await send('touchStart', bar.x, bar.y);
             await send('touchMove', bar.x, bar.y - distance);
             await page.waitForFunction(
@@ -1620,6 +1712,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
             );
             await send('touchMove', bar.x + 35, bar.y - distance);
             const expected = 30 + ((35 * bar.duration) / bar.width) * precision;
+            await assertSeekProgress(page, `${precision} sensitivity`, expected, true);
             await page.waitForFunction(
               (target) => Math.abs(window.__ownedOriginal.currentTime - target) < 0.3,
               {},
@@ -1633,6 +1726,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
               actualDelta: current - 30,
             });
             await send('touchEnd');
+            await assertSeekProgress(page, `${precision} sensitivity`, expected);
             assert.equal(
               await page.evaluate(() => window.__ownedOriginal.paused),
               true,
@@ -1686,6 +1780,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       }
     });
     await check('More options, fit/fill and remaining time work with genuine taps', async () => {
+      await assertBottomTimeline(page, 'Portrait');
       await tapPlayer(page, 'more');
       await page.waitForFunction(
         () =>
@@ -1729,6 +1824,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           ) < 1
       );
       await tapPlayer(page, 'more');
+      await assertBottomTimeline(page, 'Landscape');
       await page.screenshot({
         path: resolve('tests/e2e/screenshots/ios-owned-more-landscape.png'),
       });
