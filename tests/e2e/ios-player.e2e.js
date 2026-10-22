@@ -49,6 +49,32 @@ async function assertBottomTimeline(page, orientation) {
   console.log(`   ${detail}`);
 }
 
+async function assertMorePanel(page, orientation) {
+  await page.waitForFunction(
+    () => {
+      const refs = window.__ownedOriginal.vsc.iosPlayer.ui.refs;
+      return !refs.extra.hidden && refs.more.getAttribute('aria-expanded') === 'true';
+    },
+    { timeout: 2000 }
+  );
+  const geometry = await page.evaluate(() => {
+    const ui = window.__ownedOriginal.vsc.iosPlayer.ui;
+    const more = ui.refs.more;
+    const rect = more.getBoundingClientRect();
+    const hit = ui.shadow.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return {
+      panelBottom: ui.refs.extra.getBoundingClientRect().bottom,
+      footerTop: more.closest('footer').getBoundingClientRect().top,
+      moreHit: hit === more || more.contains(hit),
+      hitRef: hit?.dataset.ref,
+    };
+  });
+  assert.true(
+    geometry.panelBottom <= geometry.footerTop - 7 && geometry.moreHit,
+    `${orientation} More panel must sit above the footer and leave More reachable: ${JSON.stringify(geometry)}`
+  );
+}
+
 async function assertSeekProgress(page, label, expectedTime, preview = false) {
   if (preview) {
     // CDP can acknowledge touchMove before Chrome delivers its pointer event.
@@ -1779,6 +1805,52 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         await session.detach();
       }
     });
+    await check('RTL timeline accepts genuine quarter-position seeking', async () => {
+      const before = await page.evaluate(() => ({
+        dir: document.documentElement.getAttribute('dir'),
+        time: window.__ownedOriginal.currentTime,
+      }));
+      try {
+        await page.evaluate(() => document.documentElement.setAttribute('dir', 'rtl'));
+        const range = await page.evaluate(() => {
+          const seek = window.__ownedOriginal.vsc.iosPlayer.ui.refs.seek;
+          const { x, y, width, height } = seek.getBoundingClientRect();
+          return {
+            x,
+            y,
+            width,
+            height,
+            pageDirection: getComputedStyle(document.documentElement).direction,
+            direction: getComputedStyle(seek).direction,
+            target: Number(seek.min) + (Number(seek.max) - Number(seek.min)) / 4,
+          };
+        });
+        assert.equal(range.pageDirection, 'rtl', 'The fixture page must actually use RTL layout');
+        assert.equal(range.direction, 'ltr', 'RTL pages must preserve the timeline fill direction');
+        await page.touchscreen.tap(range.x + range.width / 4, range.y + range.height / 2);
+        await page.waitForFunction(
+          (target) =>
+            Math.abs(window.__ownedOriginal.currentTime - target) < 0.3 &&
+            Math.abs(Number(window.__ownedOriginal.vsc.iosPlayer.ui.refs.seek.value) - target) <
+              0.15,
+          { timeout: 2000 },
+          range.target
+        );
+        await assertSeekProgress(page, 'RTL quarter-position tap', range.target);
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/ios-owned-timeline-rtl.png'),
+        });
+      } finally {
+        await page.evaluate((original) => {
+          if (original.dir === null) {
+            document.documentElement.removeAttribute('dir');
+          } else {
+            document.documentElement.setAttribute('dir', original.dir);
+          }
+          window.__ownedOriginal.currentTime = original.time;
+        }, before);
+      }
+    });
     await check('More options, fit/fill and remaining time work with genuine taps', async () => {
       await assertBottomTimeline(page, 'Portrait');
       await tapPlayer(page, 'more');
@@ -1787,6 +1859,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
           window.__ownedOriginal.vsc.iosPlayer.ui.refs.more.getAttribute('aria-expanded') ===
             'true' && !window.__ownedOriginal.vsc.iosPlayer.ui.refs.extra.hidden
       );
+      await assertMorePanel(page, 'Portrait');
       await page.screenshot({ path: resolve('tests/e2e/screenshots/ios-owned-more-portrait.png') });
       await tapPlayer(page, 'more');
       await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.ui.refs.extra.hidden);
@@ -1825,6 +1898,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
       );
       await tapPlayer(page, 'more');
       await assertBottomTimeline(page, 'Landscape');
+      await assertMorePanel(page, 'Landscape');
       await page.screenshot({
         path: resolve('tests/e2e/screenshots/ios-owned-more-landscape.png'),
       });
@@ -1854,6 +1928,7 @@ export default async function runIOSPlayer({ launch = launchChromeWithExtension 
         );
       }
       await tapPlayer(page, 'more');
+      await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.ui.refs.extra.hidden);
       await page.setViewport({
         width: 390,
         height: 844,

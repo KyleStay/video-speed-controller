@@ -340,17 +340,55 @@ import XCTest
         openAndVerifyPlayback()
         checkTransportAndMute()
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
-        wait(safari, ["timeline height: 44", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
+        wait(safari, ["timeline height: 44", "seek direction: ltr", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
         target(safari.sliders["Seek video"])
+        checkBottomMorePanel(safari, "portrait")
+        checkBottomCustomSpeed(safari)
         capture(safari, "thin-bottom-timeline-portrait")
         checkPrecisionScrubbing()
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
-        wait(safari, ["timeline height: 44", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
+        wait(safari, ["timeline height: 44", "seek direction: ltr", "timeline last: true", "timeline after options: true", "timeline bottom gap: 0", "errors: 0"])
         target(safari.sliders["Seek video"])
+        checkBottomMorePanel(safari, "landscape")
         capture(safari, "thin-bottom-timeline-landscape")
         safari.buttons["Close StayFast video player"].tap()
         wait(safari, ["owner active: false", "owned hosts: 0", "original identity: true", "source preserved: true", "errors: 0"])
+    }
+
+    private func checkBottomMorePanel(_ safari: XCUIApplication, _ orientation: String) {
+        let more = safari.buttons["More video options"]
+        target(more)
+        more.tap()
+        let site = safari.buttons["Use site player"]
+        XCTAssertTrue(site.waitForExistence(timeout: 5))
+        target(site)
+        target(more)
+        XCTAssertLessThan(site.frame.maxY, more.frame.minY)
+        capture(safari, "bottom-timeline-more-" + orientation)
+        more.tap()
+        XCTAssertTrue(site.waitForNonExistence(timeout: 5))
+        target(safari.sliders["Seek video"])
+    }
+
+    private func checkBottomCustomSpeed(_ safari: XCUIApplication) {
+        let speed = safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Playback speed'")).firstMatch
+        speed.tap()
+        let custom = safari.buttons["Custom…"]
+        XCTAssertTrue(custom.waitForExistence(timeout: 10))
+        custom.tap()
+        let input = safari.textFields["Custom playback speed"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        target(input)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 16) + "1.5")
+        let apply = safari.buttons["Set speed"]
+        target(apply)
+        capture(safari, "bottom-timeline-custom-speed-keyboard")
+        apply.tap()
+        wait(safari, ["Playback rate: 1.5;", "owner active: true", "paused: true", "errors: 0"])
+        safari.switches["Normal speed"].tap()
+        wait(safari, ["Playback rate: 1;"])
     }
 
     func testOwnedPlayerRuntime() {

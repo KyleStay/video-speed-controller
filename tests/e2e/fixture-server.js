@@ -55,6 +55,7 @@ const mobileHtml = `<!doctype html>
     <div class="scroll-space"></div>
     <script>
       const video = document.querySelector('video');
+      if (new URLSearchParams(location.search).has('rtl')) document.documentElement.dir = 'rtl';
       const scrollFixture = new URLSearchParams(location.search).get('scroll');
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
         const spacer = document.createElement('div');
@@ -236,6 +237,7 @@ const mobileHtml = `<!doctype html>
             const bounds = timeline.getBoundingClientRect();
             const bottom = hud.getBoundingClientRect().bottom - parseFloat(getComputedStyle(hud).paddingBottom);
             text += '; timeline height: ' + owner.ui.refs.seek.getBoundingClientRect().height +
+              '; seek direction: ' + getComputedStyle(owner.ui.refs.seek).direction +
               '; timeline last: ' + (timeline === timeline.parentElement.lastElementChild) +
               '; timeline after options: ' + (bounds.top >= options.getBoundingClientRect().bottom) +
               '; timeline bottom gap: ' + Math.round((bottom - bounds.bottom) * 100) / 100 +

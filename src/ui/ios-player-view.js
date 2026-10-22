@@ -167,7 +167,7 @@
             background: #141414b3;
           }
           .transport .play { min-width: 80px; min-height: 80px; background: #ffffffed; color: #111; }
-          footer { min-width: 0; display: grid; gap: 8px; }
+          footer { position: relative; min-width: 0; display: grid; gap: 8px; }
           .timeline { display: flex; align-items: center; gap: 10px; min-width: 0; }
           .time { min-width: 3.5ch; color: #fffd; font-size: 13px; font-variant-numeric: tabular-nums; }
           input[type='range'] {
@@ -182,7 +182,7 @@
             accent-color: #67e8f9;
             cursor: pointer;
           }
-          input[data-ref='seek'] { -webkit-appearance: none; appearance: none; }
+          input[data-ref='seek'] { -webkit-appearance: none; appearance: none; direction: ltr; }
           input[data-ref='seek']::-webkit-slider-runnable-track {
             height: 3px;
             border-radius: 999px;
@@ -213,8 +213,8 @@
           }
           .extra-options {
             position: absolute; z-index: 3;
-            left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
-            bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px);
+            left: 0; right: 0;
+            bottom: calc(100% + 8px);
             display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
             max-height: calc(var(--stayfast-viewport-height, 100dvh) - 140px); overflow-y: auto;
             padding: 12px; border: 1px solid #ffffff30; border-radius: 18px;
@@ -223,8 +223,8 @@
           .speed { color: #67e8f9; font-weight: 700; }
           .custom-speed {
             position: absolute; z-index: 4;
-            left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
-            bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px);
+            left: 0; right: 0;
+            bottom: calc(100% + 8px);
             display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
             max-height: calc(var(--stayfast-viewport-height, 100dvh) - 24px); overflow-y: auto;
             padding: 12px; border: 1px solid #ffffff30; border-radius: 18px; background: #181818f5;
