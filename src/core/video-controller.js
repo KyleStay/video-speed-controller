@@ -287,8 +287,19 @@ class VideoController {
       const handler = () => {
         this.video.removeEventListener('loadedmetadata', handler);
         this.initMetadataHandler = null;
-        if (targetSpeed !== this.video.playbackRate) {
-          this.actionHandler.adjustSpeed(this.video, targetSpeed, { source: 'init' });
+        if (this.disposed || this.video.vsc !== this) {
+          return;
+        }
+        // Match lifecycle recovery: retain this media's current accepted rate,
+        // but let an external preference revision supersede it.
+        const local = this.actionHandler.eventManager?.getMediaRateState?.(this.video);
+        const currentTargetSpeed =
+          Number.isFinite(local?.lifecycleSpeed) &&
+          (local.lifecycleSpeedRevision ?? 0) === (this.config.speedPreferenceRevision ?? 0)
+            ? local.lifecycleSpeed
+            : this.getTargetSpeed();
+        if (currentTargetSpeed !== this.video.playbackRate) {
+          this.actionHandler.adjustSpeed(this.video, currentTargetSpeed, { source: 'init' });
         }
       };
       this.initMetadataHandler = handler;
