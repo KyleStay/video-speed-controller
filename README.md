@@ -32,7 +32,7 @@ advertising, analytics, or StayTech backend.
   open large speed/seek controls, 1×/1.25×/1.5×/2× presets, and an explicit close
   button. Touch interaction does not require hover.
 - **iPhone/iPad presentation** — StayFast inline controls and an owned fullscreen player
-  offering precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
+  offering a thin bottom timeline with precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
   The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
   site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
   preserving your position and play/pause state. Supported metadata includes

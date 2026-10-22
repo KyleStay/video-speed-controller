@@ -8,6 +8,11 @@ acceptance checks below pass on the intended devices.
 For signed iOS distribution and ready-to-use App Store Connect metadata, see
 [the TestFlight release packet](testflight.md).
 
+The owned fullscreen timeline sits below the playback options at the bottom safe
+edge. Its visible track is 3px with a 12px thumb; the slider retains a 44px touch
+region and distance-based precision scrubbing. Progress follows both playback and
+the pending scrub preview, including nonzero live seek bounds.
+
 ## Build 13 takeover candidate — r4 verification
 
 **0.11.4 (13)** replaces controlled iOS HTML5 video controls inline by default:

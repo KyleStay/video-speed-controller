@@ -55,6 +55,7 @@ const mobileHtml = `<!doctype html>
     <div class="scroll-space"></div>
     <script>
       const video = document.querySelector('video');
+      if (new URLSearchParams(location.search).has('rtl')) document.documentElement.dir = 'rtl';
       const scrollFixture = new URLSearchParams(location.search).get('scroll');
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
         const spacer = document.createElement('div');
@@ -228,6 +229,21 @@ const mobileHtml = `<!doctype html>
             '; duration text: ' + (owner?.ui?.refs?.duration?.textContent || 'none') +
             '; scrub active: ' + !!owner?.scrubber?.active +
             '; scrub hint: ' + (owner?.ui?.refs?.scrubHint?.textContent || 'none');
+          if (owner?.ui) {
+            const shadow = owner.ui.shadow;
+            const timeline = shadow.querySelector('.timeline');
+            const hud = shadow.querySelector('.hud');
+            const options = shadow.querySelector('.options');
+            const bounds = timeline.getBoundingClientRect();
+            const bottom = hud.getBoundingClientRect().bottom - parseFloat(getComputedStyle(hud).paddingBottom);
+            text += '; timeline height: ' + owner.ui.refs.seek.getBoundingClientRect().height +
+              '; seek direction: ' + getComputedStyle(owner.ui.refs.seek).direction +
+              '; timeline last: ' + (timeline === timeline.parentElement.lastElementChild) +
+              '; timeline after options: ' + (bounds.top >= options.getBoundingClientRect().bottom) +
+              '; timeline bottom gap: ' + Math.round((bottom - bounds.bottom) * 100) / 100 +
+              '; seek fill: ' + owner.ui.refs.seek.style.getPropertyValue('--seek-progress');
+          }
+
           const scrollContainer = document.querySelector('#scroll-container');
           const baseline = window.__stayfastScrollBaseline;
           text += '; page scroll: ' + scrollX + ',' + scrollY +

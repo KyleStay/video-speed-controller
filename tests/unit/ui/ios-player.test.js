@@ -113,6 +113,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     video.dispatchEvent(new Event('timeupdate'));
     expect(refs.current.textContent).toBe('0:25');
     expect(Number(refs.seek.value)).toBe(25);
+    expect(refs.seek.style.getPropertyValue('--seek-progress')).toBe('20.833%');
     expect(observer.takeRecords().length).toBeGreaterThan(0);
     expect(refs.play.firstChild).toBe(playText);
     expect(refs.duration.firstChild).toBe(durationText);
@@ -126,6 +127,29 @@ describe('iOS player ownership, playback, and restoration', () => {
     video.dispatchEvent(new Event('ratechange'));
     expect(refs.speed.value).toBe('16');
     observer.disconnect();
+  });
+
+  it('keeps timeline fill relative to current seek bounds and clears unavailable progress', () => {
+    const { player } = makeController();
+    player.attach();
+    player.open();
+    const { seek } = player.ui.refs;
+    seek.min = '40';
+    seek.max = '140';
+    seek.value = '90';
+    player.ui.updateSeekProgress();
+    expect(seek.style.getPropertyValue('--seek-progress')).toBe('50%');
+    seek.disabled = true;
+    player.ui.updateSeekProgress();
+    expect(seek.style.getPropertyValue('--seek-progress')).toBe('0%');
+  });
+
+  it('updates the thin timeline fill immediately for a precision-scrubbing preview', () => {
+    const { player } = makeController();
+    player.attach();
+    player.open();
+    expect(player.scrubber.preview(60)).toBe(true);
+    expect(player.ui.refs.seek.style.getPropertyValue('--seek-progress')).toBe('50%');
   });
 
   it('leaves locked controls untouched during playback and synchronizes them on unlock', () => {

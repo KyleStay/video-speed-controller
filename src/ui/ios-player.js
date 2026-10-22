@@ -1499,6 +1499,7 @@ class IOSPlayer {
         `${IOSPlayer.formatTime(position)} of ${IOSPlayer.formatTime(bounds[1])}`
       );
     }
+    this.ui.updateSeekProgress?.();
     const rate = String(this.video.playbackRate);
     if (!Array.from(refs.speed.options).some((option) => option.value === rate)) {
       const option = this.doc.createElement('option');
