@@ -552,10 +552,13 @@ class ActionHandler {
     if (mediaRateState) {
       mediaRateState.applyingSpeed = true;
     }
+    let playbackTransition;
     try {
+      playbackTransition = window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
       window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
       const acceptedSpeed = video.playbackRate;
       if (!Number.isFinite(acceptedSpeed) || acceptedSpeed <= 0) {
+        playbackTransition?.abort();
         this.config.settings.lastSpeed = previousSpeed;
         return false;
       }
@@ -577,6 +580,7 @@ class ActionHandler {
         mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
       }
     } catch (error) {
+      playbackTransition?.abort();
       let restoredSpeed = previousSpeed;
       try {
         const actual = video.playbackRate;
@@ -622,6 +626,10 @@ class ActionHandler {
         },
       })
     );
+
+    // A same-video format change resumes only in this command's call stack.
+    // Its asynchronous callbacks never start playback or revive a stale source.
+    playbackTransition?.finish();
 
     // 5. Update UI indicator
     const speedIndicator = video.vsc?.speedIndicator;

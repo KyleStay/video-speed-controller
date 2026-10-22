@@ -84,6 +84,38 @@ describe('ActionHandler', () => {
     expect(config.settings.lastSpeed).toBe(2.0);
   });
 
+  it('establishes the accepted rate before synchronously resuming a rendition change', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const manager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, manager);
+    const video = createTestVideoWithController(config, actionHandler);
+    const order = [];
+    const transition = {
+      finish: vi.fn(() => {
+        expect(video.playbackRate).toBe(3);
+        expect(manager.getMediaRateState(video).acceptedSpeed).toBe(3);
+        order.push('resume');
+      }),
+      abort: vi.fn(),
+    };
+    const begin = vi.spyOn(window.VSC.SafariHLSPlayback, 'begin').mockImplementation(() => {
+      expect(manager.getMediaRateState(video).applyingSpeed).toBe(true);
+      order.push('switch');
+      return transition;
+    });
+    try {
+      expect(actionHandler.setSpeed(video, 3, 'internal')).toBe(true);
+      order.push('returned');
+      expect(order).toEqual(['switch', 'resume', 'returned']);
+      expect(transition.abort).not.toHaveBeenCalled();
+    } finally {
+      begin.mockRestore();
+      video.vsc.remove();
+      manager.cleanup();
+    }
+  });
+
   describe('owned-player hardware shortcut targeting', () => {
     let eventManager;
     let actionHandler;

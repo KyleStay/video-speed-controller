@@ -1892,6 +1892,43 @@ describe('iOS player ownership, playback, and restoration', () => {
   );
 
   describe('recycled feed media cannot inherit a previous source presentation', () => {
+    it.each(['emptied', 'loadstart'])(
+      'keeps the same custom presentation for a verified rendition change, then yields to a site replacement on %s',
+      (type) => {
+        const { player, video, controller, parent } = makeController();
+        player.attach();
+        player.open();
+        const host = player.ui.host;
+        const ownsTransition = vi.fn(() => true);
+        controller.safariPlayback = { ownsTransition, cleanup: vi.fn() };
+        video.dispatchEvent(new Event(type));
+        expect(player.active).toBe(true);
+        expect(player.ui.host).toBe(host);
+        expect(video.vsc).toBe(controller);
+        expect(video.play).not.toHaveBeenCalled();
+        ownsTransition.mockReturnValue(false);
+        video.src = 'https://media.example.test/replacement.mp4';
+        video.dispatchEvent(new Event(type));
+        expect(player.active).toBe(false);
+        expect(video.parentNode).toBe(parent);
+        expect(video.src).toContain('/replacement.mp4');
+      }
+    );
+
+    it('hands playback controls back without reloading the chosen same-video rendition', () => {
+      const { player, controller } = makeController();
+      player.attach();
+      player.open();
+      const cleanup = vi.fn();
+      controller.safariPlayback = { cleanup };
+      const cancelPendingPlayback = vi.fn();
+      controller.safariPlaybackPending = { cleanup: cancelPendingPlayback };
+      player.restoreSitePlayer();
+      expect(cleanup).toHaveBeenCalledWith({ restore: false });
+      expect(cancelPendingPlayback).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+    });
+
     function replaceFeedSource(video, eventType = 'emptied') {
       video.srcObject = { feedItem: 'replacement' };
       video.src = 'https://media.example.test/next-feed-item.mp4';

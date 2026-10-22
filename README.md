@@ -33,7 +33,12 @@ advertising, analytics, or StayTech backend.
   button. Touch interaction does not require hover.
 - **iPhone/iPad presentation** — StayFast inline controls and an owned fullscreen player
   offering precision seeking, speed, Fit/Fill, Lock/Unlock, and language/system controls.
-  The original video and its media source stay in use.
+  The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
+  site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
+  preserving your position and play/pause state. Supported metadata includes
+  X/Twitter, HTML source alternatives, Video.js/Brightcove and JW Player. Labeled or populated caption
+  tracks retain HLS; Safari’s empty caption placeholder may be dropped. See
+  [Safari playback limits](docs/safari.md#playback-above-2).
 - **Private by design** — playback and page processing stay in your browser.
   See the [privacy policy](PRIVACY.md) for details.
 

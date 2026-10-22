@@ -39,6 +39,9 @@ export async function loadCoreModules() {
   await import('../../src/site-handlers/index.js');
 
   // Core controllers
+  await import('../../src/site-handlers/twitter-media-source.js');
+  await import('../../src/site-handlers/progressive-media-source.js');
+  await import('../../src/core/safari-hls-playback.js');
   await import('../../src/core/action-handler.js');
   await import('../../src/core/video-controller.js');
 
