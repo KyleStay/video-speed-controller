@@ -844,9 +844,20 @@ class IOSPlayer {
     this.listen(refs.seek, 'pointerdown', () => this.toggleMore(false), true);
     click(refs.play, () => {
       if (this.video.ended) {
+        const session = this.session;
+        const ui = this.ui;
+        const source = this.scrubber.captureSource();
         const bounds = this.seekBounds();
-        if (bounds) {
-          this.seekTo(bounds[0]);
+        if (!bounds || !this.seekTo(bounds[0])) {
+          return;
+        }
+        if (
+          !this.active ||
+          this.session !== session ||
+          this.ui !== ui ||
+          !this.scrubber.matchesSource(source)
+        ) {
+          return;
         }
         this.play();
       } else if (this.video.paused) {
@@ -1335,11 +1346,11 @@ class IOSPlayer {
 
   seekTo(value) {
     if (this.controlsLocked) {
-      return;
+      return false;
     }
     const bounds = this.seekBounds();
     if (!bounds || !Number.isFinite(value)) {
-      return;
+      return false;
     }
     const session = this.session;
     const ui = this.ui;
@@ -1350,9 +1361,10 @@ class IOSPlayer {
       if (this.active && this.session === session && this.ui === ui) {
         ui.refs.status.textContent = 'Seeking failed. Try again or return to the site player.';
       }
-      return;
+      return false;
     }
     this.showControls();
+    return true;
   }
 
   seekBy(delta) {

@@ -2936,6 +2936,38 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(other.video.currentTime).toBe(12.5);
   });
 
+  it.each(['reopen', 'src', 'srcObject', 'failure', 'source-without-error'])(
+    'does not replay after a seek changes %s or fails',
+    (change) => {
+      const { player, video, controller } = makeController();
+      Object.defineProperty(video, 'ended', { configurable: true, value: true });
+      video.currentTime = 120;
+      player.attach();
+      player.open();
+      const replay = player.ui.refs.play;
+      controller.actionHandler.seek.mockImplementationOnce(() => {
+        if (change === 'reopen') {
+          player.close();
+          player.open();
+        } else if (change === 'src' || change === 'source-without-error') {
+          video.src = 'https://media.example.test/replacement.mp4';
+        } else if (change === 'srcObject') {
+          video.srcObject = {};
+        }
+        if (change !== 'source-without-error') {
+          throw new Error('Page seek failed');
+        }
+      });
+      replay.click();
+      expect(controller.actionHandler.seek).toHaveBeenCalledOnce();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(player.active).toBe(true);
+      if (change === 'reopen') {
+        expect(player.ui.refs.status.textContent).toBe('');
+      }
+    }
+  );
+
   it('exposes volume only when the platform reports it unlocked and reflects the muted state', () => {
     const { player, video } = makeController();
     const cssDescriptor = Object.getOwnPropertyDescriptor(window, 'CSS');
