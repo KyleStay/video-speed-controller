@@ -2,7 +2,7 @@
  * E2E test utilities for Chrome extension testing
  */
 
-import puppeteer from 'puppeteer';
+import { launchFixtureBrowser } from './browser-runtime.js';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { mkdir } from 'fs/promises';
@@ -74,8 +74,10 @@ export async function launchChromeWithExtension() {
 
   console.log(`   📁 Loading extension from: ${extensionPath}`);
 
+  let browser;
   try {
-    const browser = await puppeteer.launch({
+    const launched = await launchFixtureBrowser('chrome', {
+      extensionPath,
       headless: false, // Extensions require non-headless mode
       devtools: false,
       enableExtensions: true,
@@ -84,15 +86,9 @@ export async function launchChromeWithExtension() {
       ignoreDefaultArgs: ['--enable-automation'],
     });
 
-    // Puppeteer 25.3.0 does not correctly await array-valued
-    // enableExtensions installs. Install explicitly so no test can navigate
-    // before the unpacked extension is ready.
-    const extensionId = await browser.installExtension(extensionPath);
-    if (!extensionId) {
-      throw new Error('Puppeteer did not return an installed extension ID');
-    }
+    browser = launched.browser;
 
-    console.log(`   🌐 Chrome browser launched successfully (${extensionId})`);
+    console.log(`   🌐 Chrome browser launched successfully (${launched.extensionId})`);
 
     const pages = await browser.pages();
     const page = pages[0] || (await browser.newPage());
@@ -131,6 +127,7 @@ export async function launchChromeWithExtension() {
 
     return { browser, page };
   } catch (error) {
+    await browser?.close();
     console.log(`   ❌ Failed to launch Chrome: ${error.message}`);
     throw error;
   }

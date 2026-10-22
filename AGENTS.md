@@ -490,8 +490,17 @@ keystrokes for interaction checks, not only dispatched events or `.click()` in
 page JavaScript. Do not count skipped assertions or unavailable playback as a
 pass. Label local fixtures and live-site checks separately in the final report.
 
+Use the owned lifecycle in `tests/e2e/browser-runtime.js` for Puppeteer suites;
+await `cleanupFixtureBrowsers()` on failure and signals, including interruption
+while launch or extension installation is pending. The isolated runner passes
+`--owner-pid` so its detached Chrome is watched if the test owner disappears.
 Close each disposable browser through `Browser.close`, verify its owned
-process tree exited, then remove its profile. If a required runtime check remains
+process tree exited with retained start identities, then remove its profile.
+Reuse installed browser versions; put any one-off download inside the run's owned
+workspace and remove it after shutdown. Retain shared versions required by other
+projects or active jobs. Historical recovery uses exact reviewed paths and Trash,
+with allocated bytes and restore locations recorded; preserve source, releases,
+required evidence, personal Chrome and unknown code-sign clones. If a required runtime check remains
 blocked, report the exact blocker and leave browser verification incomplete;
 do not present the change as a verified fix.
 

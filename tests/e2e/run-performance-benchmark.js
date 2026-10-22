@@ -3,7 +3,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { launchFixtureBrowser } from './browser-runtime.js';
+import { launchFixtureBrowser, cleanupFixtureBrowsers } from './browser-runtime.js';
 import { monitorPageErrors } from './e2e-utils.js';
 import { startFixtureServer } from './fixture-server.js';
 
@@ -196,7 +196,9 @@ async function runScenario(page, scenario, { enabled, fixture, session }) {
           window.__stayfastBenchmark.longTaskDurationMs += entry.duration;
         }
       });
-      window.__stayfastBenchmark.longTaskObserver.observe({ entryTypes: ['longtask'] });
+      window.__stayfastBenchmark.longTaskObserver.observe({
+        entryTypes: ['longtask'],
+      });
     }
     window.__stayfastBenchmark.queueTimer = setInterval(() => {
       const now = performance.now();
@@ -271,7 +273,10 @@ async function runScenario(page, scenario, { enabled, fixture, session }) {
         for (const [index, frame] of frames.entries()) {
           const child = frame.contentWindow;
           const childDocument = frame.contentDocument;
-          child.__stayfastFrameBenchmark = { appendedAt: child.performance.now(), latencyMs: null };
+          child.__stayfastFrameBenchmark = {
+            appendedAt: child.performance.now(),
+            latencyMs: null,
+          };
           const attachmentObserver = new child.MutationObserver(() => {
             const video = childDocument.querySelector('video');
             if (video?.vsc?.div.isConnected && child.__stayfastFrameBenchmark.latencyMs === null) {
@@ -280,7 +285,10 @@ async function runScenario(page, scenario, { enabled, fixture, session }) {
               attachmentObserver.disconnect();
             }
           });
-          attachmentObserver.observe(childDocument, { childList: true, subtree: true });
+          attachmentObserver.observe(childDocument, {
+            childList: true,
+            subtree: true,
+          });
           const video = childDocument.createElement('video');
           video.muted = true;
           video.preload = 'auto';
@@ -433,6 +441,18 @@ async function runScenario(page, scenario, { enabled, fixture, session }) {
 
 const fixture = await startFixtureServer();
 let browser;
+const cleanup = async () => {
+  try {
+    await cleanupFixtureBrowsers();
+  } finally {
+    await fixture.stop();
+  }
+};
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () =>
+    cleanup().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15)))
+  );
+}
 try {
   const launched = await launchFixtureBrowser('chrome');
   browser = launched.browser;
@@ -482,6 +502,5 @@ try {
   await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`);
   console.log(`BENCHMARK_EVIDENCE=${output}`);
 } finally {
-  await browser?.close();
-  await fixture.stop();
+  await cleanup();
 }

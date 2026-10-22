@@ -67,43 +67,60 @@ const extensionDirectory = resolve(
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let owned = null;
 let cleaning = null;
+let activeExternal = null;
+let activeLauncher = null;
+let interrupted = false;
 
-async function processTree(pid) {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=']);
-  const rows = stdout
-    .trim()
-    .split('\n')
-    .map((line) => line.trim().split(/\s+/).map(Number));
-  const pids = new Set([pid]);
+async function processRows() {
+  const { stdout } = await execFileAsync('ps', ['-axww', '-o', 'pid=,ppid=,lstart=,command=']);
+  return stdout.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(line);
+    return match
+      ? [{ pid: Number(match[1]), parent: Number(match[2]), start: match[3], command: match[4] }]
+      : [];
+  });
+}
+
+async function processTree(pid, profile) {
+  const rows = await processRows();
+  const ownedPids = new Set(
+    rows.filter((row) => row.command.includes(`--user-data-dir=${profile}`)).map((row) => row.pid)
+  );
+  // A recycled root PID cannot establish ownership without the exact profile.
+  if (!ownedPids.has(pid)) {
+    return new Map();
+  }
   for (let grew = true; grew;) {
     grew = false;
-    for (const [child, parent] of rows) {
-      if (pids.has(parent) && !pids.has(child)) {
-        pids.add(child);
+    for (const row of rows) {
+      if (ownedPids.has(row.parent) && !ownedPids.has(row.pid)) {
+        ownedPids.add(row.pid);
         grew = true;
       }
     }
   }
-  return pids;
+  return new Map(rows.filter((row) => ownedPids.has(row.pid)).map((row) => [row.pid, row]));
 }
 
-async function profileProcesses(profile) {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,command=']);
-  return stdout
-    .split('\n')
-    .filter((line) => line.includes(`--user-data-dir=${profile}`))
-    .map((line) => Number(line.trim().split(/\s+/, 1)[0]));
+async function liveOwned(identities) {
+  return (await processRows()).filter((row) => {
+    const expected = identities.get(row.pid);
+    return expected?.start === row.start && expected.command === row.command;
+  });
 }
 
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code !== 'ESRCH') {
-      throw error;
+async function terminateExact(identities) {
+  for (const row of (await liveOwned(identities)).reverse()) {
+    // Recheck start and command immediately before each signal.
+    if ((await liveOwned(new Map([[row.pid, row]]))).length) {
+      try {
+        process.kill(row.pid, 'SIGTERM');
+      } catch (error) {
+        if (error.code !== 'ESRCH') {
+          throw error;
+        }
+      }
     }
-    return false;
   }
 }
 
@@ -115,19 +132,14 @@ async function cleanup() {
     return cleaning;
   }
   cleaning = (async () => {
-    const { browser, profile, pid } = owned;
-    const pids = new Set(owned.pids || []);
-    if (pid && isAlive(pid)) {
-      for (const child of await processTree(pid)) {
-        pids.add(child);
-      }
-    }
-    // The launcher may fail after spawning Chrome but before returning JSON.
-    // Recover only processes carrying this run's unique disposable profile.
-    const profilePids = await profileProcesses(profile);
-    for (const profilePid of profilePids) {
-      for (const child of await processTree(profilePid)) {
-        pids.add(child);
+    const { browser, profile } = owned;
+    const identities = new Map(owned.identities || []);
+    const roots = (await processRows()).filter((row) =>
+      row.command.includes(`--user-data-dir=${profile}`)
+    );
+    for (const root of roots) {
+      for (const [child, identity] of await processTree(root.pid, profile)) {
+        identities.set(child, identity);
       }
     }
     if (browser) {
@@ -139,28 +151,24 @@ async function cleanup() {
       }
     }
     if (!browser) {
-      for (const profilePid of profilePids) {
-        if (isAlive(profilePid)) {
-          process.kill(profilePid, 'SIGTERM');
-        }
-      }
+      await terminateExact(identities);
     }
-    for (let attempt = 0; attempt < 30 && [...pids].some(isAlive); attempt++) {
+    for (let attempt = 0; attempt < 30 && (await liveOwned(identities)).length; attempt++) {
       await sleep(100);
     }
-    // A connected Browser.close can return while native Chrome is shutting
-    // down. Terminate only this run's recorded process tree if it stays alive.
-    for (const ownedPid of [...pids].reverse()) {
-      if (isAlive(ownedPid)) {
-        process.kill(ownedPid, 'SIGTERM');
-      }
-    }
-    for (let attempt = 0; attempt < 100 && [...pids].some(isAlive); attempt++) {
+    await terminateExact(identities);
+    for (let attempt = 0; attempt < 100 && (await liveOwned(identities)).length; attempt++) {
       await sleep(50);
     }
-    const surviving = [...pids].filter(isAlive);
+    const surviving = await liveOwned(identities);
     if (surviving.length) {
-      throw new Error(`Chrome PIDs ${surviving.join(', ')} remain; retain ${profile}`);
+      throw new Error(
+        `Chrome PIDs ${surviving.map((row) => row.pid).join(', ')} remain; retain ${profile}`
+      );
+    }
+    // A launch must settle before this inventory, including during signals.
+    if ((await processRows()).some((row) => row.command.includes(`--user-data-dir=${profile}`))) {
+      throw new Error(`Chrome still owns ${profile}; retained the disposable profile`);
     }
     await rm(profile, { recursive: true, force: true });
     console.log('Cleanup verified: 0 owned Chrome PIDs, 0 disposable profiles');
@@ -174,18 +182,53 @@ async function cleanup() {
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => cleanup().finally(() => process.exit(1)));
+  process.once(signal, async () => {
+    if (interrupted) {
+      return;
+    }
+    interrupted = true;
+    try {
+      if (activeLauncher) {
+        const child = activeLauncher.child;
+        const exited =
+          child.exitCode !== null || child.signalCode !== null
+            ? Promise.resolve()
+            : new Promise((resolveExit) => child.once('exit', resolveExit));
+        child.kill(signal);
+        // Pipes can be inherited by browser helpers: wait for process exit,
+        // then clean those helpers before waiting for pipe closure.
+        await Promise.race([exited, sleep(5000)]);
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+        }
+        await exited;
+      }
+      if (activeExternal) {
+        activeExternal.child.kill(signal);
+        await activeExternal.done;
+      }
+      await cleanup();
+    } catch (error) {
+      console.error(`Cleanup failed: ${error.message}`);
+    } finally {
+      process.exit(128 + (signal === 'SIGINT' ? 2 : 15));
+    }
+  });
 }
 
 async function runExternal(script, arguments_) {
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(process.execPath, [script, ...arguments_], { stdio: 'inherit' });
-    const stopChild = () => child.kill('SIGTERM');
-    process.once('SIGINT', stopChild);
-    process.once('SIGTERM', stopChild);
+    const child = spawn(process.execPath, [script, ...arguments_], {
+      stdio: 'inherit',
+    });
+    let exited;
+    const done = new Promise((resolveExit) => {
+      exited = resolveExit;
+    });
+    activeExternal = { child, done };
     const removeSignals = () => {
-      process.off('SIGINT', stopChild);
-      process.off('SIGTERM', stopChild);
+      activeExternal = null;
+      exited();
     };
     child.once('error', (error) => {
       removeSignals();
@@ -204,6 +247,9 @@ async function runExternal(script, arguments_) {
 
 let failed = 0;
 for (const name of names) {
+  if (interrupted) {
+    break;
+  }
   try {
     if (name === 'cleanup') {
       const profile = resolve(process.env.STAYFAST_CLEANUP_PROFILE || '');
@@ -238,16 +284,29 @@ for (const name of names) {
         }
         let stdout;
         try {
-          ({ stdout } = await execFileAsync(
+          activeLauncher = execFileAsync(
             'python3',
-            [runner, '--extension', loadDirectory, '--profile', profile, '--url', 'about:blank'],
+            [
+              runner,
+              '--extension',
+              loadDirectory,
+              '--profile',
+              profile,
+              '--owner-pid',
+              String(process.pid),
+              '--url',
+              'about:blank',
+            ],
             { timeout: 30000 }
-          ));
+          );
+          ({ stdout } = await activeLauncher);
         } catch (error) {
           throw new Error(
             `Disposable Chrome launch failed: ${error.stderr || error.stdout || error.message}`,
             { cause: error }
           );
+        } finally {
+          activeLauncher = null;
         }
         const info = JSON.parse(stdout);
         owned.pid = info.pid;
@@ -260,11 +319,12 @@ for (const name of names) {
           protocolTimeout: 30000,
         });
         owned.browser = browser;
-        owned.pids = await processTree(info.pid);
+        owned.identities = await processTree(info.pid, profile);
         const close = browser.close.bind(browser);
         browser.close = async () => {
-          if (isAlive(info.pid)) {
-            owned.pids = await processTree(info.pid);
+          const current = await processTree(info.pid, profile);
+          for (const [pid, identity] of current) {
+            owned.identities.set(pid, identity);
           }
           await close();
         };
