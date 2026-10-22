@@ -66,7 +66,7 @@ export async function profileRoots(rows, profile, executable, options = {}) {
         `Native browser arguments unavailable for PID ${row.pid}; retained ${profile}`
       );
     }
-    if (info.status !== 'verified') {
+    if (info.status === 'gone') {
       return false;
     }
     if (
@@ -86,6 +86,13 @@ export async function profileRoots(rows, profile, executable, options = {}) {
         `Ambiguous browser profile arguments for PID ${row.pid}; retained ${profile}`
       );
     }
-    return hasProfileArgument(info.argv, profile, options);
+    const matches = hasProfileArgument(info.argv, profile, options);
+    if (info.status === 'different-executable') {
+      if (matches) {
+        throw new Error(`Another browser executable uses the profile; retained ${profile}`);
+      }
+      return false;
+    }
+    return matches;
   });
 }

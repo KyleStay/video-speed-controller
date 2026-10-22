@@ -40,7 +40,7 @@ class NativeArgumentTests(unittest.TestCase):
 
     def test_argv_zero_cannot_spoof_the_os_executable_path(self):
         with patch.object(info, 'native_arguments', return_value=('/unrelated/node', ['/owned/Chrome', '--user-data-dir=/tmp/QA'])):
-            self.assertEqual(info.inspect(123, '/owned/Chrome'), {'status': 'different-executable'})
+            self.assertEqual(info.inspect(123, '/owned/Chrome'), {'status': 'different-executable', 'argv': ['/owned/Chrome', '--user-data-dir=/tmp/QA']})
 
     def test_exact_os_executable_and_argv_are_returned(self):
         args = ['/owned/Chrome', '--user-data-dir=/tmp/QA']

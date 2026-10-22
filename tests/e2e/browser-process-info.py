@@ -71,7 +71,7 @@ def inspect(pid, expected):
     try:
         executable, argv = native_arguments(pid)
         if os.path.realpath(executable) != expected:
-            return {'status': 'different-executable'}
+            return {'status': 'different-executable', 'argv': argv}
         return {'status': 'verified', 'argv': argv}
     except OSError as error:
         return {'status': 'gone' if error.errno in (errno.ESRCH, errno.ENOENT) else 'unavailable'}

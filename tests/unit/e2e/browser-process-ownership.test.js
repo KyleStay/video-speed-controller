@@ -82,7 +82,9 @@ describe('actual browser argv boundaries', () => {
 describe('native executable and argument verification', () => {
   it('does not admit any root from its displayed command alone', async () => {
     mocks.exec.mockResolvedValue({
-      stdout: JSON.stringify({ 123: { status: 'different-executable' } }),
+      stdout: JSON.stringify({
+        123: { status: 'different-executable', argv: ['/unrelated/node', 'audit', profile] },
+      }),
     });
     expect(await profileRoots([row], profile, executable)).toEqual([]);
     expect(mocks.exec).toHaveBeenCalledWith(
@@ -110,6 +112,18 @@ describe('native executable and argument verification', () => {
       await profileRoots([{ ...row, command }], profile, executable, { firefox: true })
     ).toEqual([]);
   });
+  it('retains a live profile after the runner default executable changes', async () => {
+    mocks.exec.mockResolvedValue({
+      stdout: JSON.stringify({
+        123: {
+          status: 'different-executable',
+          argv: ['/older/Chrome', `--user-data-dir=${profile}`],
+        },
+      }),
+    });
+    await expect(profileRoots([row], profile, '/newer/Chrome')).rejects.toThrow(/retained/);
+  });
+
   it('admits an exact argument only after native executable verification', async () => {
     mocks.exec.mockResolvedValue({
       stdout: JSON.stringify({ 123: verified([executable, `--user-data-dir=${profile}`]) }),
