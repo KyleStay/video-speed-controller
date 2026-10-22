@@ -6,7 +6,16 @@ tester availability; a successful build alone does not complete the latter two.
 
 ## Current release preparation — October 21, 2026
 
-**0.11.4 (13)** is the unreleased takeover candidate. Controlled iOS HTML5 videos receive StayFast inline
+**0.11.4 (14)** is the current native-HLS playback candidate. It adds matching
+MP4 selection above 2× for X/Twitter, HTML source alternatives and supported
+Video.js/Brightcove/JW Player metadata. It preserves position, paused state and
+inline/owned presentation, waits for a new clip’s initial Play promise before
+automatic selection, and yields to newer site/user intent. Caption, DRM, live,
+MSE/blob and unavailable-alternative limits are documented in [Safari playback](safari.md#playback-above-2).
+Archive/export/upload/processing and automatic Personal Auto assignment must be
+verified in the build 14 local release ledger before claiming Testing.
+
+**0.11.4 (13)** was confirmed **Testing** in Personal Auto for two testers on October 21. Controlled iOS HTML5 videos receive StayFast inline
 play/pause, skip, mute, timeline, speed and fullscreen controls by default.
 Recognized single-video site chrome is reversibly hidden while captions and
 unknown buttons remain. Video/container fullscreen API requests made synchronously
@@ -28,7 +37,7 @@ Physical-device double-tap remains unverified. Additional native phases, final
 full-suite output and release verification are recorded in the result record and
 local ledger. See [the scoped r4 record](safari.md#build-13-takeover-candidate--r4-verification)
 and the local build 13 release ledger for final acceptance and distribution;
-these checks do not establish build 13 Testing status.
+the signed build 13 ledger records its completed distribution.
 
 **0.11.4 (12)** is confirmed **Testing** for the two existing testers. The
 following build 12 acceptance evidence does not verify build 13 takeover.
@@ -89,7 +98,7 @@ Build 13 must be archived from the reviewed source. Record its source SHA,
 resource hashes, signing/export checks, upload outcome and actual Testing status
 in the local release ledger under `build/safari/testflight/0.11.4-build13/`.
 An accepted upload alone does not prove tester availability. Never re-upload
-accepted builds 1–12. Earlier evidence below is historical.
+accepted builds 1–13. Earlier evidence below is historical.
 
 ### Build 13 TestFlight draft copy
 

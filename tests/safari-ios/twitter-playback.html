@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>StayFast X rendition fixture</title>
+  <style>
+    body {
+      margin: 0;
+      font: 15px system-ui;
+      background: #f5f7fa;
+    }
+    .lead {
+      height: 640px;
+    }
+    .tail {
+      height: 1200px;
+    }
+    .player {
+      margin: 0 16px;
+      width: 340px;
+      max-width: calc(100vw - 32px);
+    }
+    video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16/9;
+    }
+    .actions {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      right: 8px;
+      z-index: 2147483646;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+    button {
+      font: inherit;
+      min-height: 44px;
+    }
+    #state {
+      position: fixed;
+      bottom: 0;
+      background: white;
+      font-size: 11px;
+      padding: 6px;
+      z-index: 2147483646;
+      max-height: 160px;
+      overflow: auto;
+    }
+  </style>
+  <div class="lead"></div>
+  <div id="players"></div>
+  <div class="tail"></div>
+  <div class="actions">
+    <button id="prepare" disabled>Prepare X clip</button>
+    <button id="inline" disabled>Set 4x inline</button>
+    <button id="owned" disabled>Set 4x owned</button>
+    <button id="paused" disabled>Set 4x paused</button>
+    <button id="next" disabled>Add remembered-speed clip</button>
+    <button id="replace" disabled>Replace active clip</button>
+  </div>
+  <p id="state" role="status">X playback: loading</p>
+  <script>
+    // Project fixture: the built resolver,
+    // transition, media APIs, controller, presentation and rate pipeline are real.
+    const HLS =
+      'https://video.twimg.com/amplify_video/2041611432752742400/pl/OJFA7eAdt1CV9YgM.m3u8?tag=21&v=87a';
+    const MP4 =
+      'https://video.twimg.com/amplify_video/2041611432752742400/vid/avc1/1920x1080/oK7YYmqZfrOjsrWa.mp4?tag=21';
+    const state = document.querySelector('#state'),
+      errors = [],
+      history = [];
+    let video,
+      original,
+      commandPosition,
+      phase = 'loading',
+      baseline,
+      cadence = null,
+      initialPlay = 'none',
+      eligibility = null;
+    addEventListener('error', (e) => {
+      errors.push(e.message);
+      draw();
+    });
+    addEventListener('unhandledrejection', (e) => {
+      errors.push(String(e.reason));
+      draw();
+    });
+    document.addEventListener('click', () => setTimeout(draw, 0), true);
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    function draw() {
+      const player = video?.vsc?.iosPlayer;
+      const report = {
+        phase,
+        controlled: !!video?.vsc,
+        sameNode: video === original,
+        mp4: video?.currentSrc === MP4,
+        rate: video?.playbackRate,
+        paused: video?.paused,
+        time: video?.currentTime,
+        commandPosition,
+        active: !!player?.active,
+        native: !!video?.webkitDisplayingFullscreen,
+        scroll: [scrollX, scrollY],
+        baseline,
+        initialPlay,
+        cadence,
+        eligibility,
+        errors,
+        history,
+      };
+      window.__safariPlaybackReport = report;
+      const text = 'X playback: ' + JSON.stringify(report);
+      state.textContent = text;
+      if (player?.active) {
+        let copy = player.ui.shadow.querySelector('#twitter-fixture-state');
+        if (!copy) {
+          copy = document.createElement('p');
+          copy.id = 'twitter-fixture-state';
+          copy.style.cssText =
+            'position:absolute;top:55px;left:8px;right:8px;font-size:10px;background:white;color:black;z-index:100;max-height:125px;overflow:auto';
+          player.ui.shadow.querySelector('dialog').append(copy);
+        }
+        copy.textContent = text;
+      }
+    }
+    function makeVideo() {
+      const parent = document.createElement('div');
+      parent.className = 'player';
+      const v = document.createElement('video');
+      v.dataset.twitterFixture = 'true';
+      v.muted = true;
+      v.playsInline = true;
+      v.controls = true;
+      v.preload = 'auto';
+      parent.__reactProps$fixture = { children: { props: { src: HLS, downloadUrl: MP4 } } };
+      parent.append(v);
+      document.querySelector('#players').append(parent);
+      for (const type of [
+        'emptied',
+        'loadstart',
+        'loadedmetadata',
+        'loadeddata',
+        'playing',
+        'error',
+      ])
+        v.addEventListener(type, () => {
+          if (type === 'error') errors.push('Media error ' + v.error?.code);
+          history.push({ type, mp4: v.currentSrc === MP4, rate: v.playbackRate });
+          if (history.length > 32) history.shift();
+        });
+      v.src = HLS;
+      return v;
+    }
+    async function frame(v) {
+      await new Promise((resolve, reject) => {
+        let token;
+        const timeout = setTimeout(() => {
+          v.cancelVideoFrameCallback(token);
+          reject(Error('No presented frame'));
+        }, 15000);
+        token = v.requestVideoFrameCallback(() => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    }
+    async function measure(v) {
+      await frame(v);
+      await delay(1000);
+      const start = performance.now(),
+        time = v.currentTime;
+      let count = 0,
+        token;
+      const tick = () => {
+        count++;
+        token = v.requestVideoFrameCallback(tick);
+      };
+      token = v.requestVideoFrameCallback(tick);
+      await delay(5000);
+      v.cancelVideoFrameCallback(token);
+      const seconds = (performance.now() - start) / 1000;
+      cadence = { hz: count / seconds, progress: (v.currentTime - time) / seconds };
+      phase = 'measured';
+      draw();
+    }
+    const deadline = performance.now() + 12000;
+    (function ready() {
+      if (window.VSC?.SafariHLSPlayback && window.VSC_controller?.actionHandler) {
+        video = original = makeVideo();
+        phase = 'ready';
+        document.querySelector('#prepare').disabled = false;
+        draw();
+      } else if (performance.now() < deadline) requestAnimationFrame(ready);
+      else {
+        errors.push('Built extension did not initialize');
+        draw();
+      }
+    })();
+    document.querySelector('#prepare').onclick = async () => {
+      try {
+        const config = window.VSC_controller.config;
+        config.settings.lastSpeed = 1;
+        config.settings.siteDefaultSpeed = null;
+        await video.play();
+        await frame(video);
+        if (!video.vsc) throw Error('No media controller');
+        video.vsc.actionHandler.setSpeed(video, 1, 'user');
+        video.currentTime = 12;
+        await frame(video);
+        scrollTo(0, 440);
+        baseline = [scrollX, scrollY];
+        phase = 'prepared';
+        for (const button of document.querySelectorAll('.actions button')) button.disabled = false;
+        draw();
+      } catch (error) {
+        errors.push(String(error));
+        draw();
+      }
+    };
+    function change(mode) {
+      commandPosition = video.currentTime;
+      cadence = null;
+      phase = 'transition';
+      if (mode === 'paused') video.pause();
+      if (mode === 'owned') video.vsc.iosPlayer.open();
+      const player = video.vsc.iosPlayer;
+      eligibility = {
+        candidate: window.VSC.TwitterMediaSource.findCandidate(
+          video,
+          player.active ? player.originParent : undefined
+        ),
+        canSwitch: window.VSC.SafariHLSPlayback.canSwitch(video.vsc, 4, 'user'),
+        matches: window.VSC.SafariHLSPlayback.matches(video),
+        currentSrc: video.currentSrc,
+        src: video.src,
+        ready: video.readyState,
+        disposed: video.vsc.disposed,
+        keys: !!video.mediaKeys || !!video.webkitKeys,
+        srcObject: !!video.srcObject,
+        audio: video.audioTracks?.length,
+        tracks: video.videoTracks?.length,
+        textTracks: Array.from(video.textTracks, (t) => ({
+          kind: t.kind,
+          label: t.label,
+          mode: t.mode,
+        })),
+        nativeSession: player.nativeSession,
+        relinquished: window.VSC.IOSPlayer.siteRelinquished.has(video),
+      };
+      if (!video.vsc.actionHandler.setSpeed(video, 4, 'user')) errors.push('Rate rejected');
+      if (mode === 'paused') {
+        video.addEventListener(
+          'loadeddata',
+          () => {
+            phase = 'paused-ready';
+            draw();
+          },
+          { once: true }
+        );
+      } else
+        measure(video).catch((error) => {
+          errors.push(String(error));
+          draw();
+        });
+      draw();
+    }
+    document.querySelector('#inline').onclick = () => change('inline');
+    document.querySelector('#owned').onclick = () => change('owned');
+    document.querySelector('#paused').onclick = () => change('paused');
+    document.querySelector('#next').onclick = () => {
+      video.pause();
+      video = original = makeVideo();
+      cadence = null;
+      phase = 'next-loading';
+      initialPlay = 'pending';
+      // Mirror X's early ready-media insertion ordering before site handlers.
+      const ready = (event) => {
+        if (event.target !== video) return;
+        document.removeEventListener('loadeddata', ready, true);
+        if (!video.vsc)
+          new window.VSC.VideoController(
+            video,
+            video.parentElement,
+            window.VSC_controller.config,
+            window.VSC_controller.actionHandler
+          );
+      };
+      document.addEventListener('loadeddata', ready, true);
+      video.play().then(
+        () => {
+          initialPlay = 'resolved';
+        },
+        (error) => {
+          initialPlay = error.name;
+          errors.push(String(error));
+          draw();
+        }
+      );
+      measure(video).catch((error) => {
+        errors.push(String(error));
+        draw();
+      });
+    };
+    document.querySelector('#replace').onclick = () => {
+      video.src = '/sample.mp4?replacement';
+      phase = 'replaced';
+      video.addEventListener('loadeddata', draw, { once: true });
+      draw();
+    };
+  </script>
+</html>

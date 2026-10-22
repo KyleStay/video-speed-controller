@@ -116,6 +116,11 @@ class IOSPlayer {
       });
     }
     const sourceReset = () => {
+      // A verified rendition change retains this exact clip and presentation.
+      // Site replacements still invalidate every old-resource resume/scroll flag.
+      if (this.controller.safariPlayback?.ownsTransition()) {
+        return;
+      }
       // Feeds reuse media nodes. Presentation and scroll restoration belong to
       // the old resource, never to the next item loaded into the same element.
       this.nativeGeneration++;
@@ -1708,6 +1713,8 @@ class IOSPlayer {
     this.resumeAfterPip = false;
     this.resumeOnShow = false;
     IOSPlayer.siteRelinquished.add(this.video);
+    this.controller.safariPlaybackPending?.cleanup();
+    this.controller.safariPlayback?.cleanup({ restore: false });
     this.close();
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();

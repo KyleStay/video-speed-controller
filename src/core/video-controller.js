@@ -272,7 +272,11 @@ class VideoController {
 
     window.VSC.logger.debug(`Setting initial playbackRate to: ${targetSpeed}`);
 
-    if (!this.actionHandler || targetSpeed === this.video.playbackRate) {
+    if (
+      !this.actionHandler ||
+      (targetSpeed === this.video.playbackRate &&
+        !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init'))
+    ) {
       return;
     }
 
@@ -539,6 +543,10 @@ class VideoController {
       // cooldown, dispatch synthetic events and flash an already-correct UI.
       try {
         if (event.target.playbackRate === targetSpeed) {
+          if (window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init')) {
+            this.actionHandler.adjustSpeed(event.target, targetSpeed, { source: 'init' });
+            return;
+          }
           if (local) {
             // Adopt a replacement that already matches without a native write.
             local.lifecycleSpeed = targetSpeed;
@@ -574,8 +582,11 @@ class VideoController {
     // Add essential event listeners for speed restoration
     this.video.addEventListener('play', this.handlePlay);
     this.video.addEventListener('seeked', this.handleSeek);
-    this.handleRateSourceReset = () =>
-      this.actionHandler.eventManager?.releaseMediaState?.(this.video);
+    this.handleRateSourceReset = () => {
+      if (!this.safariPlayback?.ownsTransition()) {
+        this.actionHandler.eventManager?.releaseMediaState?.(this.video);
+      }
+    };
     this.video.addEventListener('emptied', this.handleRateSourceReset);
     this.video.addEventListener('loadstart', this.handleRateSourceReset);
 
@@ -683,6 +694,11 @@ class VideoController {
     if (window.VSC.stateManager) {
       window.VSC.stateManager.removeController(this.controllerId);
     }
+
+    // Restore the original rendition after our lifecycle listeners are gone;
+    // continuing an already-playing clip must not initialize another fallback.
+    this.safariPlaybackPending?.cleanup();
+    this.safariPlayback?.cleanup();
 
     // Remove reference from video element
     delete this.video.vsc;

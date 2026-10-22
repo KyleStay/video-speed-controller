@@ -124,6 +124,12 @@ with direct `chrome.*` access.
     real fps while the video plays, snaps to a common rate, caches it on
     `controller.detectedFps`, then stops (zero steady-state cost). Frame-step
     uses `detectedFps`, falling back to the binding's configurable fps value.
+  - `safari-hls-playback.js` — bounded, same-video HLS→MP4 transitions for
+    iOS native-HLS playback above 2×. `progressive-media-source.js` resolves same-item
+    HTML alternatives and recognized Video.js/Brightcove/JW Player metadata;
+    `twitter-media-source.js` resolves X’s nearby React props. All require an
+    exact active HLS match and an explicitly supplied MP4.
+    No fetches, new permissions, polling, or source URL construction.
 - `observers/`
   - `media-observer.js` — light/comprehensive media scanning (incl. shadow DOM,
     depth-capped); `hasMediaIndicators` gate.
@@ -315,6 +321,11 @@ with direct `chrome.*` access.
   or scroll target. Native-begin events only observe presentation; they never
   create or refresh a post-entry scroll snapshot. Only an explicit native
   fullscreen request captures scrolling before invoking the browser API.
+  The only exception is a verified pending `SafariHLSPlayback` transition
+  between two supplied renditions of the same clip. It retains the owned presentation
+  and local rate authority. An intervening site source/poster write, duplicate
+  load, lost origin, document change, or disposal ends that exception. Never use
+  a generic “source is changing” flag to bypass recycled-media protection.
   A denied explicit owned-to-Apple request may restore only its same-source
   viewport, with no play/fullscreen call; newer input (including wheel), URL/root,
   source, presentation or cleanup invalidates recovery. Native fullscreen events
@@ -330,7 +341,22 @@ with direct `chrome.*` access.
   retain cross-origin boundaries. This is bounded presentation repair, not
   scroll ownership or ongoing polling.
 - **iOS player ownership**: retain the original media, source/srcObject,
-  MediaSource/MediaKeys, and tracks. A synchronous same-document portal move
+  MediaSource/MediaKeys, and tracks. The source exception is eligible iOS native-HLS fast
+  playback: a finite native-HLS clip may use the site's exact same-asset MP4
+  rendition above 2×. Reject MSE/blob, DRM, live streams, meaningful/unknown in-band
+  text tracks and alternate audio/video selections. One unnamed empty captions
+  placeholder may be dropped; MP4 cannot preserve text supplied later by HLS.
+  Keep the original node, position, paused
+  state and presentation. `load()`, pending start time, rate and any continuation
+  `play()` run in one coordinated speed-command call stack, never metadata
+  callbacks. Automatic init first joins only an already-requested Play promise;
+  a bounded next-task check validates source/document/preferences/intent before
+  issuing that command. It never starts paused media; cleanup/input/source/hidden
+  state cancels the pending observer, listeners and ten-second deadline.
+  Saved/session speeds also apply to subsequent feed clips; a failed
+  source is not retried by initialization. Site changes always win. Teardown
+  restores the original source only while still owned; Use site player retains
+  the chosen rendition without another reload. A synchronous same-document portal move
   preserves known single-video player containers when possible; an anchor and
   placeholder own restoration. `repairDOMPlacement()` yields while active.
   Caption selection changes only subtitles/captions, preserving metadata tracks.

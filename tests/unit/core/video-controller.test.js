@@ -162,6 +162,8 @@ describe('VideoController', () => {
     controller.div.flashTimer = setTimeout(() => {}, 1000);
     const flashTimer = controller.div.flashTimer;
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    const cancelPendingPlayback = vi.fn();
+    controller.safariPlaybackPending = { cleanup: cancelPendingPlayback };
 
     // Verify setup
     expect(mockVideo.vsc).toBeDefined();
@@ -174,6 +176,7 @@ describe('VideoController', () => {
     expect(mockVideo.vsc).toBe(undefined);
     expect(window.VSC.stateManager.controllers.size).toBe(0);
     expect(clearTimeoutSpy).toHaveBeenCalledWith(flashTimer);
+    expect(cancelPendingPlayback).toHaveBeenCalledOnce();
 
     clearTimeoutSpy.mockRestore();
   });
@@ -666,6 +669,27 @@ describe('VideoController', () => {
           if (!controller.disposed) {
             controller.remove();
           }
+          manager.cleanup();
+          vi.restoreAllMocks();
+        }
+      }
+    );
+
+    it.each(['emptied', 'loadstart'])(
+      'retains rate authority only through a verified same-clip rendition transition on %s',
+      async (type) => {
+        const { manager, video, controller } = await setup();
+        const ownsTransition = vi.fn(() => true);
+        controller.safariPlayback = { ownsTransition, cleanup: vi.fn() };
+        try {
+          const state = manager.getMediaRateState(video);
+          video.dispatchEvent(new Event(type));
+          expect(manager.getMediaRateState(video)).toBe(state);
+          ownsTransition.mockReturnValue(false);
+          video.dispatchEvent(new Event(type));
+          expect(manager.getMediaRateState(video)).toBeNull();
+        } finally {
+          controller.remove();
           manager.cleanup();
           vi.restoreAllMocks();
         }

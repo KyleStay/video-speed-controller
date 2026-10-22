@@ -98,6 +98,25 @@ Qorvex 0.2.14 agent port was occupied by another simulator. It does not change
 global Qorvex configuration, interact with another simulator, activate the macOS
 Simulator window, or use desktop mouse/keyboard input.
 
+## X playback above 2× — current regression fixture
+
+`TwitterPlaybackQATests` uses `/twitter-playback.html` with the public X clip
+reported by the user. The installed extension’s resolver, coordinator, rate pipeline and presentation
+code run unchanged, including the real iOS matcher. CDN playback requires the fixture's no-referrer policy.
+This is a native Safari fixture check, separate from live X or physical-device
+acceptance. It checks same-node HLS-to-MP4 switching, 4× decoded progress,
+paused playback, owned-player return, saved-speed next clips and stable scroll.
+Keep failed runs and inspect page/media errors alongside frame cadence.
+
+`HLSPlayerQATests/testPlayerRenditionSwitch` uses `/hls-players.html?provider=html`,
+`provider=videojs` or `provider=jwplayer`. The latter fixtures load real public
+publisher SDKs. Brightcove uses its published video and source metadata; JW
+uses an explicit same-clip HLS/MP4 playlist supplied by the project fixture.
+No metadata resolver or site matcher is mocked. Require a native-HLS baseline,
+matching MP4 at 4×, advancing presented frames/media time, stable scroll, same
+node, inline presentation and zero page/media errors. A configured SDK fixture
+does not imply every publisher offers MP4.
+
 ## Prepare a disposable simulator
 
 Requires Xcode with the iOS 26.2 SDK or newer, XcodeGen, npm dependencies, and an
@@ -118,7 +137,7 @@ xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.mobilesafari
 xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.Preferences
 xcrun simctl install "$STAYFAST_SIMULATOR_UDID" "build/safari/ios-simulator/Build/Products/Release-iphonesimulator/StayFast Video.app"
 mkdir -p build/safari-ios-qa test-results/safari-ios
-cp tests/safari-ios/project.yml tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift build/safari-ios-qa/
+cp tests/safari-ios/project.yml tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift tests/safari-ios/TwitterPlaybackQATests.swift tests/safari-ios/HLSPlayerQATests.swift build/safari-ios-qa/
 xcodegen generate --spec build/safari-ios-qa/project.yml
 ```
 

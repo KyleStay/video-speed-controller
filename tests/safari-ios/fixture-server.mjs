@@ -17,6 +17,11 @@ const fixture = await startFixtureServer({
   mp4Path: fileURLToPath(new URL('./sample.mp4', import.meta.url)),
   probeMp4Path: process.env.STAYFAST_RATE_PROBE_MP4,
   htmlRoutes: {
+    '/hls-players.html': await readFile(new URL('./hls-players.html', import.meta.url), 'utf8'),
+    '/twitter-playback.html': await readFile(
+      new URL('./twitter-playback.html', import.meta.url),
+      'utf8'
+    ),
     '/touch-delivery.html': await readFile(
       new URL('./touch-delivery.html', import.meta.url),
       'utf8'

@@ -33,7 +33,9 @@ Scope is supported HTML5 videos in extension-accessible frames. Closed shadow
 trees, private/unsupported embeds, previously captured native APIs and unknown
 CSS fullscreen can bypass interception. Apple's protected player UI cannot be
 modified, and iPhone Safari bars may remain. Chrome/Firefox behavior is unchanged.
-Build 13 is unreleased. The frozen r4 resources passed Chrome owned-player
+Build 13 was confirmed **Testing** in Personal Auto for two testers on
+October 21, 2026. Automatic assignment succeeded; the signed release ledger is
+`build/safari/testflight/0.11.4-build13/release-ledger.json`. The frozen r4 resources passed Chrome owned-player
 **43/43**, mobile **11/11** and basic **22/22** checks. Built-fixture checks also
 passed dynamic player ambiguity/class recovery and 44px targets at 0.75×/2×
 scaling. The native iPhone 17 Pro/iOS 26.2 simulator passed inline/site fullscreen
@@ -56,7 +58,8 @@ processes/profiles. This separate pass does not change the original suite's
 Native physical-device double-tap remains unverified; the simulator's one-touch-pair
 delivery gap is unchanged. No physical-device, all-site, audio, DRM or AirPlay
 acceptance is claimed. Final acceptance/distribution belongs to the local build 13
-release ledger and test results; no build 13 Testing status is asserted.
+release ledger and test results. The X playback change below is newer than build
+13 and has not been uploaded.
 The build 12 records below remain historical evidence for the earlier policy.
 
 ## Build 12 presentation policy and source-freeze acceptance
@@ -253,11 +256,83 @@ A rate accepted by Safari is not a guarantee that every frame can be decoded or
 presented at that speed. Apple documents choppy playback above 2× when the source's
 processing requirements exceed AVFoundation's capacity; playback may fall back
 to fewer frames. See [Apple QA1772](https://developer.apple.com/library/archive/qa/qa1772/_index.html).
+WebKit also documents native HLS entering I-frame-only playback above 2×,
+including stuttering when the stream lacks an I-frame rendition. See the
+[WebKit HLS fix description](https://github.com/WebKit/WebKit/commit/d1cf1ce59abb8c7e1a1f64efdeb4f50d8c9f83ce).
 StayFast accepts requested rates from 0.07× to 16× on Safari, matching Chrome
 and Firefox. This is a product limit; an accepted rate does not establish smooth
-decoding. Playback retains the site's original media, source, tracks, DRM session
-and audio pitch policy. StayFast avoids reassigning an unchanged native rate and
+decoding. Playback retains the site's original media, tracks, DRM session
+and audio pitch policy. The source exception below applies only to eligible native-HLS
+videos with an explicit matching MP4 alternative. StayFast avoids reassigning an unchanged native rate and
 does not fight a source-specific initialization clamp.
+
+On iPhone/iPad, a speed above 2× selects an explicitly supplied matching MP4
+rendition. Resolution supports X/Twitter React props, direct HTML `<source>`
+alternatives, Video.js/Brightcove `currentSources()` and JW Player’s current
+playlist item. Both the active HLS and chosen MP4 must belong to that exact
+media element or a verified single-video player scope. The
+original video remains in place at its current time; playing videos continue,
+paused videos stay paused, and presentation/scroll state stays intact. This also
+applies to later feed videos using a saved or session speed. Existing progressive playback, including working Facebook videos, stays on its
+current path. All browsers retain their 16× request limit.
+
+The resolvers read bounded player/source lists, validate the exact active HLS
+URL and select an explicitly supplied HTTPS MP4. X additionally validates the
+same asset identity in official CDN URLs. No global player registry is scanned. It never fetches
+post data or invents a source URL. Owned fullscreen resolves from its validated,
+connected original player scope. Blob/MSE, live, DRM, meaningful or unknown in-band
+text tracks and alternate audio/video streams are excluded. Safari’s single
+unnamed caption track with no cues is treated as an empty placeholder. That track
+does not survive MP4 selection: captions arriving later in that dormant stream
+will be unavailable until the original HLS resource is restored. Labeled,
+language-tagged or populated tracks retain HLS. An unavailable rendition keeps the
+original stream; smooth playback above 2× cannot be promised in that case.
+
+The coordinator performs one synchronous source/load/start-time/rate transition.
+It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
+selection first joins an already-requested Play promise, then checks the still-current
+source and intent in the next task before starting that synchronous transition.
+Paused media is never started by this automatic path. Pending selection is bounded
+to ten seconds and cancels on input, source/poster changes, hidden/navigation
+state or disposal. Expected source
+events retain the same custom view and rate authority; site replacement,
+intervening writes, navigation, or disposal cancels ownership. Failures restore
+only a still-owned resource and never automatically retry initialization.
+Use site player retains the chosen MP4 without another reload. Full teardown
+restores the original source only if it is still owned.
+
+The October 21 investigation reproduced the same clip’s local HLS presentation
+falling from 52.8Hz at 2× to 9.2Hz at 2.1× on iPhone 17 Pro/iOS 26.6.2; its MP4
+presented at 56.6Hz at 2.1× and 60.2Hz at 4×. That HTTP comparison had an unrelated
+injected-script error and is not a clean physical product acceptance check.
+The built-extension iPhone 17 Pro/iOS 26.2 Safari fixture then passed inline,
+paused, owned-player/return and remembered-speed-next-clip checks against the
+official CDN video. At 4× it measured 48.2–49.8Hz, correct media-time progress,
+unchanged scroll and no page/media failures; the next clip’s original Play promise
+resolved. Only the document matcher is substituted for localhost. Actual live-X
+physical-device verification remains incomplete. Raw failures, passing xcresults
+and the result record are in `test-results/twitter-choppy/verification.json`.
+This investigation predates the broader build 14 candidate. Its final source,
+verification and delivery status belong to `build/safari/testflight/0.11.4-build14/`
+and the current landing ledger; an archive alone does not establish tester availability.
+
+The broader implementation also covers publisher sites using Video.js/Brightcove
+or JW Player when their current item includes both formats, and plain HTML
+source alternatives. The official Brightcove sample for video `5842800655001`
+exposes native HLS plus a 720p MP4 in `currentSources()`. The inspected Vimeo
+`76979871` and JW `EwJonN6F` embeds expose no progressive alternative in their
+current player metadata, so StayFast leaves those streams alone.
+This is capability-based selection; every publisher does not necessarily expose
+MP4. Generic lists prefer the best supplied resolution up to 720p, then the
+smallest known higher resolution. Active Video.js ad breaks, declared DRM/SSAI/live
+metadata and pending publisher caption tracks retain their original source.
+No extra network lookup, permissions or URL construction are added. Native SDK
+fixtures use public Brightcove and JW scripts; HTML and X fixtures run the
+production resolver without a site-matcher override.
+
+References: [Video.js currentSources](https://docs.videojs.com/player#currentSources),
+[Brightcove source fields](https://apis.support.brightcove.com/playback/references/playback-api-video-fields-reference.html),
+and [JW source configuration](https://docs.jwplayer.com/players/reference/playlists).
 
 Older finite absolute preferences above 16× are lowered to 16× when loaded or
 received from storage. Safari imports apply the same normalization to remembered
