@@ -290,6 +290,7 @@ const mobileHtml = `<!doctype html>
         if (mediaStatus.textContent !== text) mediaStatus.textContent = text;
       };
       const controllerObserver = new MutationObserver(updateStatus);
+      if (window.__stayfastPrecision) window.__stayfastPrecision.onReport = updateStatus;
       controllerObserver.observe(video, { attributes: true, attributeFilter: ['playsinline', 'webkit-playsinline'] });
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
         const actions = document.createElement('div');

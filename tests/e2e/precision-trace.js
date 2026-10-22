@@ -26,6 +26,7 @@ export function installPrecisionTrace(video) {
   };
   const gestureTypes = ['pointermove', 'pointerup', 'pointercancel'];
   let boundRange;
+  let boundListener;
   const stopGesture = () => {
     for (const type of gestureTypes) {
       window.removeEventListener(type, record, true);
@@ -121,15 +122,18 @@ export function installPrecisionTrace(video) {
       active: player.scrubber.active,
       paused: video.paused,
     };
+    trace.onReport?.();
   }
   trace.bind = (range) => {
-    if (range === boundRange) {
+    const listener = video.vsc?.iosPlayer?.scrubber?.listeners[0];
+    if (!listener || (range === boundRange && listener === boundListener)) {
       return;
     }
     boundRange?.removeEventListener('pointerdown', record);
     stopGesture();
     trace.active = null;
     boundRange = range;
+    boundListener = listener;
     range.addEventListener('pointerdown', record);
   };
   window.addEventListener(
@@ -137,6 +141,9 @@ export function installPrecisionTrace(video) {
     () => {
       stopGesture();
       boundRange?.removeEventListener('pointerdown', record);
+      boundRange = null;
+      boundListener = null;
+      trace.active = null;
     },
     { once: true }
   );

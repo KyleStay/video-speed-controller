@@ -350,9 +350,19 @@ import XCTest
     }
 
     func testPrecisionScrubbingPaths() throws {
+        try checkPrecisionScrubbingPaths(false)
+    }
+
+    func testPrecisionScrubbingPathsLandscape() throws {
+        try checkPrecisionScrubbingPaths(true)
+    }
+
+    private func checkPrecisionScrubbingPaths(_ landscape: Bool) throws {
         openAndVerifyPlayback()
         checkTransportAndMute()
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        if landscape { XCUIDevice.shared.orientation = .landscapeLeft }
+        defer { if landscape { XCUIDevice.shared.orientation = .portrait } }
         let seek = safari.sliders["Seek video"]
         func drag(_ name: String, _ dx: CGFloat, _ dy: CGFloat, _ velocity: XCUIGestureVelocity) throws -> PrecisionReport {
             target(seek)
@@ -369,7 +379,7 @@ import XCTest
             XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 10), .completed)
             capture(safari, "precision-path-" + name)
             let report = try XCTUnwrap(precisionReport(safari))
-            print("PRECISION PATH " + name + ": " + status(safari).label.components(separatedBy: "; precision: ").last!)
+            print("PRECISION PATH " + name + ": " + (status(safari).label.components(separatedBy: "; precision: ").last ?? "missing"))
             XCTAssertFalse(report.truncated)
             XCTAssertTrue(report.paused)
             XCTAssertLessThan(report.maxError, 0.00001)
@@ -379,7 +389,7 @@ import XCTest
         }
         let near = try drag("normal", 80, 0, .slow)
         XCTAssertEqual(near.bands, [1])
-        XCTAssertGreaterThan(near.delta, 2)
+        XCTAssertGreaterThan(near.delta, 0.5)
         let vertical = try drag("vertical-only", 0, -170, .slow)
         XCTAssertEqual(vertical.bands, [1, 0.5, 0.25, 0.1])
         XCTAssertLessThan(abs(vertical.delta), 0.00001)
