@@ -116,7 +116,7 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
         document.body.append(video);
         const controller = new window.VSC.VideoController(video, null, config, actionHandler);
         videos.push(video);
-        if (!controller.initMetadataHandler) throw new Error('metadata must be pending');
+        if (!controller.initMetadataHandler) {throw new Error('metadata must be pending');}
         return video;
       };
       try {
