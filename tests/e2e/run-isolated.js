@@ -382,7 +382,10 @@ for (const name of names) {
           }
           await close();
           if (inventoryError) {
-            throw inventoryError;
+            const remaining = await processTree(info.pid, profile, owned.executable);
+            if (remaining.size) {
+              throw inventoryError;
+            }
           }
         };
         const page = (await browser.pages())[0] || (await browser.newPage());

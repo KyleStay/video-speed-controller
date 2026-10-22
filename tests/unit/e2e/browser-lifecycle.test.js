@@ -310,6 +310,30 @@ describe('isolated native inventory failure', () => {
     expect(terminate).not.toHaveBeenCalled();
   });
 
+  it('accepts a fresh empty process tree after a helper exits during saved browser close', async () => {
+    const source = readFileSync(resolve('tests/e2e/run-isolated.js'), 'utf8');
+    const start = source.indexOf('        browser.close = async () => {');
+    const end = source.indexOf('        const page = ', start);
+    const browser = {},
+      close = vi.fn(async () => {});
+    const processTree = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('helper exited during inspection'))
+      .mockResolvedValueOnce(new Map());
+    const context = {
+      browser,
+      close,
+      info: { pid: 123 },
+      profile: '/tmp/owned-fixture',
+      owned: { executable: '/owned/Chrome', identities: new Map() },
+      processTree,
+    };
+    vm.runInNewContext(source.slice(start, end), context);
+    await expect(browser.close()).resolves.toBeUndefined();
+    expect(close).toHaveBeenCalledOnce();
+    expect(processTree).toHaveBeenCalledTimes(2);
+  });
+
   it('still invokes the saved browser close when its pre-close inventory fails', async () => {
     const source = readFileSync(resolve('tests/e2e/run-isolated.js'), 'utf8');
     const start = source.indexOf('        browser.close = async () => {');
