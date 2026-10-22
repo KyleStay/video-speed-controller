@@ -84,10 +84,36 @@ class IOSPlayerScrubber {
       this.owner.ui === this.ui &&
       this.owner.video === this.video &&
       this.owner.session === this.session &&
+      this.matchesSource(this.source) &&
       this.ui.host.isConnected &&
       this.range.isConnected &&
       this.video.isConnected
     );
+  }
+
+  captureSource() {
+    try {
+      return {
+        src: this.video.getAttribute('src'),
+        currentSrc: this.video.currentSrc,
+        srcObject: this.video.srcObject,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  matchesSource(source) {
+    try {
+      return Boolean(
+        source &&
+        this.video.getAttribute('src') === source.src &&
+        this.video.currentSrc === source.currentSrc &&
+        this.video.srcObject === source.srcObject
+      );
+    } catch {
+      return false;
+    }
   }
 
   consume(event) {
@@ -108,6 +134,9 @@ class IOSPlayerScrubber {
     ) {
       return;
     }
+    // Native loadstart/emptied notifications are queued. A page-wrapped seek or
+    // pause can replace the source synchronously before those events arrive.
+    this.source = this.captureSource();
     this.session = this.owner.session;
     const bounds = this.bounds();
     const rect = this.geometry();

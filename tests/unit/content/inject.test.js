@@ -1041,6 +1041,7 @@ describe('Inject', () => {
     const handler = new window.VSC.ActionHandler(config, null);
     const paused = createMockVideo({ currentTime: 10, paused: true });
     const playing = createMockVideo({ currentTime: 10, paused: false });
+    mockDOM.container.append(paused, playing);
     const audio = document.createElement('audio');
     const rateWrite = vi.fn();
     Object.defineProperty(paused, 'playbackRate', { get: () => 3, set: rateWrite });
@@ -1083,6 +1084,57 @@ describe('Inject', () => {
       extension.config = previousConfig;
       document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', onResult);
       delete paused.vsc;
+    }
+  });
+
+  it('popup frame status and dispatch require a current seekable paused video', () => {
+    extension = window.VSC_controller;
+    const previousHandler = extension.actionHandler;
+    const stepFrame = vi.fn();
+    const video = createMockVideo({ currentTime: 10, paused: true });
+    video.duration = NaN;
+    mockDOM.container.append(video);
+    const getAll = vi
+      .spyOn(window.VSC.stateManager, 'getAllMediaElements')
+      .mockReturnValue([video]);
+    extension.actionHandler = { stepFrame };
+    const results = [];
+    const onResult = (event) => results.push(event.detail);
+    document.documentElement.addEventListener('VSC_MESSAGE_RESULT', onResult);
+    const command = () =>
+      document.documentElement.dispatchEvent(
+        new CustomEvent('VSC_MESSAGE', {
+          detail: { type: 'VSC_STEP_FRAME', payload: { direction: 1 }, requestId: 'bounds-test' },
+        })
+      );
+    try {
+      for (const duration of [NaN, Infinity, 0]) {
+        video.duration = duration;
+        expect(extension.getMediaStatus([video]).pausedVideoCount).toBe(0);
+        command();
+        expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+      }
+      expect(stepFrame).not.toHaveBeenCalled();
+      Object.defineProperty(video, 'seekable', {
+        configurable: true,
+        value: { length: 1, start: () => 2, end: () => 30 },
+      });
+      expect(extension.getMediaStatus([video]).pausedVideoCount).toBe(1);
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      video.paused = false;
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+      video.paused = true;
+      video.remove();
+      command();
+      expect(stepFrame).toHaveBeenCalledOnce();
+      expect(results.at(-1)).toMatchObject({ ok: false, pausedVideoCount: 0 });
+    } finally {
+      getAll.mockRestore();
+      extension.actionHandler = previousHandler;
+      document.documentElement.removeEventListener('VSC_MESSAGE_RESULT', onResult);
     }
   });
 

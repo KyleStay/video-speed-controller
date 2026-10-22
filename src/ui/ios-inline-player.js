@@ -378,13 +378,18 @@ class IOSInlinePlayer {
       return;
     }
     const generation = this.generation;
+    const source = this.scrubber.captureSource();
     if (this.video.ended) {
       const bounds = this.bounds();
       if (bounds) {
         this.seekTo(bounds[0]);
       }
     }
-    if (generation !== this.generation || !this.available()) {
+    if (
+      generation !== this.generation ||
+      !this.available() ||
+      !this.scrubber.matchesSource(source)
+    ) {
       return;
     }
     this.error('');

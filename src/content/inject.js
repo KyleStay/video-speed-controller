@@ -858,13 +858,8 @@ class VideoSpeedExtension {
 
     return {
       mediaCount: videos.length,
-      pausedVideoCount: videos.filter((video) => {
-        try {
-          return video.tagName === 'VIDEO' && video.paused === true;
-        } catch {
-          return false;
-        }
-      }).length,
+      pausedVideoCount: videos.filter((video) => window.VSC.ControlsManager.canStepFrame(video))
+        .length,
       currentSpeed: speeds.length === 1 ? speeds[0] : null,
       speeds,
     };
@@ -953,13 +948,19 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
           }
           const action = direction < 0 ? 'rewindFrame' : 'advanceFrame';
           const fallbackFps = extension.config?.getKeyBinding(action);
+          let stepped = false;
           videos.forEach((video) => {
             try {
+              if (!window.VSC.ControlsManager.canStepFrame(video)) {
+                return;
+              }
               extension.actionHandler.stepFrame(video, direction, fallbackFps);
+              stepped = true;
             } catch {
               // One inaccessible page-owned media element must not block its peers.
             }
           });
+          handled = stepped;
           break;
         }
 

@@ -1,12 +1,35 @@
 # StayFast Video — iOS TestFlight
 
-Release packet updated October 21, 2026. Target: iPhone and iPad on iOS/iPadOS
+Release packet updated October 22, 2026. Target: iPhone and iPad on iOS/iPadOS
 18.4+. This packet distinguishes local artifacts, Apple upload/processing, and
 tester availability; a successful build alone does not complete the latter two.
 
-## Current release preparation — October 21, 2026
+## Current release preparation — October 22, 2026
 
-**0.11.4 (14)** is the current native-HLS playback candidate. It adds matching
+**0.11.4 (17)** is the inline-player candidate. It places the thin inline
+timeline at the video's bottom and shares distance-sensitive precision seeking
+with fullscreen. Moving away selects half, quarter or fine sensitivity; selected
+fractional time and mode stay visible. Recognized X picture taps reveal controls
+without changing playback, while explicit fullscreen opens StayFast. Paused-video
+frame buttons are available in expanded controls, the popup and fullscreen More.
+
+Native iPhone 17 Pro/iOS 26.2 simulator checks pass for inline precision and
+frame stepping in portrait and landscape, plus the fullscreen bottom timeline
+and More controls. Controlled Chrome X routing passes; authenticated live X
+and physical-device behavior remain separate acceptance checks. Reproduce the
+browser matrix with `npm run test:e2e:player-controls -- all` and the native
+cases in `tests/safari-ios/OwnedPlayerQATests.swift`.
+Archive/export/upload/processing and automatic Personal Auto assignment must be
+verified in the build 17 local release ledger before claiming Testing.
+
+**0.11.4 (16)** was confirmed **Testing** for both Personal Auto testers on
+October 22. Automatic assignment is enabled for Xcode uploads. It corrected
+diagonal fullscreen precision seeking and final-release coordinate handling;
+build 17 extends the shared gesture to the inline timeline.
+
+## Earlier native-HLS and takeover builds
+
+**0.11.4 (14)** introduced the native-HLS playback candidate. It adds matching
 MP4 selection above 2× for X/Twitter, HTML source alternatives and supported
 Video.js/Brightcove/JW Player metadata. It preserves position, paused state and
 inline/owned presentation, waits for a new clip’s initial Play promise before

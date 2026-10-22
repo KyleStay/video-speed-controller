@@ -676,6 +676,29 @@ describe('owned iOS inline transport', () => {
     expect(player.scrubber.timer).toBeNull();
   });
 
+  it.each(['src', 'srcObject'])(
+    'does not resume a %s replacement before queued native source events arrive',
+    (kind) => {
+      player.setOwned(true);
+      paused = false;
+      scrubPointer('pointerdown');
+      scrubPointer('pointermove', 100);
+      actionHandler.seek.mockImplementation((target, delta) => {
+        target.currentTime += delta;
+        if (kind === 'src') {
+          target.src = 'https://example.test/next.mp4';
+        } else {
+          Object.defineProperty(target, 'srcObject', { configurable: true, value: {} });
+        }
+      });
+      player.scrubber.finish(null);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(player.scrubber.active).toBe(false);
+      expect(player.scrubber.gestureListeners).toHaveLength(0);
+      expect(player.scrubber.timer).toBeNull();
+    }
+  );
+
   it.each(['loadstart', 'handback', 'fullscreen', 'cleanup'])(
     'abandons pending inline scrubbing after %s without a stale seek or resume',
     (reason) => {
@@ -707,6 +730,16 @@ describe('owned iOS inline transport', () => {
     player.setOwned(true);
     ended = true;
     actionHandler.seek.mockImplementation(() => video.dispatchEvent(new Event('loadstart')));
+    player.play();
+    expect(actionHandler.seek).toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+  });
+  it('does not play a replay source replaced before loadstart is dispatched', () => {
+    player.setOwned(true);
+    ended = true;
+    actionHandler.seek.mockImplementation(() => {
+      video.src = 'https://example.test/next.mp4';
+    });
     player.play();
     expect(actionHandler.seek).toHaveBeenCalled();
     expect(video.play).not.toHaveBeenCalled();
