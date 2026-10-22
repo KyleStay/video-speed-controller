@@ -5,9 +5,9 @@ native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 P
 simulator running iOS 26.2. It does not establish compatibility with every OS,
 physical iPhone/iPad, or live video site.
 
-## Build 13 takeover acceptance — r4
+## Build 13 takeover acceptance — r4 (historical)
 
-The unreleased build 13 candidate owns iOS inline controls by default and routes
+Build 13, now Testing, owns iOS inline controls by default and routes
 supported synchronous video/container fullscreen API requests during the active
 trusted click/keydown into StayFast, once per event. Test
 plain video and recognized single-video YouTube/Video.js/Plyr/JW/X fixtures;

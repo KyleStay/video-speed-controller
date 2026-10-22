@@ -60,7 +60,9 @@
   </div>
   <p id="state" role="status">HLS player: loading</p>
   <script>
-    const provider = new URLSearchParams(location.search).get('provider') || 'html';
+    const params = new URLSearchParams(location.search);
+    const provider = params.get('provider') || 'html';
+    const ownedMode = params.has('owned');
     const HLS =
       'https://video.twimg.com/amplify_video/2041611432752742400/pl/OJFA7eAdt1CV9YgM.m3u8?tag=21&v=87a';
     const MP4 =
@@ -75,7 +77,13 @@
       commandTime,
       sourceBefore,
       phase = 'loading',
-      cadence;
+      cadence,
+      diagnostic,
+      publisher,
+      declaredTracks,
+      retainedTrack,
+      retainedMode,
+      retainedCues;
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     addEventListener('error', (e) => {
       errors.push(e.message);
@@ -88,6 +96,7 @@
     function draw() {
       const report = {
         provider,
+        ownedMode,
         phase,
         sameNode: video === original,
         controlled: !!video?.vsc,
@@ -103,9 +112,30 @@
         native: !!video?.webkitDisplayingFullscreen,
         owned: !!video?.vsc?.iosPlayer?.active,
         cadence,
+        diagnostic,
+        programmaticTrackPreserved:
+          !retainedTrack ||
+          (publisher?.proxyTracks_?.media?.track_ === retainedTrack &&
+            Array.from(video.textTracks).includes(retainedTrack) &&
+            retainedTrack.mode === retainedMode &&
+            retainedCues.every((c) => Array.from(retainedTrack.cues).includes(c))),
+        metadataPreserved: !declaredTracks || publisher?.mediainfo?.text_tracks === declaredTracks,
         errors,
       };
-      status.textContent = 'HLS player: ' + JSON.stringify(report);
+      const text = 'HLS player: ' + JSON.stringify(report);
+      status.textContent = text;
+      const player = video?.vsc?.iosPlayer;
+      if (player?.active) {
+        let copy = player.ui.shadow.querySelector('#hls-fixture-state');
+        if (!copy) {
+          copy = document.createElement('p');
+          copy.id = 'hls-fixture-state';
+          copy.style.cssText =
+            'position:absolute;top:55px;left:8px;right:8px;font-size:10px;background:white;color:black;z-index:100;max-height:125px;overflow:auto';
+          player.ui.shadow.querySelector('dialog').append(copy);
+        }
+        copy.textContent = text;
+      }
     }
     function script(src) {
       return new Promise((resolve, reject) => {
@@ -178,6 +208,7 @@
         ready();
       });
       original = video;
+      video.loop = true;
       video.muted = true;
       video.playsInline = true;
       video.addEventListener('error', () => {
@@ -225,6 +256,58 @@
         await frame();
         sourceBefore = video.currentSrc;
         candidate = window.VSC.ProgressiveMediaSource.findCandidate(video);
+        const scope = video.closest('.video-js,.jwplayer');
+        const sdk = scope && window.videojs?.getPlayer?.(scope.id);
+        publisher = sdk;
+        declaredTracks = sdk?.mediainfo?.text_tracks;
+        retainedTrack = sdk?.proxyTracks_?.media?.track_;
+        if (retainedTrack) {
+          retainedTrack.addCue(new VTTCue(0, video.duration, 'StayFast fixture metadata'));
+          retainedMode = retainedTrack.mode;
+          retainedCues = Array.from(retainedTrack.cues);
+        }
+        const jw = scope && typeof window.jwplayer === 'function' && window.jwplayer(scope.id);
+        const item = jw?.getPlaylistItem?.();
+        diagnostic = {
+          jw: item && {
+            sameContainer: jw.getContainer() === scope,
+            keys: Object.keys(item),
+            tracks: item.tracks,
+            protected: ['drm', 'ssai', 'live', 'streamtype'].map((k) => [k, !!item[k]]),
+            sources: item.sources?.map((s) => ({
+              type: s.type,
+              match: s.file === video.currentSrc,
+              keys: Object.keys(s),
+              scheme: new URL(s.file, location.href).protocol,
+            })),
+          },
+          direct: video.src === video.currentSrc,
+          sourceCount: video.children.length,
+          scope: scope?.id,
+          sdk: !!sdk,
+          sameElement: sdk?.el?.() === scope,
+          ads: [sdk?.ads?.isInAdMode?.(), sdk?.ads?.inAdBreak?.()],
+          tracks: Array.from(video.textTracks, (t) => ({
+            kind: t.kind,
+            label: t.label,
+            language: t.language,
+            external: Array.from(video.querySelectorAll('track')).some((el) => el.track === t),
+            dispatch: t.inBandMetadataTrackDispatchType,
+          })),
+          sdkTracks: sdk?.mediainfo?.text_tracks?.map((t) => ({
+            kind: t.kind,
+            label: t.label,
+            external: !!t.src,
+          })),
+          sources: sdk?.currentSources?.()?.map((s) => ({
+            type: s.type,
+            match: s.src === video.currentSrc,
+            scheme: new URL(s.src, location.href).protocol,
+            hls: /m3u8/.test(s.src),
+            mp4: /mp4/.test(s.src),
+            keys: Object.keys(s),
+          })),
+        };
         scrollTo(0, 440);
         baseline = [scrollX, scrollY];
         phase = 'prepared';
@@ -235,8 +318,10 @@
         draw();
       }
     };
+    document.addEventListener('click', () => setTimeout(draw, 0), true);
     document.querySelector('#speed').onclick = async () => {
       try {
+        if (ownedMode) video.vsc.iosPlayer.open();
         commandTime = video.currentTime;
         video.vsc.actionHandler.setSpeed(video, 4, 'user');
         await frame();

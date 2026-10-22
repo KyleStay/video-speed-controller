@@ -181,6 +181,21 @@ describe('TwitterMediaSource', () => {
     expect(window.VSC.TwitterMediaSource.findCandidate(video, parent)).toBeNull();
   });
 
+  it('retains React metadata inside a portaled player container', () => {
+    metadata({ props: pair() });
+    const origin = document.createElement('div');
+    document.body.append(origin);
+    const anchor = document.createComment('origin');
+    origin.append(anchor);
+    const host = document.createElement('vsc-ios-player');
+    document.body.append(host);
+    host.append(parent);
+    video.vsc = { iosPlayer: { video, active: true, originParent: origin, anchor } };
+    expect(window.VSC.TwitterMediaSource.findCandidate(video, origin)?.progressiveUrl).toBe(
+      progressiveUrl
+    );
+  });
+
   it('does not use a stale or unrelated portal origin as metadata authority', () => {
     metadata({ props: pair() });
     const anchor = document.createComment('origin');

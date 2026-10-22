@@ -344,7 +344,16 @@ with direct `chrome.*` access.
   MediaSource/MediaKeys, and tracks. The source exception is eligible iOS native-HLS fast
   playback: a finite native-HLS clip may use the site's exact same-asset MP4
   rendition above 2×. Reject MSE/blob, DRM, live streams, meaningful/unknown in-band
-  text tracks and alternate audio/video selections. One unnamed empty captions
+  text tracks and alternate audio/video selections. SDK capability vetoes apply
+  before every source route, including HTML children. JW `allSources` belongs to
+  the current item; do not combine arrays or scan other items. Whole-player and
+  video-only portals require bounded searches of retained and validated original
+  scopes. External SDK metadata remains separate. Only Brightcove’s exact existing
+  same-player `proxyTracks_.media.track_` identity may exempt its JavaScript-created
+  metadata track; require current native membership, metadata kind, media-cues label
+  and empty native dispatch type. Never call a track-creating SDK getter or trust
+  a label alone. Revalidate immediately before load and verify native track/cue
+  identity after switching. One unnamed empty captions
   placeholder may be dropped; MP4 cannot preserve text supplied later by HLS.
   Keep the original node, position, paused
   state and presentation. `load()`, pending start time, rate and any continuation

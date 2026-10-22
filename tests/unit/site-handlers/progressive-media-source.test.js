@@ -161,6 +161,29 @@ describe('same-item progressive media source resolution', () => {
     player.mediainfo = { text_tracks: [{ kind: 'captions', srclang: 'en' }] };
     expect(find()).toBeNull();
   });
+  it.each(['videojs', 'jwplayer'])(
+    'retains explicitly external %s metadata without treating it as in-band captions',
+    (provider) => {
+      const tracks = [
+        { kind: 'metadata', label: 'thumbnails', src: 'https://files.example.test/thumbnails.vtt' },
+      ];
+      if (provider === 'videojs') {
+        videoJS().mediainfo = { text_tracks: tracks };
+      } else {
+        jw().item.tracks = tracks;
+      }
+      expect(find()?.provider).toBe(provider);
+      expect(tracks[0].src).toBe('https://files.example.test/thumbnails.vtt');
+    }
+  );
+  it.each([
+    { kind: 'metadata' },
+    { kind: 'metadata', src: ['javascript', 'bad'].join(':') },
+    { kind: 'captions', src: 'https://files.example.test/captions.vtt' },
+  ])('keeps unknown or caption SDK tracks (%j)', (track) => {
+    videoJS().mediainfo = { text_tracks: [track] };
+    expect(find()).toBeNull();
+  });
   it.each(['drm', 'key_systems', 'ssai', 'live'])('keeps %s source metadata unchanged', (key) => {
     const sources = pair();
     sources[0][key] = {};
@@ -252,5 +275,74 @@ describe('same-item progressive media source resolution', () => {
     expect(find(scope)?.provider).toBe('videojs');
     anchor.remove();
     expect(find(scope)).toBeNull();
+  });
+  it('resolves the retained whole Video.js container after owned-player entry', () => {
+    videoJS();
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    parent.append(scope);
+    const anchor = document.createComment('origin');
+    parent.append(anchor);
+    const portal = document.createElement('div');
+    document.body.append(portal);
+    portal.append(scope);
+    video.vsc = { iosPlayer: { active: true, video, originParent: parent, anchor } };
+    expect(find(parent)?.provider).toBe('videojs');
+    anchor.remove();
+    expect(find(parent)).toBeNull();
+  });
+  it.each(['ad', 'captions', 'drm', 'source-drm', 'jw-tracks', 'jw-ssai'])(
+    'does not bypass %s publisher restrictions through retained HTML sources',
+    (restriction) => {
+      html();
+      if (restriction.startsWith('jw-')) {
+        const { item } = jw();
+        Object.assign(item, restriction === 'jw-tracks' ? { tracks: [{}] } : { ssai: {} });
+      } else {
+        const player = videoJS();
+        if (restriction === 'ad') {
+          player.ads = { isInAdMode: () => true };
+        }
+        if (restriction === 'captions') {
+          player.mediainfo = { text_tracks: [{}] };
+        }
+        if (restriction === 'drm') {
+          player.mediainfo = { drm: {} };
+        }
+        if (restriction === 'source-drm') {
+          player.currentSources.mockReturnValue([{ ...pair()[0], drm: {} }, pair()[1]]);
+        }
+      }
+      expect(find()).toBeNull();
+    }
+  );
+  it('identifies only the existing same-player programmatic metadata proxy track', () => {
+    const player = videoJS();
+    const track = { kind: 'metadata', label: 'media-cues', inBandMetadataTrackDispatchType: '' };
+    Object.defineProperty(video, 'textTracks', { configurable: true, value: [track] });
+    const proxy = { player_: player, type_: 'media', track_: track };
+    player.proxyTracks_ = { media: proxy };
+    expect(find()?.persistentMetadataTrack).toBe(track);
+    proxy.player_ = {};
+    expect(find()?.persistentMetadataTrack).toBeUndefined();
+    proxy.player_ = player;
+    track.inBandMetadataTrackDispatchType = 'com.apple.metadata';
+    expect(find()?.persistentMetadataTrack).toBeUndefined();
+    track.inBandMetadataTrackDispatchType = '';
+    Object.defineProperty(proxy, 'track_', {
+      get: () => {
+        throw Error('getter');
+      },
+    });
+    expect(find()?.persistentMetadataTrack).toBeUndefined();
+  });
+  it('uses JW allSources for the current item after sources is normalized to HLS only', () => {
+    const { item } = jw([pair()[0]]);
+    item.allSources = pair().map(({ src: file, ...rest }) => ({ file, ...rest }));
+    expect(find()?.progressiveUrl).toBe(MP4);
+    item.allSources[0].file += '&other=1';
+    expect(find()).toBeNull();
+    item.allSources = Array(33).fill({ file: MP4, type: 'mp4' });
+    expect(find()).toBeNull();
   });
 });

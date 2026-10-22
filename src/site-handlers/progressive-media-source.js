@@ -21,6 +21,37 @@ window.VSC = window.VSC || {};
     );
   }
 
+  function protectedTracks(tracks, doc) {
+    if (tracks === null || tracks === undefined) {
+      return false;
+    }
+    if (!Array.isArray(tracks) || tracks.length > 16) {
+      return true;
+    }
+    for (let index = 0; index < tracks.length; index++) {
+      const track = own(tracks, String(index));
+      // External SDK metadata (e.g. thumbnail VTTs) remains on the same player.
+      // Caption and unknown declarations may describe not-yet-loaded in-band data.
+      if (own(track, 'kind') !== 'metadata') {
+        return true;
+      }
+      const src = own(track, 'src') || own(track, 'file');
+      if (typeof src !== 'string' || src.length > 4096) {
+        return true;
+      }
+      const remote = new URL(src, doc.baseURI);
+      if (
+        !['https:', 'http:'].includes(remote.protocol) ||
+        remote.username ||
+        remote.password ||
+        remote.hash
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function alternatives(sources, originalUrl, doc, provider) {
     if (!Array.isArray(sources) || sources.length > 32) {
       return null;
@@ -104,10 +135,10 @@ window.VSC = window.VSC || {};
         const doc = video.ownerDocument;
         const originalUrl = video.currentSrc || video.src;
         const current = url(originalUrl, doc);
-        let scope = origin(video, originParent);
+        const originalScope = origin(video, originParent);
         if (
           !current ||
-          !scope ||
+          !originalScope ||
           video.children.length > 32 ||
           (video.hasAttribute('src')
             ? video.src !== originalUrl
@@ -116,6 +147,97 @@ window.VSC = window.VSC || {};
               ))
         ) {
           return null;
+        }
+        const view = doc.defaultView;
+        let publisherCandidate;
+        const seen = new Set();
+        // Whole-player portals retain metadata beside the video; video-only
+        // portals retain it at the validated restoration anchor. Inspect both.
+        const roots = [video.parentElement, originalScope];
+        for (const root of roots) {
+          let scope = root;
+          for (let hops = 0; scope && hops < 12; hops++, scope = scope.parentElement) {
+            if (seen.has(scope)) {
+              continue;
+            }
+            seen.add(scope);
+            if (
+              !scope.id ||
+              (!scope.classList.contains('video-js') && !scope.classList.contains('jwplayer'))
+            ) {
+              continue;
+            }
+            if (!singleMedia(scope, video, originParent)) {
+              return null;
+            }
+            let sources;
+            let provider;
+            let persistentMetadataTrack;
+            if (scope.classList.contains('video-js')) {
+              const player = view.videojs?.getPlayer?.(scope.id);
+              if (
+                player?.el?.() !== scope ||
+                player.ads?.isInAdMode?.() ||
+                player.ads?.inAdBreak?.()
+              ) {
+                return null;
+              }
+              const info = own(player, 'mediainfo');
+              if (protectedItem(info) || protectedTracks(own(info, 'text_tracks'), doc)) {
+                return null;
+              }
+              sources = player.currentSources?.();
+              provider = 'videojs';
+              const proxy = own(own(player, 'proxyTracks_'), 'media');
+              const track = own(proxy, 'track_');
+              if (
+                own(proxy, 'player_') === player &&
+                own(proxy, 'type_') === 'media' &&
+                track?.kind === 'metadata' &&
+                track.label === 'media-cues' &&
+                track.inBandMetadataTrackDispatchType === '' &&
+                video.textTracks?.length <= 16 &&
+                Array.from(video.textTracks).includes(track)
+              ) {
+                persistentMetadataTrack = track;
+              }
+            } else {
+              const player = typeof view.jwplayer === 'function' && view.jwplayer(scope.id);
+              if (player?.getContainer?.() !== scope) {
+                return null;
+              }
+              const item = player.getPlaylistItem?.();
+              if (
+                protectedItem(item) ||
+                own(item, 'streamtype') === 'live' ||
+                protectedTracks(own(item, 'tracks'), doc)
+              ) {
+                return null;
+              }
+              // JW normalizes sources to the active format; allSources retains
+              // the configured alternatives for this same current item.
+              sources = own(item, 'allSources') || own(item, 'sources');
+              provider = 'jwplayer';
+            }
+            // Publisher restrictions apply to every resolution route, including
+            // HTML children retained by the SDK. Never bypass a protected item.
+            if (!Array.isArray(sources) || sources.length > 32) {
+              return null;
+            }
+            for (let index = 0; index < sources.length; index++) {
+              if (protectedItem(own(sources, String(index)))) {
+                return null;
+              }
+            }
+            publisherCandidate = alternatives(sources, originalUrl, doc, provider);
+            if (publisherCandidate) {
+              return persistentMetadataTrack
+                ? { ...publisherCandidate, persistentMetadataTrack }
+                : publisherCandidate;
+            }
+            // The nearest recognized player is the only publisher authority.
+            return null;
+          }
         }
         if (current.hostname === 'video.twimg.com') {
           const twitter = window.VSC.TwitterMediaSource?.findCandidate(video, originParent);
@@ -140,55 +262,6 @@ window.VSC = window.VSC || {};
           const html = alternatives(sources, originalUrl, doc, 'html');
           if (html) {
             return html;
-          }
-        }
-        const view = doc.defaultView;
-        for (let hops = 0; scope && hops < 12; hops++, scope = scope.parentElement) {
-          if (
-            !scope.id ||
-            (!scope.classList.contains('video-js') && !scope.classList.contains('jwplayer')) ||
-            !singleMedia(scope, video, originParent)
-          ) {
-            continue;
-          }
-          if (
-            scope.classList.contains('video-js') &&
-            typeof view.videojs?.getPlayer === 'function'
-          ) {
-            const player = view.videojs.getPlayer(scope.id);
-            if (
-              player?.el?.() !== scope ||
-              player.ads?.isInAdMode?.() ||
-              player.ads?.inAdBreak?.()
-            ) {
-              continue;
-            }
-            const info = own(player, 'mediainfo');
-            if (protectedItem(info) || own(info, 'text_tracks')?.length) {
-              continue;
-            }
-            const candidate = alternatives(player.currentSources?.(), originalUrl, doc, 'videojs');
-            if (candidate) {
-              return candidate;
-            }
-          }
-          if (scope.classList.contains('jwplayer') && typeof view.jwplayer === 'function') {
-            const player = view.jwplayer(scope.id);
-            if (player?.getContainer?.() !== scope) {
-              continue;
-            }
-            const item = player.getPlaylistItem?.();
-            if (
-              protectedItem(item) ||
-              own(item, 'streamtype') === 'live' ||
-              own(item, 'tracks')?.length
-            ) {
-              continue;
-            }
-            const candidate = alternatives(own(item, 'sources'), originalUrl, doc, 'jwplayer');
-            if (candidate) {
-              return candidate;
-            }
           }
         }
       } catch {

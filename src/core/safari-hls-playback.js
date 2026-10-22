@@ -165,13 +165,27 @@ window.VSC = window.VSC || {};
     ) {
       return false;
     }
+    return true;
+  }
+
+  function eligibleTracks(video, candidate) {
+    const persistent = candidate?.provider === 'videojs' ? candidate.persistentMetadataTrack : null;
     const tracks = video.textTracks;
     if (tracks) {
       if (tracks.length > 16) {
         return false;
       }
       const externalTracks = new Set(Array.from(video.querySelectorAll('track'), (el) => el.track));
-      const inBand = Array.from(tracks).filter((track) => !externalTracks.has(track));
+      const inBand = Array.from(tracks).filter(
+        (track) =>
+          !externalTracks.has(track) &&
+          !(
+            track === persistent &&
+            track.kind === 'metadata' &&
+            track.label === 'media-cues' &&
+            track.inBandMetadataTrackDispatchType === ''
+          )
+      );
       if (
         inBand.length > 1 ||
         inBand.some(
@@ -235,7 +249,8 @@ window.VSC = window.VSC || {};
     ) {
       return null;
     }
-    return candidate?.originalUrl === (controller.video.currentSrc || controller.video.src)
+    return candidate?.originalUrl === (controller.video.currentSrc || controller.video.src) &&
+      eligibleTracks(controller.video, candidate)
       ? candidate
       : null;
   }

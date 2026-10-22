@@ -161,59 +161,66 @@ window.VSC = window.VSC || {};
           }
           // The owned player portals the same media away from X's React tree.
           // Its connected restoration anchor identifies the original scope.
-          ancestor = originParent;
         }
-        for (let hops = 0; ancestor && hops < 12; hops++, ancestor = ancestor.parentElement) {
-          const keys = Object.getOwnPropertyNames(ancestor);
-          if (keys.length > 64) {
-            continue;
-          }
-          for (const key of keys) {
-            if (!key.startsWith('__reactProps$')) {
+        const scopes = new Set();
+        for (const root of [ancestor, originParent]) {
+          ancestor = root;
+          for (let hops = 0; ancestor && hops < 12; hops++, ancestor = ancestor.parentElement) {
+            if (scopes.has(ancestor)) {
               continue;
             }
-            const stack = [{ value: ownValue(ancestor, key), depth: 0 }];
-            while (stack.length && visits < 128) {
-              const { value, depth, variants } = stack.pop();
-              if (!visit(value)) {
-                continue;
-              }
-              if (variants && Array.isArray(value)) {
-                // The active HLS and chosen MP4 must belong to this same array.
-                const progressiveUrl =
-                  depth < 6 && variantCandidate(value, originalUrl, original, visit);
-                if (progressiveUrl) {
-                  return { originalUrl, progressiveUrl, mediaId: original.id };
-                }
-                continue;
-              }
-              if (ownValue(value, 'src') === originalUrl) {
-                const progressiveUrl = ownValue(value, 'downloadUrl');
-                const progressive = asset(progressiveUrl, 'mp4');
-                if (progressive?.type === original.type && progressive.id === original.id) {
-                  return { originalUrl, progressiveUrl, mediaId: original.id };
-                }
-              }
-              if (depth >= 6) {
-                continue;
-              }
-              if (Array.isArray(value)) {
-                const length = Math.min(ownValue(value, 'length') || 0, 8);
-                for (let index = length - 1; index >= 0; index--) {
-                  stack.push({ value: ownValue(value, String(index)), depth: depth + 1 });
-                }
-              } else {
-                for (let index = CHILD_KEYS.length - 1; index >= 0; index--) {
-                  stack.push({
-                    value: ownValue(value, CHILD_KEYS[index]),
-                    depth: depth + 1,
-                    variants: CHILD_KEYS[index] === 'variants',
-                  });
-                }
-              }
+            scopes.add(ancestor);
+            const keys = Object.getOwnPropertyNames(ancestor);
+            if (keys.length > 64) {
+              continue;
             }
-            if (visits >= 128) {
-              return null;
+            for (const key of keys) {
+              if (!key.startsWith('__reactProps$')) {
+                continue;
+              }
+              const stack = [{ value: ownValue(ancestor, key), depth: 0 }];
+              while (stack.length && visits < 128) {
+                const { value, depth, variants } = stack.pop();
+                if (!visit(value)) {
+                  continue;
+                }
+                if (variants && Array.isArray(value)) {
+                  // The active HLS and chosen MP4 must belong to this same array.
+                  const progressiveUrl =
+                    depth < 6 && variantCandidate(value, originalUrl, original, visit);
+                  if (progressiveUrl) {
+                    return { originalUrl, progressiveUrl, mediaId: original.id };
+                  }
+                  continue;
+                }
+                if (ownValue(value, 'src') === originalUrl) {
+                  const progressiveUrl = ownValue(value, 'downloadUrl');
+                  const progressive = asset(progressiveUrl, 'mp4');
+                  if (progressive?.type === original.type && progressive.id === original.id) {
+                    return { originalUrl, progressiveUrl, mediaId: original.id };
+                  }
+                }
+                if (depth >= 6) {
+                  continue;
+                }
+                if (Array.isArray(value)) {
+                  const length = Math.min(ownValue(value, 'length') || 0, 8);
+                  for (let index = length - 1; index >= 0; index--) {
+                    stack.push({ value: ownValue(value, String(index)), depth: depth + 1 });
+                  }
+                } else {
+                  for (let index = CHILD_KEYS.length - 1; index >= 0; index--) {
+                    stack.push({
+                      value: ownValue(value, CHILD_KEYS[index]),
+                      depth: depth + 1,
+                      variants: CHILD_KEYS[index] === 'variants',
+                    });
+                  }
+                }
+              }
+              if (visits >= 128) {
+                return null;
+              }
             }
           }
         }

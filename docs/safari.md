@@ -279,8 +279,19 @@ current path. All browsers retain their 16× request limit.
 The resolvers read bounded player/source lists, validate the exact active HLS
 URL and select an explicitly supplied HTTPS MP4. X additionally validates the
 same asset identity in official CDN URLs. No global player registry is scanned. It never fetches
-post data or invents a source URL. Owned fullscreen resolves from its validated,
-connected original player scope. Blob/MSE, live, DRM, meaningful or unknown in-band
+post data or invents a source URL. Owned fullscreen searches the retained media container and its validated,
+connected original player scope, with at most twelve ancestor hops per root.
+The nearest recognized SDK player’s ad, DRM, live and pending-caption restrictions
+apply before any source route is accepted, including retained HTML alternatives.
+Explicitly external SDK metadata tracks (such as thumbnail VTTs) remain on the
+same player and do not block selection; caption and unknown declarations do.
+Brightcove’s existing JavaScript-created `media-cues` track is allowed only through
+its exact same-player proxy/native-track identity, never its label alone. It is
+revalidated against the current video immediately before switching; other unknown
+in-band metadata still blocks selection. JW’s current-item `allSources` retains
+configured alternatives after its `sources` list is filtered to the active format.
+See [JW playlist event fields](https://docs.jwplayer.com/players/reference/playlist-events)
+and the [HTML text-track model](https://html.spec.whatwg.org/multipage/media.html#text-track-model). Blob/MSE, live, DRM, meaningful or unknown in-band
 text tracks and alternate audio/video streams are excluded. Safari’s single
 unnamed caption track with no cues is treated as an empty placeholder. That track
 does not survive MP4 selection: captions arriving later in that dormant stream

@@ -546,6 +546,32 @@ describe('Safari native HLS progressive playback ownership', () => {
     expect(video.load).not.toHaveBeenCalled();
   });
 
+  it('preserves a verified SDK-created metadata track while blocking any unrelated in-band metadata', () => {
+    const track = {
+      kind: 'metadata',
+      label: 'media-cues',
+      inBandMetadataTrackDispatchType: '',
+      cues: [{}],
+    };
+    Object.defineProperty(video, 'textTracks', { configurable: true, value: [track] });
+    resolver.mockReturnValue({
+      originalUrl: HLS,
+      progressiveUrl: MP4,
+      provider: 'videojs',
+      persistentMetadataTrack: track,
+    });
+    const session = begin();
+    expect(session).toBeTruthy();
+    expect(video.textTracks[0]).toBe(track);
+    session.cleanup();
+    state.currentSrc = HLS;
+    video.src = HLS;
+    Object.defineProperty(video, 'textTracks', {
+      configurable: true,
+      value: [track, { kind: 'metadata' }],
+    });
+    expect(begin()).toBeNull();
+  });
   it('checks the track count before attempting iteration', () => {
     const iterate = vi.fn(() => {
       throw new Error('must not iterate an oversized track list');

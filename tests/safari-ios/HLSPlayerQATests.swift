@@ -21,15 +21,33 @@ import XCTest
         XCTAssertEqual(report["controlled"] as? Bool, true)
         XCTAssertEqual(report["nativeHLS"] as? Bool, true)
         XCTAssertEqual(report["mp4"] as? Bool, true)
+        XCTAssertEqual(report["metadataPreserved"] as? Bool, true)
+        XCTAssertEqual(report["programmaticTrackPreserved"] as? Bool, true)
         XCTAssertEqual(report["selected"] as? String, report["provider"] as? String)
         XCTAssertEqual(report["rate"] as? Double, 4)
         XCTAssertEqual(report["paused"] as? Bool, false)
         XCTAssertEqual(report["native"] as? Bool, false)
-        XCTAssertEqual(report["owned"] as? Bool, false)
+        XCTAssertEqual(report["owned"] as? Bool, report["ownedMode"] as? Bool)
         XCTAssertEqual(report["scroll"] as? [Double], report["baseline"] as? [Double])
         XCTAssertEqual((report["errors"] as? [Any])?.count, 0)
         let cadence = report["cadence"] as! [String: Double]
         XCTAssertGreaterThanOrEqual(cadence["hz"]!, 24)
         XCTAssertEqual(cadence["progress"]!, 4, accuracy: 0.2)
+        if report["ownedMode"] as? Bool == true {
+            let stage = safari.otherElements["Video display"]
+            XCTAssertTrue(stage.waitForExistence(timeout: 5))
+            let reveal = stage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            reveal.tap()
+            if !safari.buttons["Close StayFast video player"].isHittable { reveal.tap() }
+            safari.buttons["Close StayFast video player"].tap()
+            let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in state.label.contains("\"owned\":false") }, object: state)
+            XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 10), .completed, state.label)
+            let after = try JSONSerialization.jsonObject(with: Data(state.label.dropFirst("HLS player: ".count).utf8)) as! [String: Any]
+            XCTAssertEqual(after["scroll"] as? [Double], report["baseline"] as? [Double])
+            XCTAssertEqual(after["mp4"] as? Bool, true)
+            XCTAssertEqual(after["paused"] as? Bool, false)
+            XCTAssertEqual((after["errors"] as? [Any])?.count, 0)
+        }
+
     }
 }
