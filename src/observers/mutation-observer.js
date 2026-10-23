@@ -115,8 +115,17 @@ class VideoMutationObserver {
       const owner = this;
       const wrapper = function (init) {
         const shadowRoot = Reflect.apply(original, this, [init]);
-        if (init?.mode === 'open' && owner.active) {
-          owner.observeShadowRoot(shadowRoot);
+        try {
+          if (
+            init?.mode === 'open' &&
+            owner.active &&
+            this.isConnected &&
+            this.ownerDocument === owner.observedDocument
+          ) {
+            owner.observeShadowRoot(shadowRoot);
+          }
+        } catch {
+          // Optional discovery must not change the page's native attachShadow result.
         }
         return shadowRoot;
       };

@@ -617,6 +617,169 @@ describe('owned-player pointer precision scrubbing', () => {
     }
   });
 
+  it.each([
+    'cancel',
+    'cancel-before-capture',
+    'cleanup',
+    'cleanup-before-capture',
+    'cleanup-throws',
+    'src',
+    'srcObject',
+    'closed',
+    'session',
+  ])('does not continue startup after %s inside pointer capture', (transition) => {
+    let controlsAfterCapture;
+    owner.onScrubFinish = vi.fn();
+    range.setPointerCapture.mockImplementation((id) => {
+      const lateCapture = transition.endsWith('before-capture');
+      if (!lateCapture) {
+        captured.add(id);
+      }
+      if (transition.startsWith('cancel')) {
+        pointer('lostpointercapture', 160, 122, id);
+      } else if (transition.startsWith('cleanup')) {
+        owner.active = false;
+        scrubber.cleanup();
+      } else if (transition === 'src') {
+        owner.video.src = 'https://example.test/replacement.mp4';
+      } else if (transition === 'srcObject') {
+        owner.video.srcObject = {};
+      } else if (transition === 'closed') {
+        owner.active = false;
+        host.remove();
+      } else {
+        owner.session++;
+      }
+      if (lateCapture) {
+        captured.add(id);
+      }
+      controlsAfterCapture = owner.showControls.mock.calls.length;
+      if (transition === 'cleanup-throws') {
+        throw new Error('capture wrapper closed controls');
+      }
+    });
+    pointer('pointerdown');
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(captured.size).toBe(0);
+    expect(scrubber.timer).toBeNull();
+    expect(owner.onScrubFinish).toHaveBeenCalledOnce();
+    expect(owner.showControls).toHaveBeenCalledTimes(controlsAfterCapture);
+    expect(owner.play).toHaveBeenCalledTimes(transition.startsWith('cancel') ? 1 : 0);
+    expect(owner.seekTo).toHaveBeenCalledTimes(transition.startsWith('cancel') ? 1 : 0);
+    expect(owner.video.currentTime).toBe(50);
+    if (transition.startsWith('cleanup')) {
+      expect(scrubber.listeners).toHaveLength(0);
+    }
+    pointer('pointermove', 220);
+    pointer('pointerup', 220);
+    vi.advanceTimersByTime(500);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(scrubber.pending).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(owner.seekTo).toHaveBeenCalledTimes(transition.startsWith('cancel') ? 1 : 0);
+    if (transition.startsWith('cancel')) {
+      // An ordinary cancellation does not disable later user gestures.
+      range.setPointerCapture.mockImplementation((id) => captured.add(id));
+      owner.play.mockClear();
+      pointer('pointerdown');
+      pointer('pointermove', 190);
+      pointer('pointerup', 190);
+      expect(owner.video.currentTime).toBe(60);
+      expect(owner.play).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([7, 8])(
+    'leaves replacement pointer %s intact when capture reenters startup',
+    (nextId) => {
+      range.setPointerCapture.mockImplementation((id) => {
+        captured.add(id);
+        pointer('lostpointercapture', 160, 122, id);
+        range.setPointerCapture.mockImplementation((nextId) => captured.add(nextId));
+        pointer('pointerdown', 160, 122, nextId);
+      });
+      pointer('pointerdown');
+      expect(scrubber.active).toBe(true);
+      expect(scrubber.pointerId).toBe(nextId);
+      expect(scrubber.gestureListeners).toHaveLength(3);
+      expect(captured).toEqual(new Set([nextId]));
+      pointer('pointermove', 190, 122, nextId);
+      pointer('pointerup', 190, 122, nextId);
+      expect(owner.video.currentTime).toBe(60);
+      expect(owner.play).toHaveBeenCalledTimes(2);
+      expect(scrubber.gestureListeners).toHaveLength(0);
+      expect(captured.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it.each([null, 7, 8])(
+    'does not attach stale listeners when post-capture inspection starts pointer %s',
+    (nextId) => {
+      range.setPointerCapture.mockImplementation((id) => {
+        captured.add(id);
+        const currentSrc = owner.video.currentSrc;
+        Object.defineProperty(owner.video, 'currentSrc', {
+          configurable: true,
+          get() {
+            Object.defineProperty(owner.video, 'currentSrc', {
+              configurable: true,
+              value: currentSrc,
+            });
+            pointer('lostpointercapture', 160, 122, id);
+            if (nextId !== null) {
+              range.setPointerCapture.mockImplementation((newId) => captured.add(newId));
+              pointer('pointerdown', 160, 122, nextId);
+            }
+            return currentSrc;
+          },
+        });
+      });
+      pointer('pointerdown');
+      expect(scrubber.active).toBe(nextId !== null);
+      expect(scrubber.gestureListeners).toHaveLength(nextId === null ? 0 : 3);
+      expect(captured).toEqual(new Set(nextId === null ? [] : [nextId]));
+      if (nextId !== null) {
+        pointer('pointermove', 190, 122, nextId);
+        pointer('pointerup', 190, 122, nextId);
+        expect(owner.video.currentTime).toBe(60);
+        expect(owner.play).toHaveBeenCalledTimes(2);
+      } else {
+        expect(owner.video.currentTime).toBe(50);
+        expect(owner.play).toHaveBeenCalledOnce();
+      }
+      expect(scrubber.gestureListeners).toHaveLength(0);
+      expect(captured.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('ends capture when source inspection replaces the presentation session', () => {
+    range.setPointerCapture.mockImplementation((id) => {
+      captured.add(id);
+      const currentSrc = owner.video.currentSrc;
+      Object.defineProperty(owner.video, 'currentSrc', {
+        configurable: true,
+        get() {
+          Object.defineProperty(owner.video, 'currentSrc', {
+            configurable: true,
+            value: currentSrc,
+          });
+          owner.session++;
+          return currentSrc;
+        },
+      });
+    });
+    pointer('pointerdown');
+    expect(scrubber.active).toBe(false);
+    expect(scrubber.gestureListeners).toHaveLength(0);
+    expect(captured.size).toBe(0);
+    expect(owner.play).not.toHaveBeenCalled();
+    expect(owner.seekTo).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('does not reinstall gesture listeners after a pause wrapper cleans up the scrubber', () => {
     let controlsAfterCleanup;
     owner.video.pause.mockImplementation(() => {

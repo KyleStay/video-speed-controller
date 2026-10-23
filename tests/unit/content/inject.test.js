@@ -361,6 +361,137 @@ describe('Inject', () => {
     window.cancelIdleCallback = originalCancelIdleCallback;
   });
 
+  it('rejects canceled light-scan callbacks after reinitialization', () => {
+    vi.useFakeTimers();
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalCancelIdleCallback = window.cancelIdleCallback;
+    const idleCallbacks = [];
+    window.requestIdleCallback = (callback) => {
+      idleCallbacks.push(callback);
+      return idleCallbacks.length;
+    };
+    // Simulate a callback already dequeued when cancellation is requested.
+    window.cancelIdleCallback = (id) => idleCallbacks[id - 1]();
+
+    const recoveringExtension = new window.VSC_controller.constructor();
+    recoveringExtension.logger = window.VSC.logger;
+    recoveringExtension.mediaObserver = {
+      scanForMediaLight: vi.fn(() => []),
+      hasMediaIndicators: vi.fn(() => true),
+      scanAll: vi.fn(() => []),
+    };
+    recoveringExtension.mutationObserver = { observeOpenShadowRoots: vi.fn() };
+    recoveringExtension.onVideoFound = vi.fn();
+
+    recoveringExtension.deferredMediaScan(document);
+    const staleCallback = idleCallbacks[0];
+    recoveringExtension.clearScheduledWork();
+    recoveringExtension.teardownRequested = false;
+    recoveringExtension.deferredMediaScan(document);
+    const currentCallback = idleCallbacks[1];
+
+    staleCallback();
+    expect(recoveringExtension.scheduledWork.size).toBe(1);
+    currentCallback();
+    expect(recoveringExtension.mediaObserver.scanForMediaLight).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1000);
+    expect(recoveringExtension.mediaObserver.scanAll).toHaveBeenCalledOnce();
+
+    recoveringExtension.clearScheduledWork();
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
+    vi.useRealTimers();
+  });
+
+  it('releases failed scheduling state so a later comprehensive scan can retry', () => {
+    const subject = new window.VSC_controller.constructor();
+    subject.logger = { info() {}, debug() {}, error() {} };
+    subject.mediaObserver = {
+      hasMediaIndicators: () => true,
+      scanAll: vi.fn(() => []),
+    };
+    let callback;
+    const schedule = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementationOnce(() => {
+        throw new Error('temporary page scheduler failure');
+      })
+      .mockImplementation((run) => {
+        callback = run;
+        return -1;
+      });
+    try {
+      expect(() => subject.scheduleComprehensiveScan(document)).toThrow(
+        'temporary page scheduler failure'
+      );
+      expect(subject.pendingComprehensiveScans.has(document)).toBe(false);
+      expect(subject.scheduledWork.size).toBe(0);
+      subject.scheduleComprehensiveScan(document);
+      callback();
+      expect(subject.mediaObserver.scanAll).toHaveBeenCalledOnce();
+      expect(subject.pendingComprehensiveScans.has(document)).toBe(false);
+      expect(subject.scheduledWork.size).toBe(0);
+    } finally {
+      subject.clearScheduledWork();
+      schedule.mockRestore();
+    }
+  });
+
+  it('coalesces pending comprehensive scans per document and allows a fresh scan after completion', () => {
+    vi.useFakeTimers();
+    const recoveringExtension = new window.VSC_controller.constructor();
+    recoveringExtension.logger = window.VSC.logger;
+    recoveringExtension.mediaObserver = {
+      scanForMediaLight: vi.fn(() => []),
+      hasMediaIndicators: vi.fn(() => true),
+      scanAll: vi.fn(() => []),
+    };
+    recoveringExtension.mutationObserver = { observeOpenShadowRoots: vi.fn() };
+    recoveringExtension.onVideoFound = vi.fn();
+
+    recoveringExtension.deferredMediaScan(document);
+    recoveringExtension.deferredMediaScan(document);
+    vi.advanceTimersByTime(200);
+    expect(recoveringExtension.mediaObserver.scanForMediaLight).toHaveBeenCalledTimes(2);
+    expect(recoveringExtension.mediaObserver.scanAll).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(recoveringExtension.mediaObserver.scanAll).toHaveBeenCalledOnce();
+
+    recoveringExtension.scheduleComprehensiveScan(document);
+    vi.advanceTimersByTime(1000);
+    expect(recoveringExtension.mediaObserver.scanAll).toHaveBeenCalledTimes(2);
+
+    recoveringExtension.teardown();
+    vi.useRealTimers();
+  });
+
+  it('ignores a canceled comprehensive callback without clearing newer same-document work', () => {
+    const recoveringExtension = new window.VSC_controller.constructor();
+    recoveringExtension.logger = window.VSC.logger;
+    recoveringExtension.mediaObserver = {
+      hasMediaIndicators: vi.fn(() => true),
+      scanAll: vi.fn(() => []),
+    };
+    recoveringExtension.mutationObserver = { observeOpenShadowRoots: vi.fn() };
+    recoveringExtension.onVideoFound = vi.fn();
+    const callbacks = [];
+    recoveringExtension.scheduleDeferredWork = vi.fn((callback) => {
+      callbacks.push(callback);
+      return {};
+    });
+
+    recoveringExtension.scheduleComprehensiveScan(document);
+    recoveringExtension.clearScheduledWork();
+    recoveringExtension.scheduleComprehensiveScan(document);
+
+    callbacks[0]();
+    expect(recoveringExtension.mediaObserver.scanAll).not.toHaveBeenCalled();
+    callbacks[1]();
+    expect(recoveringExtension.mediaObserver.scanAll).toHaveBeenCalledOnce();
+
+    recoveringExtension.teardown();
+  });
+
   it('deferred media scan schedules comprehensive scan even when light scan finds media', () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();

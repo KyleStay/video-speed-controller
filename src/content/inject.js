@@ -26,6 +26,7 @@ class VideoSpeedExtension {
     this.initializationInProgress = false;
     this.readyCleanup = null;
     this.spaRecoveryScheduled = false;
+    this.pendingComprehensiveScans = new WeakMap();
     this.videoDiagnostics = null;
     this.diagnosticsAutoStarted = false;
   }
@@ -272,39 +273,59 @@ class VideoSpeedExtension {
    * @param {Document} document - Document to scan comprehensively
    */
   scheduleComprehensiveScan(document) {
-    this.scheduleDeferredWork(
-      () => {
-        try {
-          if (this.teardownRequested || !this.mediaObserver) {
+    if (this.pendingComprehensiveScans.has(document)) {
+      return;
+    }
+
+    const pendingScan = {};
+    this.pendingComprehensiveScans.set(document, pendingScan);
+    try {
+      this.scheduleDeferredWork(
+        () => {
+          // A canceled callback may still be delivered by a scheduler race after
+          // teardown/reinitialization. It must neither run nor clear newer work.
+          if (this.pendingComprehensiveScans.get(document) !== pendingScan) {
             return;
           }
+          this.pendingComprehensiveScans.delete(document);
 
-          // Skip the heavier multi-walk scan on frames with no media signal at
-          // all (common case: text pages, ad/tracking iframes). Never skips when
-          // a shadow host exists, so encapsulated players are still found.
-          if (!this.mediaObserver.hasMediaIndicators(document)) {
-            this.logger.debug('Skipping comprehensive scan — no media indicators in frame');
-            return;
+          try {
+            if (this.teardownRequested || !this.mediaObserver) {
+              return;
+            }
+
+            // Skip the heavier multi-walk scan on frames with no media signal at
+            // all (common case: text pages, ad/tracking iframes). Never skips when
+            // a shadow host exists, so encapsulated players are still found.
+            if (!this.mediaObserver.hasMediaIndicators(document)) {
+              this.logger.debug('Skipping comprehensive scan — no media indicators in frame');
+              return;
+            }
+
+            this.mutationObserver?.observeOpenShadowRoots(document);
+            const comprehensiveMedia = this.mediaObserver.scanAll(document);
+
+            comprehensiveMedia.forEach((media) => {
+              // Rediscovery also repairs an existing wrapper removed while a tab
+              // was suspended, including media inside an open shadow root.
+              this.onVideoFound(media, media.parentElement || media.parentNode);
+            });
+
+            this.logger.info(
+              `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
+            );
+          } catch (error) {
+            this.logger.error(`Failed comprehensive media scan: ${error.message}`);
           }
-
-          this.mutationObserver?.observeOpenShadowRoots(document);
-          const comprehensiveMedia = this.mediaObserver.scanAll(document);
-
-          comprehensiveMedia.forEach((media) => {
-            // Rediscovery also repairs an existing wrapper removed while a tab
-            // was suspended, including media inside an open shadow root.
-            this.onVideoFound(media, media.parentElement || media.parentNode);
-          });
-
-          this.logger.info(
-            `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
-          );
-        } catch (error) {
-          this.logger.error(`Failed comprehensive media scan: ${error.message}`);
-        }
-      },
-      { delay: 1000 }
-    ); // Wait 1 second before comprehensive scan
+        },
+        { delay: 1000 }
+      ); // Wait 1 second before comprehensive scan
+    } catch (error) {
+      if (this.pendingComprehensiveScans.get(document) === pendingScan) {
+        this.pendingComprehensiveScans.delete(document);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -355,7 +376,9 @@ class VideoSpeedExtension {
     const work = { id: null, type: useIdle ? 'idle' : 'timer' };
 
     const run = () => {
-      this.scheduledWork.delete(work);
+      if (!this.scheduledWork.delete(work)) {
+        return;
+      }
       if (this.teardownRequested) {
         return;
       }
@@ -363,11 +386,16 @@ class VideoSpeedExtension {
     };
 
     this.scheduledWork.add(work);
-    work.id = useIdle
-      ? window.requestIdleCallback(run, {
-          timeout: Math.max(delay, VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS),
-        })
-      : setTimeout(run, delay);
+    try {
+      work.id = useIdle
+        ? window.requestIdleCallback(run, {
+            timeout: Math.max(delay, VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS),
+          })
+        : setTimeout(run, delay);
+    } catch (error) {
+      this.scheduledWork.delete(work);
+      throw error;
+    }
     return work;
   }
 
@@ -375,14 +403,19 @@ class VideoSpeedExtension {
    * Cancel deferred startup/scan callbacks.
    */
   clearScheduledWork() {
-    for (const work of this.scheduledWork) {
+    const scheduledWork = [...this.scheduledWork];
+    this.scheduledWork.clear();
+    this.pendingComprehensiveScans = new WeakMap();
+
+    // Remove admission before cancellation APIs, which may race with or
+    // synchronously deliver a callback that was already queued.
+    for (const work of scheduledWork) {
       if (work.type === 'idle' && typeof window.cancelIdleCallback === 'function') {
         window.cancelIdleCallback(work.id);
       } else {
         clearTimeout(work.id);
       }
     }
-    this.scheduledWork.clear();
   }
 
   /**

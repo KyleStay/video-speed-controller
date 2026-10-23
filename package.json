@@ -1,6 +1,6 @@
 {
   "name": "video-speed-controller",
-  "version": "0.11.4",
+  "version": "0.11.5",
   "description": "Speed up, slow down, advance and rewind HTML5 audio/video with shortcuts",
   "type": "module",
   "scripts": {
@@ -32,6 +32,8 @@
     "release:browsers": "npm run build:release:browsers && node scripts/package-release.js --all",
     "package:chrome": "node scripts/package-release.js --browser=chrome",
     "package:firefox": "node scripts/package-release.js --browser=firefox",
+    "package:candidate": "node scripts/package-identity-candidate.mjs",
+    "package:candidate:test": "vitest run --configLoader=native tests/unit/build/identity-candidate.test.js",
     "release:github": "node scripts/github-release.js",
     "clean": "node scripts/clean.mjs dist release",
     "prepare": "husky",
