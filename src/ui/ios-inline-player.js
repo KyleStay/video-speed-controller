@@ -152,10 +152,7 @@ class IOSInlinePlayer {
     this.listen(this.root, 'pointerdown', () => this.reveal(), true);
     this.listen(this.root, 'focusin', () => this.reveal());
     for (const type of ['play', 'playing', 'pause', 'ended']) {
-      this.listen(video, type, () => {
-        this.update();
-        this.reveal();
-      });
+      this.listen(video, type, () => this.reveal());
     }
     for (const type of [
       'timeupdate',
@@ -179,7 +176,6 @@ class IOSInlinePlayer {
         this.seekCancelled = this.seekCancelled || this.seeking;
         this.seeking = false;
         this.error('');
-        this.update();
         this.reveal();
       });
     }
@@ -379,22 +375,22 @@ class IOSInlinePlayer {
     }
     const generation = this.generation;
     const source = this.scrubber.captureSource();
+    const samePresentation = () => this.available() && generation === this.generation;
+    // Page-owned getters can hand back and reacquire controls during inspection.
+    const current = () =>
+      samePresentation() && this.scrubber.matchesSource(source) && samePresentation();
     if (this.video.ended) {
       const bounds = this.bounds();
       if (bounds) {
         this.seekTo(bounds[0]);
       }
     }
-    if (
-      generation !== this.generation ||
-      !this.available() ||
-      !this.scrubber.matchesSource(source)
-    ) {
+    if (source ? !current() : !samePresentation()) {
       return;
     }
     this.error('');
     const fail = () => {
-      if (generation === this.generation && this.available()) {
+      if (current()) {
         this.error('Playback could not start.');
         this.update();
       }
@@ -498,15 +494,31 @@ class IOSInlinePlayer {
 
   reveal() {
     if (!this.available()) {
+      this.cancelScrub();
+      this.clearTimer();
       return;
     }
+    const generation = this.generation;
     this.clearTimer();
     this.idle = false;
     this.host.removeAttribute('data-vsc-inline-idle');
     this.update();
+    if (generation !== this.generation) {
+      return;
+    }
+    if (!this.available()) {
+      this.cancelScrub();
+      this.clearTimer();
+      return;
+    }
     try {
-      if (!this.video.paused && !this.video.ended) {
+      const playing = !this.video.paused && !this.video.ended;
+      if (playing && this.available() && generation === this.generation) {
+        this.clearTimer();
         this.timer = this.view.setTimeout(() => {
+          if (generation !== this.generation) {
+            return;
+          }
           this.timer = null;
           try {
             if (
@@ -514,7 +526,8 @@ class IOSInlinePlayer {
               this.video.paused ||
               this.video.ended ||
               this.root.contains(this.shadow.activeElement) ||
-              this.host.classList.contains('vsc-touch-open')
+              this.host.classList.contains('vsc-touch-open') ||
+              generation !== this.generation
             ) {
               return;
             }

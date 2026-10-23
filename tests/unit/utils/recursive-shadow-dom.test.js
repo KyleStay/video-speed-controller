@@ -176,6 +176,71 @@ describe('Recursive Shadow DOM', () => {
     expect(results[0]).toBe(video);
   });
 
+  it('scanAll keeps site-container discovery within the document shadow-depth limit', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const siteHandler = {
+      detectSpecialVideos: () => [],
+      getVideoContainerSelectors: () => ['.site-player'],
+      shouldIgnoreVideo: () => false,
+    };
+    const observer = new window.VSC.MediaElementObserver(config, siteHandler);
+
+    function addPlayerAtDepth(depth, className) {
+      const player = document.createElement('div');
+      player.className = `site-player ${className}`;
+      document.body.appendChild(player);
+
+      let currentRoot = player;
+      for (let index = 0; index < depth; index++) {
+        const shadow = currentRoot.attachShadow({ mode: 'open' });
+        if (index === depth - 1) {
+          const video = createMockVideo();
+          video.className = className;
+          shadow.appendChild(video);
+          return video;
+        }
+        currentRoot = document.createElement('div');
+        shadow.appendChild(currentRoot);
+      }
+    }
+
+    const atLimit = addPlayerAtDepth(window.VSC.MediaElementObserver.MAX_SHADOW_DEPTH, 'at-limit');
+    const beyondLimit = addPlayerAtDepth(
+      window.VSC.MediaElementObserver.MAX_SHADOW_DEPTH + 1,
+      'beyond-limit'
+    );
+
+    const found = observer.scanAll(document);
+
+    expect(found).toContain(atLimit);
+    expect(found).not.toContain(beyondLimit);
+  });
+
+  it('site-container discovery retains matching media and light-DOM descendants', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+
+    const siteHandler = {
+      getVideoContainerSelectors: () => ['.site-media'],
+    };
+    const observer = new window.VSC.MediaElementObserver(config, siteHandler);
+    const audioEnabled = config.settings.audioBoolean;
+    config.settings.audioBoolean = true;
+    const container = document.createElement('video');
+    container.className = 'site-media';
+    const childAudio = document.createElement('audio');
+    container.appendChild(childAudio);
+    document.body.appendChild(container);
+
+    try {
+      expect(observer.scanSiteSpecificContainers(document)).toEqual([container, childAudio]);
+    } finally {
+      config.settings.audioBoolean = audioEnabled;
+    }
+  });
+
   it('Should handle complex nested player structure', () => {
     const { player, video } = createComplexPlayerStructure();
 

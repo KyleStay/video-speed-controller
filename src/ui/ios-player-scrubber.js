@@ -78,13 +78,20 @@ class IOSPlayerScrubber {
       : null;
   }
 
-  currentPresentation() {
+  currentOwner() {
     return Boolean(
       this.owner.active &&
       this.owner.ui === this.ui &&
       this.owner.video === this.video &&
-      this.owner.session === this.session &&
+      this.owner.session === this.session
+    );
+  }
+
+  currentPresentation() {
+    return Boolean(
+      this.currentOwner() &&
       this.matchesSource(this.source) &&
+      this.currentOwner() &&
       this.ui.host.isConnected &&
       this.range.isConnected &&
       this.video.isConnected
@@ -165,10 +172,27 @@ class IOSPlayerScrubber {
       this.finish(null, false, false, false);
       return;
     }
+    const pointerId = this.pointerId;
+    const source = this.source;
+    const sameGesture = () => this.active && this.pointerId === pointerId && this.source === source;
     try {
-      this.range.setPointerCapture?.(this.pointerId);
+      this.range.setPointerCapture?.(pointerId);
     } catch {
       // Window capture still delivers the gesture when capture is unavailable.
+    }
+    // Capture wrappers can cancel or replace the presentation synchronously.
+    if (!sameGesture() || !this.currentPresentation() || !sameGesture()) {
+      if (sameGesture()) {
+        this.finish(null, false, false, false);
+      } else if (!this.active || this.pointerId !== pointerId) {
+        try {
+          // Cleanup can finish before a wrapper delegates the actual capture.
+          this.range.releasePointerCapture?.(pointerId);
+        } catch {
+          // The pointer may already be released or belong to another element.
+        }
+      }
+      return;
     }
     const view = this.range.ownerDocument.defaultView;
     this.listen(view, 'pointermove', (move) => this.move(move), this.gestureListeners, true);

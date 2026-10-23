@@ -3040,6 +3040,128 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.active).toBe(true);
   });
 
+  it('keeps native play available when source inspection throws without changing the session', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        throw new Error('page-owned source getter unavailable');
+      },
+    });
+    player.play();
+    expect(player.active).toBe(true);
+    expect(video.play).toHaveBeenCalledOnce();
+  });
+
+  it('does not call play after source capture closes the fullscreen session', () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    const currentSrc = video.currentSrc;
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        Object.defineProperty(video, 'currentSrc', { configurable: true, value: currentSrc });
+        player.close({ settle: false });
+        return currentSrc;
+      },
+    });
+    player.play();
+    expect(player.active).toBe(false);
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old failure after a source getter reopens the fullscreen session', async () => {
+    const { player, video } = makeController();
+    player.attach();
+    player.open();
+    let reject;
+    video.play.mockImplementation(() => new Promise((_resolve, failure) => (reject = failure)));
+    player.play();
+    const session = player.session;
+    const ui = player.ui;
+    const currentSrc = video.currentSrc;
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        Object.defineProperty(video, 'currentSrc', { configurable: true, value: currentSrc });
+        player.close({ settle: false });
+        player.open();
+        return currentSrc;
+      },
+    });
+    reject(new Error('old session rejected'));
+    await Promise.resolve();
+    expect(player.active).toBe(true);
+    expect(player.session).toBeGreaterThan(session);
+    expect(player.ui).not.toBe(ui);
+    expect(player.ui.refs.status.textContent).toBe('');
+  });
+
+  describe.each(['async', 'sync'])('source-scoped %s playback failure', (mode) => {
+    it.each(['src', 'srcObject'])(
+      'ignores failure after %s replacement before loadstart',
+      async (property) => {
+        const { player, video } = makeController();
+        player.attach();
+        await player.open();
+        const ui = player.ui;
+        const session = player.session;
+        const update = vi.spyOn(player, 'update');
+        const reveal = vi.spyOn(player, 'showControls');
+        const replaceSource = () => {
+          if (property === 'src') {
+            video.src = 'https://media.example.test/replacement.mp4';
+          } else {
+            video.srcObject = {};
+          }
+        };
+        let reject;
+        if (mode === 'async') {
+          video.play.mockImplementation(
+            () => new Promise((_resolve, failure) => (reject = failure))
+          );
+        } else {
+          video.play.mockImplementation(() => {
+            replaceSource();
+            throw new Error('old source rejected');
+          });
+        }
+        player.play();
+        if (mode === 'async') {
+          replaceSource();
+          reject(new Error('old source rejected'));
+        }
+        await Promise.resolve();
+        // The queued resource-reset event has not invalidated this UI/session yet.
+        expect(player.active).toBe(true);
+        expect(player.session).toBe(session);
+        expect(player.ui).toBe(ui);
+        expect(ui.refs.status.textContent).toBe('');
+        expect(update).not.toHaveBeenCalled();
+        expect(reveal).not.toHaveBeenCalled();
+      }
+    );
+
+    it('still reports failure for the same resource', async () => {
+      const { player, video } = makeController();
+      player.attach();
+      await player.open();
+      if (mode === 'async') {
+        video.play.mockRejectedValue(new Error('current source rejected'));
+      } else {
+        video.play.mockImplementation(() => {
+          throw new Error('current source rejected');
+        });
+      }
+      player.play();
+      await Promise.resolve();
+      expect(player.ui.refs.status.textContent).toBe('Tap Play to continue playback.');
+    });
+  });
+
   it('shows a recoverable play state when Safari rejects playback', async () => {
     const { player, video } = makeController();
     video.play.mockRejectedValue(new DOMException('A gesture is required', 'NotAllowedError'));

@@ -32,8 +32,10 @@ class MediaElementObserver {
       if (depth > MediaElementObserver.MAX_SHADOW_DEPTH) {
         return results;
       }
-      // Add any matching elements in current shadow root
-      results.push(...root.querySelectorAll(selector));
+      // Light DOM was already scanned; only collect matches inside shadow roots.
+      if (depth > 0) {
+        results.push(...root.querySelectorAll(selector));
+      }
       // Recursively check all elements with shadow roots
       root.querySelectorAll('*').forEach((element) => {
         if (element.shadowRoot) {
@@ -136,8 +138,17 @@ class MediaElementObserver {
       try {
         const containers = document.querySelectorAll(selector);
         containers.forEach((container) => {
-          const containerMedia = window.VSC.DomUtils.findMediaElements(container, audioEnabled);
-          mediaElements.push(...containerMedia);
+          // scanForMedia(document) already searches open shadow roots with the
+          // shared absolute document depth limit. Keep this second, targeted
+          // pass in light DOM so it cannot restart that budget at each matched
+          // container and expose arbitrarily deep shadow media.
+          const mediaSelector = audioEnabled ? 'video,audio' : 'video';
+          if (container.matches && container.matches(mediaSelector)) {
+            mediaElements.push(container);
+          }
+          if (container.querySelectorAll) {
+            mediaElements.push(...container.querySelectorAll(mediaSelector));
+          }
         });
       } catch (e) {
         window.VSC.logger.warn(`Invalid selector "${selector}": ${e.message}`);

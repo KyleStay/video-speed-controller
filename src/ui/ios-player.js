@@ -1252,17 +1252,25 @@ class IOSPlayer {
   play() {
     const session = this.session;
     const ui = this.ui;
+    const source = this.scrubber?.captureSource();
+    const samePresentation = () => this.active && this.session === session && this.ui === ui;
+    // Source getters can synchronously close and reopen the owned presentation.
+    const current = () =>
+      samePresentation() && this.scrubber?.matchesSource(source) && samePresentation();
+    if (!samePresentation()) {
+      return;
+    }
     try {
       const result = this.video.play();
       Promise.resolve(result).catch(() => {
-        if (this.active && this.session === session && this.ui === ui) {
+        if (current()) {
           this.ui.refs.status.textContent = 'Tap Play to continue playback.';
           this.update();
           this.showControls();
         }
       });
     } catch {
-      if (this.active && this.session === session && this.ui === ui) {
+      if (current()) {
         this.ui.refs.status.textContent = 'Tap Play to continue playback.';
       }
     }

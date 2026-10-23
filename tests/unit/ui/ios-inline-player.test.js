@@ -525,6 +525,37 @@ describe('owned iOS inline transport', () => {
     expect(video.pause).toHaveBeenCalledOnce();
   });
 
+  it.each(['src', 'srcObject'])(
+    'ignores a stale play rejection after %s replacement before loadstart',
+    async (property) => {
+      let reject;
+      video.play.mockImplementation(() => new Promise((resolve, failure) => (reject = failure)));
+      player.setOwned(true);
+      player.refs.play.click();
+      const generation = player.generation;
+      if (property === 'src') {
+        video.src = 'https://example.test/replacement.mp4';
+      } else {
+        Object.defineProperty(video, 'srcObject', { configurable: true, value: {} });
+      }
+      // Native loadstart is queued; its generation invalidation has not run yet.
+      expect(player.generation).toBe(generation);
+      reject(new Error('old source rejected'));
+      await Promise.resolve();
+      expect(player.refs.status.textContent).toBe('');
+    }
+  );
+
+  it('still reports a pending play rejection for the same source before loadstart', async () => {
+    let reject;
+    video.play.mockImplementation(() => new Promise((resolve, failure) => (reject = failure)));
+    player.setOwned(true);
+    player.refs.play.click();
+    reject(new Error('current source rejected'));
+    await Promise.resolve();
+    expect(player.refs.status.textContent).toBe('Playback could not start.');
+  });
+
   it('reports a rejected play but ignores rejection after a newer resource or handback', async () => {
     let reject;
     video.play = vi.fn(
@@ -549,6 +580,131 @@ describe('owned iOS inline transport', () => {
     await Promise.resolve();
     expect(player.refs.status.textContent).toBe('');
   });
+
+  it('does not call play after source inspection reenters inline ownership', () => {
+    player.setOwned(true);
+    const currentSrc = video.currentSrc;
+    let reads = 0;
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        if (++reads === 2) {
+          Object.defineProperty(video, 'currentSrc', { configurable: true, value: currentSrc });
+          player.setOwned(false);
+          player.setOwned(true);
+        }
+        return currentSrc;
+      },
+    });
+    player.play();
+    expect(reads).toBe(2);
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old failure after a source getter reenters inline ownership', async () => {
+    let reject;
+    video.play.mockImplementation(() => new Promise((_resolve, failure) => (reject = failure)));
+    player.setOwned(true);
+    player.play();
+    const generation = player.generation;
+    const currentSrc = video.currentSrc;
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        Object.defineProperty(video, 'currentSrc', { configurable: true, value: currentSrc });
+        player.setOwned(false);
+        player.setOwned(true);
+        return currentSrc;
+      },
+    });
+    reject(new Error('old ownership rejected'));
+    await Promise.resolve();
+    expect(player.generation).toBeGreaterThan(generation);
+    expect(player.owned).toBe(true);
+    expect(player.refs.status.textContent).toBe('');
+  });
+
+  it.each(['cleanup', 'fullscreen'])(
+    'does not arm a hide timer after a media getter triggers %s during refresh',
+    (transition) => {
+      player.setOwned(true);
+      paused = false;
+      Object.defineProperty(video, 'duration', {
+        configurable: true,
+        get() {
+          Object.defineProperty(video, 'duration', { configurable: true, get: () => duration });
+          if (transition === 'cleanup') {
+            player.cleanup();
+          } else {
+            video.vsc.iosPlayer.active = true;
+          }
+          return duration;
+        },
+      });
+      video.dispatchEvent(new Event('playing'));
+      expect(player.available()).toBe(false);
+      expect(player.timer).toBeNull();
+    }
+  );
+
+  it.each(['play', 'playing', 'pause', 'ended', 'emptied', 'loadstart'])(
+    'refreshes once and reveals current controls immediately on %s',
+    (type) => {
+      player.setOwned(true);
+      paused = !['play', 'playing'].includes(type);
+      ended = type === 'ended';
+      player.idle = true;
+      host.setAttribute('data-vsc-inline-idle', '');
+      player.applyLayout();
+      const generation = player.generation;
+      const durationRead = vi.fn(() => duration);
+      Object.defineProperty(video, 'duration', { configurable: true, get: durationRead });
+      const update = vi.spyOn(player, 'update');
+      video.dispatchEvent(new Event(type));
+      expect({
+        refreshes: update.mock.calls.length,
+        durationReads: durationRead.mock.calls.length,
+      }).toEqual({ refreshes: 1, durationReads: paused ? 4 : 3 });
+      expect(player.idle).toBe(false);
+      expect(host.hasAttribute('data-vsc-inline-idle')).toBe(false);
+      expect(player.refs.timelineGroup.hidden).toBe(false);
+      expect(player.refs.play.getAttribute('aria-label')).toBe(
+        ended ? 'Replay video' : paused ? 'Play video' : 'Pause video'
+      );
+      expect(player.generation).toBe(
+        generation + (['emptied', 'loadstart'].includes(type) ? 1 : 0)
+      );
+      expect(player.timer === null).toBe(paused);
+      vi.advanceTimersByTime(2499);
+      expect(player.idle).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(player.idle).toBe(!paused);
+      expect(player.timer).toBeNull();
+    }
+  );
+
+  it.each(['play', 'playing', 'pause', 'ended', 'emptied', 'loadstart'])(
+    'releases pending scrubbing and hide timers on unavailable %s',
+    (type) => {
+      player.setOwned(true);
+      paused = false;
+      player.reveal();
+      scrubPointer('pointerdown');
+      scrubPointer('pointermove', 70);
+      expect(player.scrubber.active).toBe(true);
+      expect(player.scrubber.pending).not.toBeNull();
+      const writes = actionHandler.seek.mock.calls.length;
+      video.vsc.iosPlayer.active = true;
+      video.dispatchEvent(new Event(type));
+      expect(player.scrubber.active).toBe(false);
+      expect(player.scrubber.pending).toBeNull();
+      expect(player.timer).toBeNull();
+      vi.advanceTimersByTime(3000);
+      expect(actionHandler.seek).toHaveBeenCalledTimes(writes);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
 
   it('does not rewrite unchanged controls on progress and tolerates throwing page getters', () => {
     player.setOwned(true);
@@ -743,5 +899,81 @@ describe('owned iOS inline transport', () => {
     player.play();
     expect(actionHandler.seek).toHaveBeenCalled();
     expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it.each(['currentSrc', 'srcObject'])(
+    'keeps native Play available when %s inspection throws',
+    async (property) => {
+      player.setOwned(true);
+      const generation = player.generation;
+      video.play.mockImplementation(() => Promise.reject(new Error('current playback failed')));
+      Object.defineProperty(video, property, {
+        configurable: true,
+        get() {
+          throw new Error('page source getter unavailable');
+        },
+      });
+
+      player.play();
+
+      expect(video.play).toHaveBeenCalledOnce();
+      expect(player.owned).toBe(true);
+      expect(player.generation).toBe(generation);
+      await Promise.resolve();
+      expect(player.refs.status.textContent).toBe('');
+    }
+  );
+
+  it('does not call native Play when throwing inspection changes ownership', () => {
+    player.setOwned(true);
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      get() {
+        player.setOwned(false);
+        player.setOwned(true);
+        throw new Error('page source getter changed ownership');
+      },
+    });
+
+    player.play();
+
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it('leaves no orphan hide timer after ownership reenters reveal update', () => {
+    player.setOwned(true);
+    paused = false;
+    player.clearTimer();
+    const schedule = vi.spyOn(window, 'setTimeout');
+    const clear = vi.spyOn(window, 'clearTimeout');
+    let reentered = false;
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      get() {
+        if (!reentered) {
+          reentered = true;
+          Object.defineProperty(video, 'duration', {
+            configurable: true,
+            get: () => duration,
+          });
+          player.setOwned(false);
+          player.setOwned(true);
+        }
+        return duration;
+      },
+    });
+
+    player.reveal();
+
+    expect(reentered).toBe(true);
+    const hideCalls = schedule.mock.calls
+      .map(([, delay], index) => (delay === 2500 ? index : -1))
+      .filter((index) => index >= 0);
+    expect(hideCalls).toHaveLength(1);
+    const hideTimer = schedule.mock.results[hideCalls[0]].value;
+    expect(player.timer).toBe(hideTimer);
+    manager.cleanup();
+    expect(player.timer).toBeNull();
+    expect(clear).toHaveBeenCalledWith(hideTimer);
   });
 });
