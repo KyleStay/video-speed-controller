@@ -161,6 +161,43 @@ describe('Actual options page flows', () => {
     expect(input.checked).toBe(previous);
   });
 
+  it('keeps a failed draft recoverable when Revert cannot read storage, then retries normally', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const input = document.getElementById('rememberSpeed');
+    const previous = getMockStorage().rememberSpeed;
+    const set = vi
+      .spyOn(window.VSC.StorageManager, 'set')
+      .mockRejectedValue(new Error('Storage write unavailable'));
+    input.checked = !previous;
+    await changeAndWait(input, 'Changes could not be saved');
+    const get = vi
+      .spyOn(window.VSC.StorageManager, 'get')
+      .mockRejectedValue(new Error('Storage read unavailable'));
+
+    await clickAndWait('revert', 'Could not revert changes');
+    expect(document.getElementById('status').classList.contains('error')).toBe(true);
+    expect(document.getElementById('revert').disabled).toBe(false);
+    expect(input.checked).toBe(!previous);
+    expect(getMockStorage().rememberSpeed).toBe(previous);
+    await clickAndWait('revert', 'Could not revert changes');
+    expect(document.getElementById('revert').disabled).toBe(false);
+
+    // Discarding the failed draft only needs a read once storage recovers.
+    get.mockRestore();
+    await clickAndWait('revert', 'Changes reverted');
+    expect(input.checked).toBe(previous);
+    expect(document.getElementById('revert').disabled).toBe(true);
+    expect(getMockStorage().rememberSpeed).toBe(previous);
+
+    set.mockRestore();
+    input.checked = !previous;
+    await changeAndWait(input);
+    expect(getMockStorage().rememberSpeed).toBe(!previous);
+    await clickAndWait('revert', 'Changes reverted');
+    expect(input.checked).toBe(previous);
+    expect(getMockStorage().rememberSpeed).toBe(previous);
+  });
+
   it('discards invalid edits without undoing the previous saved change', async () => {
     document.getElementById('rememberSpeed').checked = true;
     await changeAndWait(document.getElementById('rememberSpeed'));

@@ -84,9 +84,11 @@ if (!window.VSC.VideoSpeedConfig) {
 
     /**
      * Load settings from Chrome storage or pre-injected settings
+     * @param {Object} [options] - Load behavior
+     * @param {boolean} [options.throwOnError=false] - Reject instead of returning fallback settings
      * @returns {Promise<Object>} Loaded settings
      */
-    async load() {
+    async load({ throwOnError = false } = {}) {
       try {
         // Use StorageManager which handles both contexts automatically.
         // controllerCSS: null fetches the legacy key for one-time migration (not in DEFAULT_SETTINGS).
@@ -216,6 +218,9 @@ if (!window.VSC.VideoSpeedConfig) {
         return this.settings;
       } catch (error) {
         window.VSC.logger.error(`Failed to load settings: ${error.message}`);
+        if (throwOnError) {
+          throw error;
+        }
         return window.VSC.Constants.DEFAULT_SETTINGS;
       }
     }

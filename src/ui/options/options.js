@@ -1102,7 +1102,7 @@ async function restore_options() {
     }
 
     // Load settings using VideoSpeedConfig
-    await window.VSC.videoSpeedConfig.load();
+    await window.VSC.videoSpeedConfig.load({ throwOnError: true });
     const storage = window.VSC.videoSpeedConfig.settings;
 
     document.getElementById('rememberSpeed').checked = storage.rememberSpeed;
@@ -1148,12 +1148,7 @@ async function restore_options() {
     return true;
   } catch (error) {
     console.error('Failed to restore options:', error);
-    document.getElementById('status').textContent = `Error loading options: ${error.message}`;
-    document.getElementById('status').classList.add('show', 'error');
-    setTimeout(() => {
-      document.getElementById('status').textContent = '';
-      document.getElementById('status').classList.remove('show', 'error');
-    }, 3000);
+    showTimedStatus(`Error loading options: ${error.message}`, 'error', 0);
     return false;
   }
 }
