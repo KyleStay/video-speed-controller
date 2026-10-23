@@ -174,7 +174,7 @@ header {
   border-bottom-color: var(--md-primary);
 }
 
-/* Split button: [Save | ▾] with dropdown
+/* Split button: [Revert | ▾] with dropdown
  * Global button rule sets: padding 0 24px, min-height 40px, border-radius 20px,
  * background var(--md-primary), color var(--md-on-primary), overflow hidden.
  * We override each of those here. */
@@ -549,21 +549,9 @@ button:active {
 }
 
 /* Specific button styling */
-#save {
-  transition:
-    background-color 0.25s ease,
-    opacity 0.25s ease;
-}
-
-/* !important needed to override .split-button button.split-primary's !important transparent */
-.split-button button#save.has-changes {
-  background-color: var(--vsc-success-container) !important;
-  color: var(--vsc-success) !important;
-  border-color: var(--vsc-success) !important;
-}
-
-.split-button button#save.saved {
-  opacity: 0.6 !important;
+.split-button button#revert:disabled {
+  opacity: 0.5;
+  cursor: default;
   pointer-events: none;
 }
 

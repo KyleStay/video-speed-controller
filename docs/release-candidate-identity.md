@@ -1,10 +1,20 @@
 # Identity-aware release candidates
 
-This candidate advances the extension source/package version to **0.11.5**. It
-is based on 0.11.4 and is a local release candidate; the version bump does not
+This candidate advances the extension source/package version to **0.11.6** with
+options autosave and Revert, retaining the already-published 0.11.5 playback engine.
+It is a local release candidate; the version bump does not
 establish that every unpublished draft or store upload has been inspected.
 `manifest.json` remains a build-time placeholder, and `package.json` plus the
-root `package-lock.json` are aligned at 0.11.5 without running `npm version`.
+root `package-lock.json` are aligned at 0.11.6 without running `npm version`.
+
+The canonical [Chrome Web Store listing](https://chromewebstore.google.com/detail/stayfast-video-speed-cont/inojpjdelhcipcommmoibfahlgkekijo)
+showed 0.11.5, publisher staytechco, updated October 23, 2026. The independently
+verified Google-served 0.11.5 CRX3 has SHA-256
+`74c09bfce2dff34a410d5fd85e53e031a9480a2de6cfafcb1686063f0a516c77`.
+Its runtime/resources match the earlier delivered 0.11.5 candidate; the newer
+canonical README and three options files add autosave/Revert. Private uploaded
+versions remain unverified. Build any distribution artifact from the final
+reviewed default-branch SHA, preserving the public-key identity checks below.
 
 Run minified browser builds first:
 
@@ -31,12 +41,12 @@ embeds only the retained public half of a generated keypair. Its stable
 unpacked ID is `jhkigijhcbfmndinioedenfmjegefgeb`; the temporary private half
 was discarded and is never packaged. Chrome `replacement` fails closed unless
 the supplied public key derives the one known historical listing ID,
-`inojpjdelhcipcommmoibfahlgkekijo`. The public listing and an officially served CRX3 package verify that ID at
-published version 0.11.4. On October 23, 2026 the package's RSA signature,
+`inojpjdelhcipcommmoibfahlgkekijo`. An officially served 0.11.4 CRX3 first established
+that public signing identity. On October 23, 2026 the package's RSA signature,
 public-key-derived ID and signed header ID were verified; independent OpenSSL
 verification also rejected a modified payload. The public SPKI PEM's SHA-256
 is `d79a65b35186e3a2881d255c6f6f1e77d6a5129abe69cafb0b22923ef5dafec3`.
-A same-ID 0.11.5 replacement ZIP is now included in the release handoff, with
+The earlier handoff included a same-ID 0.11.5 replacement ZIP, with
 SHA-256 `f778c86cd005a1e3fd8090c13a3d5e4bc98e2f5d2d9e0fa6f6d45f3a598b57d1`.
 Only public signing identity was recovered; installed state and actual browser
 replacement remain unrun. No private key is needed or requested.

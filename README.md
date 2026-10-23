@@ -96,9 +96,13 @@ players. It shows when players use different speeds and disables speed controls
 when the extension is off or no media is available. Turning it back on refreshes
 the controls in the same popup.
 
-Settings can be exported and imported as JSON. Invalid shortcut values, site
-rules, and preference values are rejected before an import changes your saved
-settings. If saving defaults fails, your existing settings are preserved. Use Tab or Shift+Tab
+Settings save automatically when changed; typing is saved after a short pause.
+**Revert** undoes the latest saved edit while the settings page stays
+open, or discards an invalid or pending edit. **Reset all** restores defaults;
+the reset can also be reverted. Settings can be exported and imported as JSON.
+Invalid shortcut values, site rules, and preference values are rejected before an
+import changes your saved settings. If saving defaults fails, your existing
+settings are preserved. Use Tab or Shift+Tab
 to move out of a shortcut recorder without assigning that key.
 
 ## Install for local development

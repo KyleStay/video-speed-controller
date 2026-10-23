@@ -9,7 +9,7 @@ async function initializeOptions() {
   document.body.innerHTML = new DOMParser().parseFromString(html, 'text/html').body.innerHTML;
   let initialize;
   listeners = [];
-  for (const target of [document, document.body]) {
+  for (const target of [document, document.body, window]) {
     const add = target.addEventListener.bind(target);
     vi.spyOn(target, 'addEventListener').mockImplementation((type, listener, options) => {
       if (type === 'DOMContentLoaded') {
@@ -24,6 +24,11 @@ async function initializeOptions() {
   await import('../../src/ui/options/options.js');
   window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
   await initialize();
+}
+
+async function changeAndWait(input, text = 'Changes saved automatically') {
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await vi.waitFor(() => expect(document.getElementById('status').textContent).toContain(text));
 }
 
 async function clickAndWait(id, text) {
@@ -50,6 +55,7 @@ describe('Actual options page flows', () => {
   });
 
   afterEach(() => {
+    clearTimeout(window.validationTimeout);
     for (const [target, type, listener, options] of listeners) {
       target.removeEventListener(type, listener, options);
     }
@@ -57,7 +63,7 @@ describe('Actual options page flows', () => {
     document.body.innerHTML = '';
   });
 
-  it('records a shortcut, marks it dirty, and persists its modifier chord', async () => {
+  it('automatically saves a recorded shortcut and its modifier chord', async () => {
     const input = document.querySelector('#faster .customKey');
     input.focus();
     input.dispatchEvent(
@@ -70,8 +76,9 @@ describe('Actual options page flows', () => {
         cancelable: true,
       })
     );
-    expect(document.getElementById('save').classList.contains('has-changes')).toBe(true);
-    await clickAndWait('save', 'Options saved');
+    await vi.waitFor(() =>
+      expect(document.getElementById('status').textContent).toContain('Changes saved automatically')
+    );
     expect(
       getMockStorage().keyBindings.find((binding) => binding.action === 'faster')
     ).toMatchObject({
@@ -79,6 +86,111 @@ describe('Actual options page flows', () => {
       keyCode: 80,
       modifiers: { ctrl: true, alt: false, shift: false, meta: false },
     });
+  });
+
+  it('reverts the latest saved edit without undoing earlier edits or unrelated storage', async () => {
+    const remember = document.getElementById('rememberSpeed');
+    remember.checked = true;
+    await changeAndWait(remember);
+    const hidden = document.getElementById('startHidden');
+    hidden.checked = true;
+    await changeAndWait(hidden);
+    getMockStorage().lastSpeed = 2;
+    await clickAndWait('revert', 'Changes reverted');
+    expect(getMockStorage().rememberSpeed).toBe(true);
+    expect(getMockStorage().startHidden).toBe(false);
+    expect(getMockStorage().lastSpeed).toBe(2);
+    expect(hidden.checked).toBe(false);
+    expect(document.getElementById('revert').disabled).toBe(true);
+  });
+
+  it('groups typing into one save and reverts that edit', async () => {
+    const input = document.querySelector('#faster .customValue');
+    const previous = getMockStorage().keyBindings.find(
+      (binding) => binding.action === 'faster'
+    ).value;
+    const set = vi.spyOn(window.VSC.StorageManager, 'set');
+    for (const value of ['0.2', '0.25', '0.3']) {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await vi.waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(getMockStorage().keyBindings.find((binding) => binding.action === 'faster').value).toBe(
+      0.3
+    );
+    await clickAndWait('revert', 'Changes reverted');
+    expect(getMockStorage().keyBindings.find((binding) => binding.action === 'faster').value).toBe(
+      previous
+    );
+  });
+
+  it('discards pending typing when reverted before the save delay', async () => {
+    const input = document.querySelector('#faster .customValue');
+    const previous = input.value;
+    input.value = '0.7';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await clickAndWait('revert', 'Changes reverted');
+    expect(document.querySelector('#faster .customValue').value).toBe(previous);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(document.querySelector('#faster .customValue').value).toBe(previous);
+  });
+
+  it('saves dynamic shortcut and site rule removal automatically', async () => {
+    document.getElementById('add').click();
+    await changeAndWait(document.querySelector('.customs:last-child .customValue'));
+    expect(getMockStorage().keyBindings.at(-1).predefined).toBe(false);
+    const count = getMockStorage().keyBindings.length;
+    document.querySelector('.customs:last-child .removeParent').click();
+    await vi.waitFor(() => expect(getMockStorage().keyBindings).toHaveLength(count - 1));
+    const ruleCount = document.querySelectorAll('.site-rule').length;
+    document.querySelector('.site-rule .removeParent').click();
+    await vi.waitFor(() => expect(getMockStorage().siteRules).toHaveLength(ruleCount - 1));
+  });
+
+  it('keeps saved values when autosave fails and lets the user discard the edit', async () => {
+    const input = document.getElementById('rememberSpeed');
+    const previous = getMockStorage().rememberSpeed;
+    const set = vi
+      .spyOn(window.VSC.StorageManager, 'set')
+      .mockRejectedValue(new Error('Storage unavailable'));
+    input.checked = !previous;
+    await changeAndWait(input, 'Changes could not be saved');
+    expect(getMockStorage().rememberSpeed).toBe(previous);
+    set.mockRestore();
+    await clickAndWait('revert', 'Changes reverted');
+    expect(input.checked).toBe(previous);
+  });
+
+  it('discards invalid edits without undoing the previous saved change', async () => {
+    document.getElementById('rememberSpeed').checked = true;
+    await changeAndWait(document.getElementById('rememberSpeed'));
+    const input = document.getElementById('controllerButtonSize');
+    input.value = '64';
+    await changeAndWait(input, 'Error:');
+    await clickAndWait('revert', 'Changes reverted');
+    expect(getMockStorage().rememberSpeed).toBe(true);
+    expect(input.value).toBe('14');
+  });
+
+  it('serializes rapid changes and allows reverting after an in-flight write', async () => {
+    const original = window.VSC.StorageManager.set;
+    let release;
+    vi.spyOn(window.VSC.StorageManager, 'set').mockImplementationOnce(async (settings) => {
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      await original(settings);
+    });
+    const remember = document.getElementById('rememberSpeed');
+    remember.checked = true;
+    remember.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    document.getElementById('revert').click();
+    release();
+    await vi.waitFor(() =>
+      expect(document.getElementById('status').textContent).toBe('Changes reverted')
+    );
+    expect(getMockStorage().rememberSpeed).toBe(false);
   });
 
   it('allows Tab and Shift+Tab to leave a shortcut recorder without changing the binding', () => {
@@ -113,7 +225,7 @@ describe('Actual options page flows', () => {
     const row = document.querySelector('.site-rule:last-child');
     row.querySelector('.rulePattern').value = 'example.com';
     row.querySelector('.ruleSpeed').value = '1.5';
-    await clickAndWait('save', 'Options saved');
+    await changeAndWait(row.querySelector('.ruleSpeed'));
     expect(getMockStorage().rememberSpeed).toBe(true);
     expect(getMockStorage().siteRules.at(-1)).toEqual({
       pattern: 'example.com',
@@ -128,7 +240,7 @@ describe('Actual options page flows', () => {
     const row = document.querySelector('.site-rule:last-child');
     row.querySelector('.rulePattern').value = 'example.com';
     row.querySelector('.ruleSpeed').value = '1.5oops';
-    await clickAndWait('save', 'Error:');
+    await changeAndWait(row.querySelector('.ruleSpeed'), 'Error:');
     expect(getMockStorage().siteRules).toEqual(previous);
   });
 
@@ -143,22 +255,20 @@ describe('Actual options page flows', () => {
       const previous = JSON.stringify(getMockStorage().keyBindings);
       const input = document.querySelector(`#${action} .customValue`);
       input.value = value;
-      await clickAndWait('save', 'Error:');
+      await changeAndWait(input, 'Error:');
       expect(JSON.stringify(getMockStorage().keyBindings)).toBe(previous);
       expect(input.getAttribute('aria-invalid')).toBe('true');
-      expect(document.activeElement).toBe(input);
+      expect(document.activeElement).not.toBe(input);
     }
   );
 
-  it('reports a failed reset without rejecting the UI event handler or marking it saved', async () => {
+  it('reports a failed reset and preserves storage', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const previous = JSON.stringify(getMockStorage());
     vi.spyOn(window.VSC.StorageManager, 'set').mockRejectedValue(new Error('Storage unavailable'));
-    document.getElementById('save').classList.add('has-changes');
     await clickAndWait('restore', 'Error restoring defaults: Storage unavailable');
-    expect(document.getElementById('save').classList.contains('has-changes')).toBe(true);
-    expect(document.getElementById('save').classList.contains('saved')).toBe(false);
+    expect(document.getElementById('revert').disabled).toBe(true);
     expect(JSON.stringify(getMockStorage())).toBe(previous);
   });
 
@@ -230,8 +340,25 @@ describe('Actual options page flows', () => {
     expect(getMockStorage().obsoleteSetting).toBeUndefined();
     expect(document.getElementById('rememberSpeed').checked).toBe(false);
     expect(document.querySelectorAll('#faster').length).toBe(1);
-    expect(document.getElementById('save').classList.contains('has-changes')).toBe(false);
+    expect(document.getElementById('revert').disabled).toBe(false);
   });
+
+  it.each(['restore', 'import'])(
+    'can revert a full %s replacement, including omitted and obsolete keys',
+    async (action) => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      getMockStorage().obsoleteSetting = 'preserve me';
+      getMockStorage().lastSpeed = 2;
+      const previous = JSON.stringify(getMockStorage());
+      if (action === 'restore') {
+        await clickAndWait('restore', 'Default options restored');
+      } else {
+        await importSettings({ keyBindings: [] }, 'Settings imported successfully');
+      }
+      await clickAndWait('revert', 'Changes reverted');
+      expect(getMockStorage()).toEqual(JSON.parse(previous));
+    }
+  );
 
   it.each([
     ['reset', 1],

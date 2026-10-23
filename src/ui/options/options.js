@@ -23,7 +23,84 @@ import { createRow } from './row-renderer.js';
 // Initialize global namespace for options page
 window.VSC = window.VSC || {};
 
-let keyBindings = [];
+let savedOptions;
+let undoChange = null;
+let autoSaveTimer = null;
+let pendingEdits = false;
+let editRevision = 0;
+let settingsQueue = Promise.resolve();
+
+const AUTO_SAVE_DELAY = 400;
+
+function cloneSettings(settings) {
+  return JSON.parse(JSON.stringify(settings));
+}
+
+function updateRevertButton() {
+  document.getElementById('revert').disabled = !undoChange && !pendingEdits;
+}
+
+function cancelAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
+}
+
+function queueSettingsOperation(operation, replace = false) {
+  settingsQueue = settingsQueue
+    .then(async () => {
+      const panels = document.querySelectorAll('#panel-settings, #panel-advanced');
+      if (replace) {
+        panels.forEach((panel) => {
+          panel.inert = true;
+        });
+      }
+      try {
+        return await operation();
+      } finally {
+        if (replace) {
+          panels.forEach((panel) => {
+            panel.inert = false;
+          });
+        }
+      }
+    })
+    .catch((error) => {
+      window.VSC.logger.error(`Settings operation failed: ${error.message}`);
+      showTimedStatus(`Settings could not be saved: ${error.message}`, 'error', 0);
+    });
+  return settingsQueue;
+}
+
+function queueReplacement(operation) {
+  cancelAutoSave();
+  return queueSettingsOperation(async () => {
+    // Include any valid draft in the replacement's undo snapshot.
+    if (pendingEdits) {
+      await save_options();
+    }
+    return operation();
+  }, true);
+}
+
+function scheduleAutoSave(event) {
+  if (event && !event.target.closest('#panel-settings, #panel-advanced')) {
+    return;
+  }
+  pendingEdits = true;
+  editRevision += 1;
+  updateRevertButton();
+  cancelAutoSave();
+  showTimedStatus('Saving…', '', 0);
+  const save = () => {
+    autoSaveTimer = null;
+    queueSettingsOperation(save_options);
+  };
+  if (event?.type === 'change') {
+    save();
+  } else {
+    autoSaveTimer = setTimeout(save, AUTO_SAVE_DELAY);
+  }
+}
 
 const TAB_NAMES = ['settings', 'advanced', 'faq', 'about'];
 const CONTROLLER_OPACITY_LIMITS = { min: 0, max: 1 };
@@ -320,6 +397,7 @@ function validateControllerCSS(css) {
 
 function showTimedStatus(message, state = 'error', timeout = 5000) {
   const status = document.getElementById('status');
+  clearTimeout(window.validationTimeout);
   status.textContent = message;
   status.classList.remove('show', 'success', 'error');
   status.classList.add('show');
@@ -327,7 +405,7 @@ function showTimedStatus(message, state = 'error', timeout = 5000) {
     status.classList.add(state);
   }
   if (timeout > 0) {
-    setTimeout(() => {
+    window.validationTimeout = setTimeout(() => {
       status.textContent = '';
       status.classList.remove('show', state);
     }, timeout);
@@ -764,7 +842,7 @@ function createKeyBindings(item) {
     binding.modifiers = { ctrl: false, alt: false, shift: false, meta: false };
   }
 
-  keyBindings.push(binding);
+  return binding;
 }
 
 // --- Site rule helpers ---
@@ -854,7 +932,7 @@ function isValidSiteRulePattern(pattern) {
 }
 
 // Validates settings before saving
-export function validate() {
+export function validate({ focus = true } = {}) {
   let valid = true;
   const status = document.getElementById('status');
 
@@ -869,8 +947,10 @@ export function validate() {
     input.setAttribute('aria-invalid', String(Boolean(error)));
     if (error) {
       showTimedStatus(`Error: ${error}`, 'error', 0);
-      switchTab('settings');
-      input.focus();
+      if (focus) {
+        switchTab('settings');
+        input.focus();
+      }
       return false;
     }
   }
@@ -879,10 +959,12 @@ export function validate() {
   if (!controllerSettings.valid) {
     showTimedStatus(`Error: ${controllerSettings.message}`, 'error', 0);
     const panel = controllerSettings.input.closest('[role="tabpanel"]');
-    if (panel?.hidden && panel.getAttribute('aria-labelledby')) {
+    if (focus && panel?.hidden && panel.getAttribute('aria-labelledby')) {
       switchTab(panel.getAttribute('aria-labelledby').replace('tab-', ''));
     }
-    controllerSettings.input.focus();
+    if (focus) {
+      controllerSettings.input.focus();
+    }
     return false;
   }
 
@@ -923,101 +1005,91 @@ export function validate() {
   return valid;
 }
 
-// Saves options using VideoSpeedConfig system
+function collectOptions() {
+  return {
+    rememberSpeed: document.getElementById('rememberSpeed').checked,
+    exclusiveKeys: document.getElementById('exclusiveKeys').checked,
+    audioBoolean: document.getElementById('audioBoolean').checked,
+    startHidden: document.getElementById('startHidden').checked,
+    controllerOpacity: Number(document.getElementById('controllerOpacity').value),
+    controllerButtonSize: Number(document.getElementById('controllerButtonSize').value),
+    logLevel: Number(document.getElementById('logLevel').value),
+    keyBindings: Array.from(document.querySelectorAll('.customs'), createKeyBindings),
+    siteRules: collectSiteRules(),
+    customCSS: document.getElementById('controllerCSS').value,
+  };
+}
+
+// Save only changed fields, leaving settings changed by other contexts alone.
 async function save_options() {
-  if (validate() === false) {
+  if (!savedOptions || !validate({ focus: false })) {
     return false;
   }
-
-  const status = document.getElementById('status');
-  status.textContent = '';
-  status.classList.remove('show', 'success', 'error');
-
-  try {
-    keyBindings = [];
-    Array.from(document.querySelectorAll('.customs')).forEach((item) => createKeyBindings(item));
-
-    const rememberSpeed = document.getElementById('rememberSpeed').checked;
-    const exclusiveKeys = document.getElementById('exclusiveKeys').checked;
-    const audioBoolean = document.getElementById('audioBoolean').checked;
-    const startHidden = document.getElementById('startHidden').checked;
-    const controllerSettings = validateControllerSettings();
-    const { controllerOpacity, controllerButtonSize } = controllerSettings;
-    const logLevel = parseInt(document.getElementById('logLevel').value);
-    const siteRules = collectSiteRules();
-    const customCSS = document.getElementById('controllerCSS').value;
-
-    // Validate CSS syntax — block save on parse error
-    if (!validateControllerCSS(customCSS)) {
-      status.textContent = 'Error: Controller CSS has syntax errors. Fix them before saving.';
-      status.classList.add('show', 'error');
-      setTimeout(() => {
-        status.textContent = '';
-        status.classList.remove('show', 'error');
-      }, 5000);
-      return false;
-    }
-
-    // Byte-length guard for chrome.storage.sync (8KB per-item limit)
-    const storageLimitError = validateCustomCSSStorageLimit(customCSS);
-    if (storageLimitError) {
-      status.textContent = `Error: ${storageLimitError}`;
-      status.classList.add('show', 'error');
-      setTimeout(() => {
-        status.textContent = '';
-        status.classList.remove('show', 'error');
-      }, 5000);
-      return false;
-    }
-
-    // Ensure VideoSpeedConfig singleton is initialized
-    if (!window.VSC.videoSpeedConfig) {
-      window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
-    }
-
-    // Use VideoSpeedConfig to save settings (sync storage)
-    const settingsToSave = {
-      rememberSpeed: rememberSpeed,
-      exclusiveKeys: exclusiveKeys,
-      audioBoolean: audioBoolean,
-      startHidden: startHidden,
-      controllerOpacity: controllerOpacity,
-      controllerButtonSize: controllerButtonSize,
-      logLevel: logLevel,
-      keyBindings: keyBindings,
-      siteRules: siteRules,
-    };
-
-    settingsToSave.customCSS = customCSS;
-
-    const ok = await window.VSC.videoSpeedConfig.save(settingsToSave);
-
-    if (!ok) {
-      status.textContent = 'Error: failed to save options to storage';
-      status.classList.add('show', 'error');
-      setTimeout(() => {
-        status.textContent = '';
-        status.classList.remove('show', 'error');
-      }, 3000);
-      return false;
-    }
-
-    status.textContent = 'Options saved';
-    status.classList.add('show', 'success');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'success');
-    }, 2000);
-    return true;
-  } catch (error) {
-    console.error('Failed to save options:', error);
-    status.textContent = `Error saving options: ${error.message}`;
-    status.classList.add('show', 'error');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'error');
-    }, 3000);
+  const settings = collectOptions();
+  if (!validateControllerCSS(settings.customCSS)) {
+    showTimedStatus('Custom CSS could not be saved. Fix the errors below.', 'error', 0);
     return false;
+  }
+  const storageLimitError = validateCustomCSSStorageLimit(settings.customCSS);
+  if (storageLimitError) {
+    showTimedStatus(storageLimitError, 'error', 0);
+    return false;
+  }
+  const changes = Object.fromEntries(
+    Object.entries(settings).filter(
+      ([key, value]) => JSON.stringify(value) !== JSON.stringify(savedOptions[key])
+    )
+  );
+  const revision = editRevision;
+  if (Object.keys(changes).length) {
+    const previous = Object.fromEntries(
+      Object.keys(changes).map((key) => [key, savedOptions[key]])
+    );
+    showTimedStatus('Saving…', '', 0);
+    const ok = await window.VSC.videoSpeedConfig.save(changes);
+    if (!ok) {
+      showTimedStatus(
+        'Changes could not be saved. Change a setting to retry, or revert.',
+        'error',
+        0
+      );
+      return false;
+    }
+    undoChange = { settings: cloneSettings(previous), replace: false };
+    savedOptions = cloneSettings(settings);
+  }
+  if (revision === editRevision) {
+    pendingEdits = Array.from(document.querySelectorAll('.rulePattern')).some(
+      (input) => !input.value.trim()
+    );
+    if (pendingEdits) {
+      showTimedStatus('Enter a site pattern to save the new rule.', '', 0);
+    } else {
+      showTimedStatus('Changes saved automatically', 'success', 2000);
+    }
+  }
+  updateRevertButton();
+  return true;
+}
+
+async function revert_changes(discardPending) {
+  try {
+    if (!discardPending && !pendingEdits && undoChange) {
+      if (undoChange.replace) {
+        await replaceStoredSettings(undoChange.settings);
+      } else if (!(await window.VSC.videoSpeedConfig.save(undoChange.settings))) {
+        throw new Error('Storage write failed');
+      }
+      undoChange = null;
+    }
+    if (!(await restore_options())) {
+      throw new Error('Could not reload settings');
+    }
+    pendingEdits = false;
+    updateRevertButton();
+    showTimedStatus('Changes reverted', 'success', 2000);
+  } catch (error) {
+    showTimedStatus(`Could not revert changes: ${error.message}`, 'error', 0);
   }
 }
 
@@ -1068,6 +1140,12 @@ async function restore_options() {
         setShortcutInput(row.querySelector('.customKey'), item);
       }
     }
+    savedOptions = cloneSettings(collectOptions());
+    document.querySelectorAll('[aria-invalid]').forEach((input) => {
+      input.removeAttribute('aria-invalid');
+      input.removeAttribute('aria-errormessage');
+    });
+    return true;
   } catch (error) {
     console.error('Failed to restore options:', error);
     document.getElementById('status').textContent = `Error loading options: ${error.message}`;
@@ -1076,6 +1154,7 @@ async function restore_options() {
       document.getElementById('status').textContent = '';
       document.getElementById('status').classList.remove('show', 'error');
     }, 3000);
+    return false;
   }
 }
 
@@ -1095,12 +1174,21 @@ async function refreshPersistedSpeed(lastSpeed) {
   }
 }
 
+async function replaceStoredSettings(settings) {
+  const existing = await window.VSC.StorageManager.get(null);
+  // Commit the replacement before removing anything; failed writes preserve storage.
+  await window.VSC.StorageManager.set(settings);
+  await refreshPersistedSpeed(settings.lastSpeed);
+  const staleKeys = Object.keys(existing).filter((key) => !(key in settings));
+  if (staleKeys.length) {
+    await window.VSC.StorageManager.remove(staleKeys);
+  }
+  return existing;
+}
+
 async function restore_defaults() {
-  const status = document.getElementById('status');
   try {
-    status.textContent = 'Restoring defaults...';
-    status.classList.remove('success', 'error');
-    status.classList.add('show');
+    showTimedStatus('Restoring defaults…', '', 0);
 
     // Ensure VideoSpeedConfig singleton is initialized
     if (!window.VSC.videoSpeedConfig) {
@@ -1108,34 +1196,19 @@ async function restore_defaults() {
     }
 
     const defaults = { ...window.VSC.Constants.DEFAULT_SETTINGS, schemaVersion: 3 };
-    // Commit defaults before removing obsolete keys. A failed write must not
-    // erase the user's shortcuts and preferences.
-    const existingSettings = await window.VSC.StorageManager.get(null);
-    await window.VSC.StorageManager.set(defaults);
-    await refreshPersistedSpeed(defaults.lastSpeed);
-    const staleKeys = Object.keys(existingSettings).filter((key) => !(key in defaults));
-    if (staleKeys.length > 0) {
-      await window.VSC.StorageManager.remove(staleKeys);
-    }
+    const previous = await replaceStoredSettings(defaults);
+    undoChange = { settings: cloneSettings(previous), replace: true };
+    pendingEdits = false;
 
     // Reload the options page (clears and re-renders all shortcut rows)
     await restore_options();
+    updateRevertButton();
 
-    status.textContent = 'Default options restored';
-    status.classList.add('success');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'success');
-    }, 2000);
+    showTimedStatus('Default options restored', 'success', 2000);
     return true;
   } catch (error) {
     console.error('Failed to restore defaults:', error);
-    status.textContent = `Error restoring defaults: ${error.message}`;
-    status.classList.add('show', 'error');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'error');
-    }, 3000);
+    showTimedStatus(`Error restoring defaults: ${error.message}`, 'error', 0);
     return false;
   }
 }
@@ -1260,7 +1333,6 @@ export function validateImportedSettings(settings) {
 }
 
 async function handleImportFile(event) {
-  const status = document.getElementById('status');
   const file = event.target.files[0];
   if (!file) {
     return;
@@ -1312,43 +1384,16 @@ async function handleImportFile(event) {
       window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
     }
 
-    // Write first so a rejected quota/API operation cannot erase the user's
-    // current settings. Once the atomic set succeeds, remove keys omitted by
-    // the import so they fall back to defaults on the subsequent restore.
-    const existingSettings = await window.VSC.StorageManager.get(null);
-    const ok = await window.VSC.videoSpeedConfig.save(imported);
-    if (!ok) {
-      throw new Error('Failed to write imported settings to storage');
-    }
-    await refreshPersistedSpeed(imported.lastSpeed);
-    const staleKeys = Object.keys(existingSettings).filter((key) => !(key in imported));
-    if (staleKeys.length > 0) {
-      await window.VSC.StorageManager.remove(staleKeys);
-    }
-
-    // Remove custom shortcut rows before reloading UI
-    document.querySelectorAll('.removeParent').forEach((button) => {
-      button.click();
-    });
-
-    // Reload settings into the UI
+    const previous = await replaceStoredSettings(imported);
+    undoChange = { settings: cloneSettings(previous), replace: true };
+    pendingEdits = false;
     await restore_options();
+    updateRevertButton();
 
-    status.textContent = 'Settings imported successfully';
-    status.classList.remove('error');
-    status.classList.add('show', 'success');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'success');
-    }, 2000);
+    showTimedStatus('Settings imported successfully', 'success', 2000);
   } catch (error) {
     console.error('Failed to import settings:', error);
-    status.textContent = `Import failed: ${error.message}`;
-    status.classList.add('show', 'error');
-    setTimeout(() => {
-      status.textContent = '';
-      status.classList.remove('show', 'error');
-    }, 4000);
+    showTimedStatus(`Import failed: ${error.message}`, 'error', 0);
   }
 }
 
@@ -1463,56 +1508,51 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await restore_options();
 
-  const saveBtn = document.getElementById('save');
+  updateRevertButton();
+  document.body.addEventListener('input', scheduleAutoSave);
+  document.body.addEventListener('change', scheduleAutoSave);
 
-  // Dirty-state tracking: green button when unsaved changes exist,
-  // dimmed briefly after save to confirm the action landed.
-  function markDirty() {
-    saveBtn.classList.add('has-changes');
-    saveBtn.classList.remove('saved');
-  }
-  function markClean() {
-    saveBtn.classList.remove('has-changes');
-    saveBtn.classList.add('saved');
-    setTimeout(() => saveBtn.classList.remove('saved'), 1500);
-  }
-
-  // Catch all form changes via delegation (covers dynamic rows too)
-  document.body.addEventListener('input', markDirty);
-  document.body.addEventListener('change', markDirty);
-
-  saveBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    if (await save_options()) {
-      markClean();
-    }
+  document.getElementById('revert').addEventListener('click', () => {
+    const discardPending = pendingEdits && autoSaveTimer !== null;
+    cancelAutoSave();
+    queueSettingsOperation(() => revert_changes(discardPending), true);
   });
 
   document.getElementById('add').addEventListener('click', () => {
-    add_shortcut();
-    markDirty();
+    add_shortcut({ value: 0.1 });
+    scheduleAutoSave();
   });
   document.getElementById('add-site-rule').addEventListener('click', () => {
     add_site_rule();
-    markDirty();
+    scheduleAutoSave();
   });
 
-  document.getElementById('restore').addEventListener('click', async (e) => {
+  document.getElementById('restore').addEventListener('click', (e) => {
     e.preventDefault();
     const confirmed = window.confirm(
       'Reset all StayFast Video settings to their defaults? This clears shortcuts, site rules, and custom CSS.'
     );
-    if (!confirmed) {
-      return;
+    if (confirmed) {
+      queueReplacement(restore_defaults);
     }
-    if (await restore_defaults()) {
-      markClean();
+  });
+
+  window.addEventListener('pagehide', () => {
+    if (autoSaveTimer !== null) {
+      cancelAutoSave();
+      queueSettingsOperation(save_options);
     }
   });
 
   document.getElementById('export').addEventListener('click', (e) => {
     e.preventDefault();
-    export_settings();
+    cancelAutoSave();
+    queueSettingsOperation(async () => {
+      if (pendingEdits && !(await save_options())) {
+        return;
+      }
+      await export_settings();
+    });
   });
 
   document.getElementById('import').addEventListener('click', (e) => {
@@ -1520,7 +1560,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     import_settings();
   });
 
-  document.getElementById('importFile').addEventListener('change', handleImportFile);
+  document.getElementById('importFile').addEventListener('change', (event) => {
+    queueReplacement(() => handleImportFile(event));
+  });
 
   setupTabNavigation();
   setupSplitMenu();
@@ -1575,7 +1617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('click', (event) => {
     eventCaller(event, 'removeParent', () => {
       event.target.closest('.row').remove();
-      markDirty();
+      scheduleAutoSave();
     });
   });
   document.addEventListener('change', (event) => {

@@ -6,6 +6,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import runBasic from './basic.e2e.js';
+import runOptions from './options.e2e.js';
 import runStartup from './startup.e2e.js';
 import runResume from './resume.e2e.js';
 import { installBridgeTestHooks } from './bridge-test-hooks.js';
@@ -27,6 +28,7 @@ const suites = {
   resume: runResume,
   startup: runStartup,
   basic: runBasic,
+  options: runOptions,
   youtube: runYouTube,
   mobile: runMobile,
   'ios-player': runIOSPlayer,
@@ -48,7 +50,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use startup, resume, basic, mobile, ios-player, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use startup, resume, basic, options, mobile, ios-player, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 
