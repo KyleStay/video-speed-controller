@@ -299,15 +299,113 @@ describe('Actual options page flows', () => {
     }
   );
 
-  it('reports a failed reset and preserves storage', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const previous = JSON.stringify(getMockStorage());
-    vi.spyOn(window.VSC.StorageManager, 'set').mockRejectedValue(new Error('Storage unavailable'));
-    await clickAndWait('restore', 'Error restoring defaults: Storage unavailable');
-    expect(document.getElementById('revert').disabled).toBe(true);
-    expect(JSON.stringify(getMockStorage())).toBe(previous);
-  });
+  it.each(['restore', 'import'])(
+    'reports a failed initial %s write and preserves storage',
+    async (action) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const previous = structuredClone(getMockStorage());
+      vi.spyOn(window.VSC.StorageManager, 'set').mockRejectedValue(
+        new Error('Storage unavailable')
+      );
+      if (action === 'restore') {
+        await clickAndWait('restore', 'Error restoring defaults: Storage unavailable');
+      } else {
+        await importSettings(
+          { keyBindings: previous.keyBindings },
+          'Import failed: Storage unavailable'
+        );
+      }
+      expect(document.getElementById('revert').disabled).toBe(true);
+      expect(document.getElementById('panel-settings').inert).toBe(false);
+      expect(getMockStorage()).toEqual(previous);
+    }
+  );
+
+  it.each([
+    ['restore', 'speed-remove'],
+    ['restore', 'speed-set'],
+    ['restore', 'stale-remove'],
+    ['import', 'speed-remove'],
+    ['import', 'speed-set'],
+    ['import', 'stale-remove'],
+    ['import', 'speed-prime'],
+  ])(
+    'recovers a partially committed %s after %s fails, including a failed undo retry',
+    async (action, phase) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const remember = document.getElementById('rememberSpeed');
+      remember.checked = true;
+      await changeAndWait(remember);
+      getMockStorage().obsoleteSetting = 'preserve me';
+      getMockStorage().lastSpeed = 2;
+      const previous = structuredClone(getMockStorage());
+      const realSet = window.VSC.StorageManager.set.bind(window.VSC.StorageManager);
+      const realRemove = window.VSC.StorageManager.remove.bind(window.VSC.StorageManager);
+      let failedPhase = phase;
+      const set = vi
+        .spyOn(window.VSC.StorageManager, 'set')
+        .mockImplementation(async (settings) => {
+          if (
+            ['speed-set', 'speed-prime'].includes(failedPhase) &&
+            Object.keys(settings).length === 1 &&
+            'lastSpeed' in settings
+          ) {
+            throw new Error('Storage unavailable');
+          }
+          return realSet(settings);
+        });
+      vi.spyOn(window.VSC.StorageManager, 'remove').mockImplementation(async (keys) => {
+        if (
+          (failedPhase === 'speed-remove' && keys === 'lastSpeed') ||
+          (failedPhase === 'stale-remove' && Array.isArray(keys))
+        ) {
+          throw new Error('Storage unavailable');
+        }
+        return realRemove(keys);
+      });
+      const message =
+        action === 'restore'
+          ? 'Defaults saved, but settings update could not finish'
+          : 'Settings imported, but settings update could not finish';
+      if (action === 'restore') {
+        await clickAndWait('restore', message);
+      } else {
+        await importSettings(
+          {
+            rememberSpeed: false,
+            keyBindings: previous.keyBindings,
+            ...(phase === 'speed-prime' ? {} : { lastSpeed: 1 }),
+          },
+          message
+        );
+      }
+      expect(getMockStorage().rememberSpeed).toBe(false);
+      expect(remember.checked).toBe(true);
+      expect(document.getElementById('panel-settings').inert).toBe(true);
+      expect(document.getElementById('revert').disabled).toBe(false);
+      set.mockClear();
+      remember.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      expect(set).not.toHaveBeenCalled();
+
+      // Force the corresponding post-commit phase to fail during undo too.
+      getMockStorage().replacementOnlySetting = 'remove during undo';
+      if (phase === 'speed-prime') {
+        failedPhase = 'speed-set';
+      }
+      await clickAndWait('revert', 'Could not revert changes: Storage unavailable');
+      expect(document.getElementById('panel-settings').inert).toBe(true);
+      expect(document.getElementById('revert').disabled).toBe(false);
+      failedPhase = null;
+      await clickAndWait('revert', 'Changes reverted');
+      expect(getMockStorage()).toEqual(previous);
+      expect(remember.checked).toBe(true);
+      expect(document.getElementById('panel-settings').inert).toBe(false);
+      expect(document.getElementById('revert').disabled).toBe(true);
+    }
+  );
 
   it.each(['restore', 'import'])(
     'keeps a saved %s replacement recoverable when its reload fails',
@@ -528,20 +626,33 @@ describe('Actual options page flows', () => {
     }
   );
 
-  it('preserves existing settings when the storage read before an import fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const previous = JSON.stringify(getMockStorage());
-    vi.spyOn(chrome.storage.sync, 'get').mockImplementation((_keys, callback) => {
-      chrome.runtime.lastError = { message: 'Storage unavailable' };
-      callback();
-      chrome.runtime.lastError = null;
-    });
-    await importSettings(
-      { keyBindings: [] },
-      'Import failed: Storage read failed: Storage unavailable'
-    );
-    expect(JSON.stringify(getMockStorage())).toBe(previous);
-  });
+  it.each(['restore', 'import'])(
+    'preserves existing settings when the snapshot read before %s fails',
+    async (action) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const previous = JSON.stringify(getMockStorage());
+      vi.spyOn(chrome.storage.sync, 'get').mockImplementation((_keys, callback) => {
+        chrome.runtime.lastError = { message: 'Storage unavailable' };
+        callback();
+        chrome.runtime.lastError = null;
+      });
+      if (action === 'restore') {
+        await clickAndWait(
+          'restore',
+          'Error restoring defaults: Storage read failed: Storage unavailable'
+        );
+      } else {
+        await importSettings(
+          { keyBindings: [] },
+          'Import failed: Storage read failed: Storage unavailable'
+        );
+      }
+      expect(JSON.stringify(getMockStorage())).toBe(previous);
+      expect(document.getElementById('panel-settings').inert).toBe(false);
+      expect(document.getElementById('revert').disabled).toBe(true);
+    }
+  );
 
   it.each([
     { keyBindings: [null] },

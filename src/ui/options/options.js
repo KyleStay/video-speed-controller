@@ -46,6 +46,15 @@ function cancelAutoSave() {
   autoSaveTimer = null;
 }
 
+function requireOptionsReload() {
+  needsReload = true;
+  cancelAutoSave();
+  document.querySelectorAll('#panel-settings, #panel-advanced').forEach((panel) => {
+    panel.inert = true;
+  });
+  updateRevertButton();
+}
+
 function queueSettingsOperation(operation, replace = false) {
   settingsQueue = settingsQueue
     .then(async () => {
@@ -1163,12 +1172,7 @@ async function restore_options() {
     needsReload = false;
     return true;
   } catch (error) {
-    needsReload = true;
-    cancelAutoSave();
-    document.querySelectorAll('#panel-settings, #panel-advanced').forEach((panel) => {
-      panel.inert = true;
-    });
-    updateRevertButton();
+    requireOptionsReload();
     console.error('Failed to restore options:', error);
     showTimedStatus(`Error loading options: ${error.message}`, 'error', 0);
     return false;
@@ -1191,10 +1195,17 @@ async function refreshPersistedSpeed(lastSpeed) {
   }
 }
 
-async function replaceStoredSettings(settings) {
+async function replaceStoredSettings(settings, rememberUndo = false) {
   const existing = await window.VSC.StorageManager.get(null);
   // Commit the replacement before removing anything; failed writes preserve storage.
   await window.VSC.StorageManager.set(settings);
+  // From this point storage has changed, even if a later cleanup write fails.
+  // Keep the original snapshot and block edits until the form can reload.
+  if (rememberUndo) {
+    undoChange = { settings: cloneSettings(existing), replace: true };
+    pendingEdits = false;
+  }
+  requireOptionsReload();
   await refreshPersistedSpeed(settings.lastSpeed);
   const staleKeys = Object.keys(existing).filter((key) => !(key in settings));
   if (staleKeys.length) {
@@ -1213,9 +1224,7 @@ async function restore_defaults() {
     }
 
     const defaults = { ...window.VSC.Constants.DEFAULT_SETTINGS, schemaVersion: 3 };
-    const previous = await replaceStoredSettings(defaults);
-    undoChange = { settings: cloneSettings(previous), replace: true };
-    pendingEdits = false;
+    await replaceStoredSettings(defaults, true);
 
     // Reload the options page (clears and re-renders all shortcut rows)
     if (!(await restore_options())) {
@@ -1232,7 +1241,10 @@ async function restore_defaults() {
     return true;
   } catch (error) {
     console.error('Failed to restore defaults:', error);
-    showTimedStatus(`Error restoring defaults: ${error.message}`, 'error', 0);
+    const message = needsReload
+      ? `Defaults saved, but settings update could not finish. Use Revert to recover: ${error.message}`
+      : `Error restoring defaults: ${error.message}`;
+    showTimedStatus(message, 'error', 0);
     return false;
   }
 }
@@ -1408,9 +1420,7 @@ async function handleImportFile(event) {
       window.VSC.videoSpeedConfig = new window.VSC.VideoSpeedConfig();
     }
 
-    const previous = await replaceStoredSettings(imported);
-    undoChange = { settings: cloneSettings(previous), replace: true };
-    pendingEdits = false;
+    await replaceStoredSettings(imported, true);
     if (!(await restore_options())) {
       showTimedStatus(
         'Settings imported, but settings could not reload. Use Revert to recover.',
@@ -1424,7 +1434,10 @@ async function handleImportFile(event) {
     showTimedStatus('Settings imported successfully', 'success', 2000);
   } catch (error) {
     console.error('Failed to import settings:', error);
-    showTimedStatus(`Import failed: ${error.message}`, 'error', 0);
+    const message = needsReload
+      ? `Settings imported, but settings update could not finish. Use Revert to recover: ${error.message}`
+      : `Import failed: ${error.message}`;
+    showTimedStatus(message, 'error', 0);
   }
 }
 
