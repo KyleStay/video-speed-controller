@@ -43,6 +43,8 @@ async function runE2ETests() {
     testFiles = ['youtube.e2e.js'];
   } else if (testType === 'basic') {
     testFiles = ['basic.e2e.js'];
+  } else if (testType === 'options') {
+    testFiles = ['options.e2e.js'];
   } else if (testType === 'settings') {
     testFiles = ['settings-injection.e2e.js'];
   } else if (testType === 'display') {

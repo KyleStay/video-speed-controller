@@ -12,6 +12,7 @@ import {
 } from '../../../scripts/package-identity-candidate.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const packageVersion = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const devPublicKey = readFileSync(
   path.join(root, 'release-keys/development-public-key.txt'),
   'utf8'
@@ -22,7 +23,7 @@ const developmentFirefoxId = 'stayfast-development@staytech.co';
 const packageOutput = mkdtempSync(path.join(tmpdir(), 'stayfast-package-test-'));
 const sampleManifest = {
   name: 'StayFast Video: Speed Controller',
-  version: '0.11.5',
+  version: packageVersion,
   key: 'source placeholder should be removed',
   permissions: ['storage'],
   host_permissions: [],
@@ -38,7 +39,7 @@ function derivedChromeId(key) {
 describe('identity-aware release candidate manifests', () => {
   it('keeps Chrome store output free of an unpacked development identity', () => {
     const selected = selectManifest({ manifest: sampleManifest, browser: 'chrome', mode: 'store' });
-    expect(selected.version).toBe('0.11.5');
+    expect(selected.version).toBe(packageVersion);
     expect(selected.name).toBe(sampleManifest.name);
     expect(selected).not.toHaveProperty('key');
     expect(selected.permissions).toEqual(sampleManifest.permissions);
@@ -158,7 +159,7 @@ describe('identity-aware release candidate manifests', () => {
       .trim()
       .split('\n');
 
-    expect(manifest.version).toBe('0.11.5');
+    expect(manifest.version).toBe(packageVersion);
     expect(manifest.name).toMatch(/\(Development\)$/);
     expect(derivedChromeId(manifest.key)).toBe('jhkigijhcbfmndinioedenfmjegefgeb');
     expect(manifest.permissions).toEqual(['storage']);
@@ -172,7 +173,10 @@ describe('identity-aware release candidate manifests', () => {
   });
 
   it('preserves a checksum-only collision and does not publish a ZIP beside it', async () => {
-    const checksumOnlyPath = path.join(packageOutput, 'stayfast-0.11.5-firefox-store.zip.sha256');
+    const checksumOnlyPath = path.join(
+      packageOutput,
+      `stayfast-${packageVersion}-firefox-store.zip.sha256`
+    );
     const sentinel = Buffer.from('retain existing checksum artifact');
     writeFileSync(checksumOnlyPath, sentinel);
 

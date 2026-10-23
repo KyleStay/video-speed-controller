@@ -59,7 +59,9 @@
         </button>
       </nav>
       <div class="split-button">
-        <button id="save" class="split-primary">Save</button>
+        <button id="revert" class="split-primary" title="Revert last changes" disabled>
+          Revert
+        </button>
         <button
           id="split-toggle"
           class="split-arrow"
@@ -72,7 +74,7 @@
         <div id="split-menu" class="split-dropdown" hidden>
           <button id="import">Import</button>
           <button id="export">Export</button>
-          <button id="restore">Reset</button>
+          <button id="restore">Reset all</button>
         </div>
         <input type="file" id="importFile" accept=".json" hidden />
       </div>

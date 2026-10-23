@@ -453,6 +453,11 @@ with direct `chrome.*` access.
   (`MutationObserver.enableAttributeObservation`); skip the comprehensive scan on
   frames with no media signal (`hasMediaIndicators`); guard expensive log-string
   construction on hot paths with `logger.canLog(level)`.
+- **Options autosave**: the options page serializes automatic writes, revert,
+  reset and import. Typing coalesces for 400ms; committed changes save immediately.
+  Ordinary writes and their single-step undo touch only changed fields. Reset/import
+  retain a full replacement snapshot for undo until the next successful save or page close.
+  Invalid/pending drafts can be discarded without undoing an earlier saved edit.
 - **Settings keys**: the bridge's bounded fetch (`SYNCED_SETTING_KEYS`) must
   cover every key in `DEFAULT_SETTINGS`. A test enforces this
   (`tests/unit/utils/setting-keys.test.js`) — add new settings to both.

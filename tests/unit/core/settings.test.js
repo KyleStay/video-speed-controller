@@ -45,6 +45,49 @@ describe('Settings', () => {
     expect(settings.lastSpeed).toBeNull(); // no user choice yet
   });
 
+  it('preserves default load fallback while strict callers receive the storage failure', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    const settings = config.settings;
+    const failure = new Error('Storage read unavailable');
+    const get = vi.spyOn(window.VSC.StorageManager, 'get').mockRejectedValue(failure);
+    const set = vi.spyOn(window.VSC.StorageManager, 'set');
+    try {
+      expect(await config.load()).toBe(window.VSC.Constants.DEFAULT_SETTINGS);
+      expect(config.settings).toBe(settings);
+      await expect(config.load({ throwOnError: true })).rejects.toBe(failure);
+      expect(config.settings).toBe(settings);
+      expect(set).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
+  });
+
+  it('reloads persisted settings after a strict read failure and an unpersisted session edit', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    const previous = getMockStorage().rememberSpeed;
+    const set = vi
+      .spyOn(window.VSC.StorageManager, 'set')
+      .mockRejectedValue(new Error('Storage write unavailable'));
+    const get = vi
+      .spyOn(window.VSC.StorageManager, 'get')
+      .mockRejectedValue(new Error('Storage read unavailable'));
+    try {
+      expect(await config.save({ rememberSpeed: !previous })).toBe(false);
+      expect(config.settings.rememberSpeed).toBe(!previous);
+      await expect(config.load({ throwOnError: true })).rejects.toThrow('Storage read unavailable');
+      get.mockRestore();
+      await config.load({ throwOnError: true });
+      expect(config.settings.rememberSpeed).toBe(previous);
+      expect(getMockStorage().rememberSpeed).toBe(previous);
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
+  });
+
   it('VideoSpeedConfig should save settings to storage', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
