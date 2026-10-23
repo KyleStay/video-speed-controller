@@ -309,6 +309,73 @@ describe('Actual options page flows', () => {
     expect(JSON.stringify(getMockStorage())).toBe(previous);
   });
 
+  it.each(['restore', 'import'])(
+    'keeps a saved %s replacement recoverable when its reload fails',
+    async (action) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const remember = document.getElementById('rememberSpeed');
+      remember.checked = true;
+      await changeAndWait(remember);
+      getMockStorage().obsoleteSetting = 'preserve me';
+      getMockStorage().lastSpeed = 2;
+      const previous = structuredClone(getMockStorage());
+      const realGet = window.VSC.StorageManager.get.bind(window.VSC.StorageManager);
+      const get = vi
+        .spyOn(window.VSC.StorageManager, 'get')
+        .mockImplementationOnce(realGet)
+        .mockRejectedValue(new Error('Storage read unavailable'));
+      const set = vi.spyOn(window.VSC.StorageManager, 'set');
+      const message = action === 'restore' ? 'Defaults saved, but' : 'Settings imported, but';
+      if (action === 'restore') {
+        await clickAndWait('restore', message);
+      } else {
+        await importSettings({ rememberSpeed: false, keyBindings: previous.keyBindings }, message);
+      }
+      expect(getMockStorage().rememberSpeed).toBe(false);
+      expect(getMockStorage().obsoleteSetting).toBeUndefined();
+      expect(remember.checked).toBe(true);
+      expect(document.getElementById('panel-settings').inert).toBe(true);
+      expect(document.getElementById('panel-advanced').inert).toBe(true);
+      expect(document.getElementById('revert').disabled).toBe(false);
+
+      // Even a dispatched edit cannot write from the stale form baseline.
+      set.mockClear();
+      remember.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      expect(set).not.toHaveBeenCalled();
+      expect(document.getElementById('status').textContent).toContain(message);
+
+      await clickAndWait('restore', 'Use Revert to recover before replacing them');
+      expect(set).not.toHaveBeenCalled();
+
+      await clickAndWait('revert', 'Could not revert changes: Storage read unavailable');
+      expect(document.getElementById('revert').disabled).toBe(false);
+
+      // An undo write can also succeed before its reload fails. Keep the full
+      // snapshot until a subsequent retry can render the restored settings.
+      get.mockImplementationOnce(realGet);
+      document.getElementById('revert').click();
+      await vi.waitFor(() =>
+        expect(document.getElementById('status').textContent).toContain('Could not reload settings')
+      );
+      expect(getMockStorage()).toEqual(previous);
+      expect(document.getElementById('panel-settings').inert).toBe(true);
+      expect(document.getElementById('revert').disabled).toBe(false);
+
+      get.mockRestore();
+      await clickAndWait('revert', 'Changes reverted');
+      expect(getMockStorage()).toEqual(previous);
+      expect(remember.checked).toBe(true);
+      expect(document.getElementById('panel-settings').inert).toBe(false);
+      expect(document.getElementById('panel-advanced').inert).toBe(false);
+      expect(document.getElementById('revert').disabled).toBe(true);
+      remember.checked = false;
+      await changeAndWait(remember);
+      expect(getMockStorage().rememberSpeed).toBe(false);
+    }
+  );
+
   it('imports valid settings and renders their shortcuts and preferences', async () => {
     await importSettings(
       {

@@ -27,6 +27,7 @@ let savedOptions;
 let undoChange = null;
 let autoSaveTimer = null;
 let pendingEdits = false;
+let needsReload = false;
 let editRevision = 0;
 let settingsQueue = Promise.resolve();
 
@@ -37,7 +38,7 @@ function cloneSettings(settings) {
 }
 
 function updateRevertButton() {
-  document.getElementById('revert').disabled = !undoChange && !pendingEdits;
+  document.getElementById('revert').disabled = !undoChange && !pendingEdits && !needsReload;
 }
 
 function cancelAutoSave() {
@@ -59,7 +60,7 @@ function queueSettingsOperation(operation, replace = false) {
       } finally {
         if (replace) {
           panels.forEach((panel) => {
-            panel.inert = false;
+            panel.inert = needsReload;
           });
         }
       }
@@ -74,6 +75,14 @@ function queueSettingsOperation(operation, replace = false) {
 function queueReplacement(operation) {
   cancelAutoSave();
   return queueSettingsOperation(async () => {
+    if (needsReload) {
+      showTimedStatus(
+        'Settings could not reload. Use Revert to recover before replacing them.',
+        'error',
+        0
+      );
+      return false;
+    }
     // Include any valid draft in the replacement's undo snapshot.
     if (pendingEdits) {
       await save_options();
@@ -83,6 +92,9 @@ function queueReplacement(operation) {
 }
 
 function scheduleAutoSave(event) {
+  if (needsReload) {
+    return;
+  }
   if (event && !event.target.closest('#panel-settings, #panel-advanced')) {
     return;
   }
@@ -1022,7 +1034,7 @@ function collectOptions() {
 
 // Save only changed fields, leaving settings changed by other contexts alone.
 async function save_options() {
-  if (!savedOptions || !validate({ focus: false })) {
+  if (needsReload || !savedOptions || !validate({ focus: false })) {
     return false;
   }
   const settings = collectOptions();
@@ -1074,16 +1086,19 @@ async function save_options() {
 
 async function revert_changes(discardPending) {
   try {
-    if (!discardPending && !pendingEdits && undoChange) {
-      if (undoChange.replace) {
-        await replaceStoredSettings(undoChange.settings);
-      } else if (!(await window.VSC.videoSpeedConfig.save(undoChange.settings))) {
+    const undo = !discardPending && !pendingEdits ? undoChange : null;
+    if (undo) {
+      if (undo.replace) {
+        await replaceStoredSettings(undo.settings);
+      } else if (!(await window.VSC.videoSpeedConfig.save(undo.settings))) {
         throw new Error('Storage write failed');
       }
-      undoChange = null;
     }
     if (!(await restore_options())) {
       throw new Error('Could not reload settings');
+    }
+    if (undo) {
+      undoChange = null;
     }
     pendingEdits = false;
     updateRevertButton();
@@ -1145,8 +1160,15 @@ async function restore_options() {
       input.removeAttribute('aria-invalid');
       input.removeAttribute('aria-errormessage');
     });
+    needsReload = false;
     return true;
   } catch (error) {
+    needsReload = true;
+    cancelAutoSave();
+    document.querySelectorAll('#panel-settings, #panel-advanced').forEach((panel) => {
+      panel.inert = true;
+    });
+    updateRevertButton();
     console.error('Failed to restore options:', error);
     showTimedStatus(`Error loading options: ${error.message}`, 'error', 0);
     return false;
@@ -1196,7 +1218,14 @@ async function restore_defaults() {
     pendingEdits = false;
 
     // Reload the options page (clears and re-renders all shortcut rows)
-    await restore_options();
+    if (!(await restore_options())) {
+      showTimedStatus(
+        'Defaults saved, but settings could not reload. Use Revert to recover.',
+        'error',
+        0
+      );
+      return false;
+    }
     updateRevertButton();
 
     showTimedStatus('Default options restored', 'success', 2000);
@@ -1382,7 +1411,14 @@ async function handleImportFile(event) {
     const previous = await replaceStoredSettings(imported);
     undoChange = { settings: cloneSettings(previous), replace: true };
     pendingEdits = false;
-    await restore_options();
+    if (!(await restore_options())) {
+      showTimedStatus(
+        'Settings imported, but settings could not reload. Use Revert to recover.',
+        'error',
+        0
+      );
+      return;
+    }
     updateRevertButton();
 
     showTimedStatus('Settings imported successfully', 'success', 2000);
