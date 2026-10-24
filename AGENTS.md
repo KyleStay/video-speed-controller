@@ -561,10 +561,13 @@ required evidence, personal Chrome and unknown code-sign clones. If a required r
 blocked, report the exact blocker and leave browser verification incomplete;
 do not present the change as a verified fix.
 
-CI (`.github/workflows/ci.yml`) runs audit → lint → Chrome/Firefox release builds
-→ test → Chrome/Firefox deterministic fixtures → Chrome/Firefox packages
-→ local-fixture Chrome E2E on pushes/PRs to
-`main`. Keep the branch list in sync with the default branch.
+CI runs locally to conserve GitHub Actions credits. Use
+`python3 scripts/local-ci.py` for isolated offline lint/build/test/package checks;
+read `docs/LOCAL-CI.md` before CI changes, dependency audits or browser/native
+validation. Keep GitHub-hosted workflows disabled: do not dispatch, rerun,
+re-enable or push changes that start hosted CI. Report unavailable platforms as
+unrun. The former workflow and Dependabot configuration remain recoverable in
+`docs/ci-archive/`, outside active GitHub configuration paths.
 
 ## Codex usage — context-window efficiency
 
