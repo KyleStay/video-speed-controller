@@ -20,12 +20,20 @@ with a 3px track, 12px thumb and 44px touch target. The speed/transport strip
 remains compact at the top; the controller does not grow into a video-sized
 hit box. Existing placement events update rail coordinates after occlusion and
 ancestor scaling, without writing scroll or polling.
+The top transport retains its vertical position relative to the video as the page
+scrolls. When its anchor passes the viewport edge or under a header, that strip
+hides instead of sliding down over the picture; the bottom rail remains independent.
+Picture taps, touch/pointer input, control activation, keyboard input/focus and
+pointer movement reveal the inline rail together with the transport. Recognized
+single-video site overlays share this reveal behavior without consuming input.
+Playing secondary controls and touch panels use a four-second idle delay; paused playback, active scrubbing
+and keyboard focus retain controls. Leaving focus starts a fresh idle delay.
 
 Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
 playhead, move upward into the video to select half, quarter or fine sensitivity,
-then drag horizontally. The selected fractional time and active mode remain
-visible. Vertical-only movement and return toward the rail do not jump the
-selected time; release consumes the final coordinates. Cancellation, source
+then drag horizontally. The selected fractional time remains visible; modified
+sensitivity is labeled `×1/2`, `×1/4` or `×1/10`. Normal (1×) scrubbing has no rate label.
+Vertical-only movement and return toward the rail do not jump the selected time; release consumes the final coordinates. Cancellation, source
 changes, handback, presentation changes and cleanup cannot resume stale playback.
 The shipped gains remain 1, 0.5, 0.25 and 0.1; these are StayFast choices.
 [Apple's documented gesture and known limits](research/ios-precision-scrubbing.md)

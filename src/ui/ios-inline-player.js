@@ -2,6 +2,46 @@
 window.VSC = window.VSC || {};
 
 class IOSInlinePlayer {
+  /** Observe input without claiming the site's click, playback or scroll gesture. */
+  static revealOnInteraction(target, reveal) {
+    const types = [
+      'pointerdown',
+      'pointerup',
+      'pointermove',
+      'touchstart',
+      'touchend',
+      'click',
+      'keydown',
+      'focusin',
+      'focusout',
+    ];
+    const onInput = (event) => {
+      try {
+        if (event.type !== 'pointermove' || event.pointerType !== 'touch') {
+          reveal();
+        }
+      } catch {
+        // Page-owned getters may disappear during the same interaction.
+      }
+    };
+    for (const type of types) {
+      try {
+        target.addEventListener(type, onInput, { capture: true, passive: true });
+      } catch {
+        // Keep the remaining input paths available on a patched page target.
+      }
+    }
+    return () => {
+      for (const type of types) {
+        try {
+          target.removeEventListener(type, onInput, true);
+        } catch {
+          // One patched API must not prevent the rest of ownership cleanup.
+        }
+      }
+    };
+  }
+
   constructor(manager, shadow, video) {
     this.manager = manager;
     this.shadow = shadow;
@@ -149,8 +189,9 @@ class IOSInlinePlayer {
       },
       true
     );
-    this.listen(this.root, 'pointerdown', () => this.reveal(), true);
-    this.listen(this.root, 'focusin', () => this.reveal());
+    for (const target of [this.root, video]) {
+      this.removers.push(IOSInlinePlayer.revealOnInteraction(target, () => this.reveal()));
+    }
     for (const type of ['play', 'playing', 'pause', 'ended']) {
       this.listen(video, type, () => this.reveal());
     }
@@ -240,6 +281,7 @@ class IOSInlinePlayer {
       this.scale = null;
       this.host.removeAttribute('data-vsc-inline-layout');
       this.host.removeAttribute('data-vsc-inline-idle');
+      this.host.removeAttribute('data-vsc-inline-strip-hidden');
       return;
     }
     this.update();
@@ -525,6 +567,7 @@ class IOSInlinePlayer {
               !this.available() ||
               this.video.paused ||
               this.video.ended ||
+              this.scrubber.active ||
               this.root.contains(this.shadow.activeElement) ||
               this.host.classList.contains('vsc-touch-open') ||
               generation !== this.generation
@@ -537,7 +580,7 @@ class IOSInlinePlayer {
           } catch {
             // Playback getters can disappear after this timer was scheduled.
           }
-        }, 2500);
+        }, 4000);
       }
     } catch {
       // Keep the transport available if playback state is inaccessible.

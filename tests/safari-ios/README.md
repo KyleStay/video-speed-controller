@@ -5,6 +5,13 @@ native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 P
 simulator running iOS 26.2. It does not establish compatibility with every OS,
 physical iPhone/iPad, or live video site.
 
+For timeline reveal, open `/mobile.html?mp4&owned&takeover&precision&reveal-overlay`
+and run `InlinePlaybackQATests/testTimelineRevealsWithInterface`. It verifies
+that picture-overlay and speed-control taps reveal the seek rail while playback
+continues. On a fresh `/mobile.html?mp4&owned&takeover&precision`, run
+`OwnedPlayerQATests/testInlineBottomPrecisionAndFrames` to verify the precision
+bands, blank normal-rate feedback, fractional labels and paused frame controls.
+
 ## Build 13 takeover acceptance — r4 (historical)
 
 Build 13, now Testing, owns iOS inline controls by default and routes

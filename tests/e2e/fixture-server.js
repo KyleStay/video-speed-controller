@@ -85,6 +85,16 @@ const mobileHtml = `<!doctype html>
         }
       }
       const takeoverFixture = new URLSearchParams(location.search).has('takeover');
+      if (new URLSearchParams(location.search).has('reveal-overlay')) {
+        const overlay = document.createElement('button');
+        overlay.type = 'button';
+        overlay.setAttribute('aria-label', 'Video picture');
+        overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;';
+        for (const type of ['pointerdown', 'touchstart', 'click']) {
+          overlay.addEventListener(type, event => event.stopImmediatePropagation());
+        }
+        video.parentElement.append(overlay);
+      }
       const fullscreenNames = ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen', 'webkitEnterFullscreen', 'webkitEnterFullScreen', 'webkitSetPresentationMode'];
       window.__stayfastInitialFullscreen = new Map(fullscreenNames.map((name) => [name, {
         method: video[name], descriptor: Object.getOwnPropertyDescriptor(video, name),
@@ -229,6 +239,7 @@ const mobileHtml = `<!doctype html>
           const shellBottom = document.querySelector('.player').getBoundingClientRect().bottom;
           const inlineBottom = Math.min(innerHeight, mediaBottom, shellBottom);
           text += '; precision mode: ' + (owner?.active ? 'fullscreen' : inline?.available() ? 'inline' : 'none') +
+            '; inline timeline hidden: ' + !!inline?.refs.timelineGroup.hidden +
             '; inline scrub active: ' + !!inline?.scrubber?.active +
             '; inline scrub hint: ' + (inline?.refs.scrubHint?.textContent || 'none') +
             '; inline selected time: ' + (inline?.refs.time?.textContent || 'none') +

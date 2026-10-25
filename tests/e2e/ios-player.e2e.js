@@ -67,6 +67,7 @@ async function assertInlineProgress(page, expected, preview = false) {
       const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
       return {
         value: inline.scrubber.value,
+        rate: inline.scrubber.rate,
         selected: inline.refs.time.textContent,
         hint: inline.refs.scrubHint.textContent,
         described:
@@ -75,7 +76,9 @@ async function assertInlineProgress(page, expected, preview = false) {
     });
     if (preview) {
       assert.true(
-        /\d+:\d{2}\.\d{2}/.test(state.selected) && state.described && !!state.hint,
+        /\d+:\d{2}\.\d{2}/.test(state.selected) &&
+          state.described &&
+          (state.rate === 1 ? state.hint === '' : !!state.hint),
         `Inline preview must expose fractional selection and precision feedback: ${JSON.stringify(state)}`
       );
     }
@@ -814,6 +817,141 @@ export default async function runIOSPlayer({
         await assertScrollPosition(page, before, 'owned inline interaction');
       }
     );
+    await check(
+      'inline picture taps reveal the timeline for four seconds after interaction',
+      async () => {
+        await navigate('&takeover&standard-fullscreen');
+        await tapInlinePlayer(page, 'play');
+        await page.waitForFunction(() => !window.__ownedOriginal.paused);
+        // Clear the touch button's browser focus so this exercises idle behavior,
+        // rather than the separate keyboard-focus guarantee.
+        await page.evaluate(() => window.__ownedOriginal.vsc.div.shadowRoot.activeElement?.blur());
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        assert.true(
+          await page.evaluate(
+            () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+          ),
+          'Timeline must remain visible beyond the old 2.5-second deadline'
+        );
+        await page.waitForFunction(
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+        );
+        const picture = await page.$eval('video', (video) => {
+          const rect = video.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+        );
+        assert.true(
+          await page.evaluate(() => !window.__ownedOriginal.paused),
+          'Picture reveal must preserve playback'
+        );
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/ios-inline-picture-reveal.png'),
+        });
+      }
+    );
+    await check(
+      'site picture overlays and control activation reveal the inline timeline with the interface',
+      async () => {
+        await navigate('&takeover&reveal-overlay');
+        await tapInlinePlayer(page, 'play');
+        await page.evaluate(() => window.__ownedOriginal.vsc.div.shadowRoot.activeElement?.blur());
+        const hidden = () =>
+          window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden;
+        await page.waitForFunction(hidden);
+        const picture = await page.$eval('[aria-label="Video picture"]', (node) => {
+          const rect = node.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+        );
+        assert.true(
+          await page.evaluate(() => !window.__ownedOriginal.paused),
+          'Overlay wake must retain playback despite the site stopping propagation at its surface'
+        );
+        await page.waitForFunction(hidden);
+        const speed = await page.evaluate(() => {
+          const rect = window.__ownedOriginal.vsc.div.shadowRoot
+            .querySelector('.draggable')
+            .getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        await tapAt(page, speed.x, speed.y);
+        await page.waitForFunction(() => {
+          const video = window.__ownedOriginal;
+          return (
+            video.vsc.div.classList.contains('vsc-touch-open') &&
+            !video.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden &&
+            !video.paused
+          );
+        });
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/ios-inline-overlay-reveal.png'),
+        });
+      }
+    );
+    await check(
+      'inline top buttons stay attached as genuine scrolling moves the video off the top',
+      async () => {
+        await navigate('&takeover&precision&scroll=page');
+        await page.evaluate(() => {
+          const shell = document.querySelector('.player');
+          shell.style.cssText =
+            'position:relative;width:360px;height:600px;margin-left:15px;overflow:hidden;';
+          window.__ownedOriginal.style.cssText =
+            'width:360px;height:600px;aspect-ratio:auto;object-fit:cover;';
+        });
+        await page.mouse.move(380, 400);
+        await page.mouse.wheel({ deltaY: 950 });
+        await painted(page);
+        const remaining = await page.$eval(
+          'video',
+          (video) => video.getBoundingClientRect().top + 80
+        );
+        await page.mouse.wheel({ deltaY: remaining });
+        await page.waitForFunction(() => {
+          const video = window.__ownedOriginal;
+          const inline = video.vsc.controlsManager.inlinePlayer;
+          const rect = video.getBoundingClientRect();
+          return (
+            rect.top < -40 &&
+            rect.bottom > 180 &&
+            Math.abs(inline.root.getBoundingClientRect().top - rect.top - 4) < 1
+          );
+        });
+        const state = await page.evaluate(() => {
+          const video = window.__ownedOriginal;
+          const inline = video.vsc.controlsManager.inlinePlayer;
+          return {
+            hidden: getComputedStyle(inline.refs.play).visibility,
+            rail: getComputedStyle(inline.refs.timeline).visibility,
+            railBottom: inline.refs.timeline.getBoundingClientRect().bottom,
+            videoBottom: video.getBoundingClientRect().bottom,
+            paused: video.paused,
+          };
+        });
+        assert.true(
+          state.hidden === 'hidden' &&
+            state.rail === 'visible' &&
+            state.paused &&
+            Math.abs(state.railBottom - state.videoBottom + 4) < 1,
+          JSON.stringify(state)
+        );
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/ios-inline-scrolled-anchor.png'),
+        });
+        await page.mouse.wheel({ deltaY: -180 });
+        await page.waitForFunction(() => {
+          const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+          return getComputedStyle(inline.refs.play).visibility === 'visible';
+        });
+      }
+    );
     const prepareInlinePrecision = async () => {
       await navigate('&takeover&precision&scroll=page');
       await page.evaluate(() => {
@@ -916,13 +1054,13 @@ export default async function runIOSPlayer({
         try {
           await send('touchStart', x, center);
           for (const [index, [distance, rate, hint]] of [
-            [0, 1, 'Scrubbing'],
-            [60, 0.5, 'Half speed'],
-            [100, 0.25, 'Quarter speed'],
-            [150, 0.1, 'Tenth speed'],
-            [100, 0.25, 'Quarter speed'],
-            [60, 0.5, 'Half speed'],
-            [0, 1, 'Scrubbing'],
+            [0, 1, ''],
+            [60, 0.5, '×1/2'],
+            [100, 0.25, '×1/4'],
+            [150, 0.1, '×1/10'],
+            [100, 0.25, '×1/4'],
+            [60, 0.5, '×1/2'],
+            [0, 1, ''],
           ].entries()) {
             console.log(
               `   Inline precision leg ${index} vertical: ${JSON.stringify({ x, y: center - distance, distance, rate, expected })}`
@@ -931,7 +1069,7 @@ export default async function runIOSPlayer({
             await page.waitForFunction(
               (text) => {
                 const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
-                return inline.scrubber.active && inline.refs.scrubHint.textContent.includes(text);
+                return inline.scrubber.active && inline.refs.scrubHint.textContent === text;
               },
               { timeout: 2500 },
               hint
@@ -2120,10 +2258,10 @@ export default async function runIOSPlayer({
         const measured = [];
         try {
           for (const [distance, precision, hint] of [
-            [0, 1, 'Scrubbing'],
-            [60, 0.5, 'Fine scrubbing · Half speed'],
-            [100, 0.25, 'Fine scrubbing · Quarter speed'],
-            [150, 0.1, 'Fine scrubbing · Tenth speed'],
+            [0, 1, ''],
+            [60, 0.5, '×1/2'],
+            [100, 0.25, '×1/4'],
+            [150, 0.1, '×1/10'],
           ]) {
             await page.evaluate(() => {
               window.__ownedOriginal.currentTime = 30;
@@ -2230,13 +2368,13 @@ export default async function runIOSPlayer({
       try {
         await send('touchStart', x, bar.y);
         for (const [index, [distance, precision, hint]] of [
-          [0, 1, 'Scrubbing'],
-          [60, 0.5, 'Fine scrubbing · Half speed'],
-          [100, 0.25, 'Fine scrubbing · Quarter speed'],
-          [150, 0.1, 'Fine scrubbing · Tenth speed'],
-          [100, 0.25, 'Fine scrubbing · Quarter speed'],
-          [60, 0.5, 'Fine scrubbing · Half speed'],
-          [0, 1, 'Scrubbing'],
+          [0, 1, ''],
+          [60, 0.5, '×1/2'],
+          [100, 0.25, '×1/4'],
+          [150, 0.1, '×1/10'],
+          [100, 0.25, '×1/4'],
+          [60, 0.5, '×1/2'],
+          [0, 1, ''],
         ].entries()) {
           await send('touchMove', x, bar.y - distance);
           await page.waitForFunction(

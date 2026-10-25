@@ -142,6 +142,18 @@ export function installPrecisionTrace(video) {
       samples: gesture.points.length,
       truncated: gesture.truncated,
       bands,
+      rateLabelsValid: gesture.points.every(
+        (point) =>
+          !point.active ||
+          point.hint ===
+            (point.rate === 0.5
+              ? '×1/2'
+              : point.rate === 0.25
+                ? '×1/4'
+                : point.rate === 0.1
+                  ? '×1/10'
+                  : '')
+      ),
       fractionalFeedback: gesture.points.some(
         (point) => point.active && /\d+:\d{2}\.\d{2}/.test(point.selectedTime)
       ),

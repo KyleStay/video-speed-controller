@@ -309,7 +309,7 @@
                   <button type="button" class="escape" data-ref="site">Use site player</button>
                 </div>
                 <p class="status" data-ref="status" role="status" aria-live="polite" aria-atomic="true"></p>
-                <p class="scrub-hint" id="scrub-hint" data-ref="scrubHint" role="status" aria-live="polite">Drag away from the timeline for finer scrubbing.</p>
+                <p class="scrub-hint" id="scrub-hint" data-ref="scrubHint" role="status" aria-live="polite"></p>
                 <div class="timeline">
                   <span class="time" data-ref="current">0:00</span>
                   <input type="range" data-ref="seek" aria-label="Seek video" aria-describedby="scrub-hint" min="0" max="100" step="0.1" value="0" />

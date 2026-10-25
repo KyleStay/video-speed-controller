@@ -261,7 +261,10 @@ with direct `chrome.*` access.
   high; owned transport uses its own responsive layout. Actual clipped media
   below 52px on either axis hides the surface, closes its popover and restores
   native/site controls. Active owned fullscreen acquires controls independently
-  of inline fit. Visible placement uses at most
+  of inline fit. Owned inline top buttons retain their media-relative vertical
+  anchor while scrolling; hide that strip when clipped by the viewport or a
+  header, leaving the independently positioned bottom timeline available.
+  Legacy compact placement uses at most
   three hit-test passes to avoid covering page chrome while staying within the
   clipped media/viewport; it does not escape blocking modals. Passive captured
   window scroll and visual-viewport scroll share one coalesced animation frame
@@ -274,8 +277,11 @@ with direct `chrome.*` access.
   cannot move a target between pointerdown and click.
   Popovers anchor beside the primary controls, clamp text to 13–18px, and make
   child buttons inherit that font rather than the configured global button size.
-  While playing, touch-idle collapse uses 2.5s;
-  paused media and keyboard interaction keep controls available. Size changes
+  While playing, inline secondary controls and touch panels collapse after 4s;
+  picture/control input, keyboard focus and pointer movement reveal the owned
+  timeline and transport together, including recognized single-video site overlays.
+  Active scrubbing and paused media keep it available; keyboard focus preserves
+  controls until focus leaves. Size changes
   preserve minimum touch targets. Popover height/block-size stays intrinsic and
   grid rows use non-stretching 44px minima; narrow panels can use one column.
   Cleanup clears idle timers through the original scheduling window even after
@@ -392,8 +398,9 @@ with direct `chrome.*` access.
   on handback, source changes, fullscreen and cleanup. Its absolute 44px timeline
   sits at the clipped video bottom, independent of the compact top strip; placement
   applies final occlusion and scale before rail offsets. Fractional selected time
-  and the active mode remain visible while scrubbing. Precision seeking captures one pointer and applies
-  incremental horizontal movement at normal/half/quarter/tenth sensitivity as
+  stays visible while scrubbing; rate feedback is empty at 1× and uses `×1/2`,
+  `×1/4`, `×1/10` for modified sensitivity. Precision seeking captures one pointer
+  and applies incremental horizontal movement at normal/half/quarter/tenth sensitivity as
   vertical distance from the timeline increases in either direction. Average
   gain across each delivered diagonal segment so event grouping cannot skip
   bands; consume the pointer-up endpoint before committing the final seek. It pauses

@@ -382,7 +382,7 @@ describe('owned iOS inline transport', () => {
     expect(player.refs.rewind.hidden).toBe(false);
     paused = false;
     video.dispatchEvent(new Event('playing'));
-    vi.advanceTimersByTime(2500);
+    vi.advanceTimersByTime(4000);
     expect(host.hasAttribute('data-vsc-inline-idle')).toBe(true);
     expect(player.refs.rewind.hidden).toBe(true);
     expect(player.refs.timelineGroup.hidden).toBe(true);
@@ -401,7 +401,7 @@ describe('owned iOS inline transport', () => {
     player.setOwned(true);
     paused = false;
     video.dispatchEvent(new Event('play'));
-    vi.advanceTimersByTime(2500);
+    vi.advanceTimersByTime(4000);
     expect(player.refs.timelineGroup.hidden).toBe(true);
     const previous = player.refs.timeline.value;
     const observer = new MutationObserver(() => {});
@@ -421,6 +421,80 @@ describe('owned iOS inline transport', () => {
     expect(player.refs.timeline.value).toBe('40');
     expect(player.refs.timeline.getAttribute('aria-valuetext')).toBe('0:40 / 2:00');
     observer.disconnect();
+  });
+
+  it('reveals on picture taps for a full interval without changing playback', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    vi.advanceTimersByTime(3000);
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    vi.advanceTimersByTime(1000);
+    expect(player.refs.timelineGroup.hidden).toBe(true);
+    video.click();
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(video.pause).not.toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(3000);
+    video.click();
+    vi.advanceTimersByTime(3999);
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(player.refs.timelineGroup.hidden).toBe(true);
+    player.setOwned(false);
+    video.click();
+    expect(player.timer).toBeNull();
+  });
+
+  it('keeps a long scrub visible and starts a fresh interval after release', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    scrubPointer('pointerdown');
+    vi.advanceTimersByTime(7000);
+    expect(player.scrubber.active).toBe(true);
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    scrubPointer('pointerup', 60);
+    expect(video.play).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(3999);
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(player.refs.timelineGroup.hidden).toBe(true);
+  });
+
+  it.each(['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click', 'keydown', 'focusin'])(
+    'reveals the timeline with the transport on video %s without consuming the interaction',
+    (type) => {
+      player.setOwned(true);
+      paused = false;
+      video.dispatchEvent(new Event('playing'));
+      vi.advanceTimersByTime(4000);
+      expect(player.refs.timelineGroup.hidden).toBe(true);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      video.dispatchEvent(event);
+      expect(player.refs.timelineGroup.hidden).toBe(false);
+      expect(player.refs.rewind.hidden).toBe(false);
+      expect(event.defaultPrevented).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(3999);
+      expect(player.refs.timelineGroup.hidden).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(player.refs.timelineGroup.hidden).toBe(true);
+    }
+  );
+
+  it('reveals on control activation without a pointer event and on mouse movement', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    vi.advanceTimersByTime(4000);
+    shadow.querySelector('.draggable').click();
+    expect(player.refs.timelineGroup.hidden).toBe(false);
+    manager.setTouchExpanded(shadow, false);
+    vi.advanceTimersByTime(4000);
+    expect(player.refs.timelineGroup.hidden).toBe(true);
+    video.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    expect(player.refs.timelineGroup.hidden).toBe(false);
   });
 
   it.each(['pointercancel', 'handback', 'loadstart'])(
@@ -454,7 +528,7 @@ describe('owned iOS inline transport', () => {
       player.setOwned(true);
       paused = false;
       video.dispatchEvent(new Event('playing'));
-      vi.advanceTimersByTime(2500);
+      vi.advanceTimersByTime(4000);
       const primary = [
         player.refs.play,
         shadow.querySelector('.draggable'),
@@ -511,7 +585,7 @@ describe('owned iOS inline transport', () => {
     paused = false;
     video.dispatchEvent(new Event('play'));
     player.refs.play.focus();
-    vi.advanceTimersByTime(2500);
+    vi.advanceTimersByTime(4000);
     expect(player.refs.rewind.hidden).toBe(false);
     video.vsc.iosPlayer.active = true;
     player.refs.play.click();
@@ -675,7 +749,7 @@ describe('owned iOS inline transport', () => {
         generation + (['emptied', 'loadstart'].includes(type) ? 1 : 0)
       );
       expect(player.timer === null).toBe(paused);
-      vi.advanceTimersByTime(2499);
+      vi.advanceTimersByTime(3999);
       expect(player.idle).toBe(false);
       vi.advanceTimersByTime(1);
       expect(player.idle).toBe(!paused);
@@ -775,9 +849,11 @@ describe('owned iOS inline transport', () => {
       scrubPointer('pointermove', x, y);
       expect(Number(player.refs.timeline.value)).toBeCloseTo(expected, 8);
       expect(player.refs.time.textContent).toMatch(/\d+:\d{2}\.\d{2} \/ 2:00/);
-      expect(player.refs.scrubHint.textContent).not.toBe('');
+      expect(player.refs.scrubHint.textContent).toBe(
+        gain === 1 ? '' : gain === 0.5 ? '×1/2' : gain === 0.25 ? '×1/4' : '×1/10'
+      );
       if (gain === 0.1) {
-        expect(player.refs.scrubHint.textContent).toContain('Tenth');
+        expect(player.refs.scrubHint.textContent).toBe('×1/10');
         expect(player.refs.time.textContent).toBe('0:34.20 / 2:00');
       }
       expect(video.play).not.toHaveBeenCalled();
@@ -967,7 +1043,7 @@ describe('owned iOS inline transport', () => {
 
     expect(reentered).toBe(true);
     const hideCalls = schedule.mock.calls
-      .map(([, delay], index) => (delay === 2500 ? index : -1))
+      .map(([, delay], index) => (delay === 4000 ? index : -1))
       .filter((index) => index >= 0);
     expect(hideCalls).toHaveLength(1);
     const hideTimer = schedule.mock.results[hideCalls[0]].value;
