@@ -36,6 +36,13 @@ or 144px high retain visible fallback buttons because their picture offers too
 little reliable space for reveal taps. Scrolling may still clip the top strip
 independently, without waking an idle timeline.
 
+Swipe horizontally anywhere on the picture to scrub, including when controls
+are hidden. Once the swipe is horizontal, move your finger up or down from its
+starting position for finer precision. Vertical-only movement does not jump the
+selected time. A vertical swipe before scrubbing begins still scrolls an inline
+page. Taps retain interface visibility behavior; pinch remains available. The
+video pauses only after the scrub begins and resumes only if it was playing.
+
 Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
 playhead, move upward into the video to select half, quarter or fine sensitivity,
 then drag horizontally. The selected fractional time remains visible; modified

@@ -410,7 +410,7 @@ describe('IOSPlayerGestures', () => {
     const remove = vi.spyOn(stage, 'removeEventListener');
     gestures.cleanup();
     gestures.cleanup();
-    expect(remove).toHaveBeenCalledTimes(5);
+    expect(remove).toHaveBeenCalledTimes(6);
     expect(stage.releasePointerCapture).toHaveBeenCalledTimes(2);
     expect(gestures.active).toBe(false);
     expect(gestures.suppressClick).toBe(false);

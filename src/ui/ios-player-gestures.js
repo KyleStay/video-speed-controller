@@ -1,4 +1,4 @@
-/** Touch double-tap seeking and fit/fill pinch gestures on the owned video's display surface. */
+/** Surface scrubbing, touch double taps and fit/fill pinch gestures. */
 window.VSC = window.VSC || {};
 
 class IOSPlayerGestures {
@@ -14,6 +14,9 @@ class IOSPlayerGestures {
     this.tap = null;
     this.lastTap = null;
     this.lastTouchAt = null;
+    this.scrubStart = null;
+    this.blocked = false;
+    this.onNativeMove = (event) => this.preventNativeScroll(event);
     this.onDown = (event) => this.down(event);
     this.onMove = (event) => this.move(event);
     this.onEnd = (event) => this.end(event);
@@ -36,6 +39,7 @@ class IOSPlayerGestures {
     stage.addEventListener('pointerup', this.onEnd, true);
     stage.addEventListener('pointercancel', this.onEnd, true);
     stage.addEventListener('lostpointercapture', this.onLost, true);
+    stage.addEventListener('touchmove', this.onNativeMove, { capture: true, passive: false });
     return true;
   }
 
@@ -166,6 +170,56 @@ class IOSPlayerGestures {
     return true;
   }
 
+  preventNativeScroll(event) {
+    if (
+      this.owner.active &&
+      this.owner.scrubber?.active &&
+      this.owner.scrubber.surface === this.stage
+    ) {
+      this.claim(event);
+    }
+  }
+
+  finishScrub() {
+    this.points.clear();
+    this.clearTapChain();
+    this.scrubStart = null;
+    this.lastTouchAt = this.now();
+    this.suppressClick = true;
+  }
+
+  startScrub(event) {
+    const start = this.scrubStart;
+    if (!start || start.pointerId !== event.pointerId || this.points.size !== 1) {
+      return false;
+    }
+    const dx = Math.abs(event.clientX - start.x);
+    const dy = Math.abs(event.clientY - start.y);
+    if (Math.max(dx, dy) <= 10) {
+      return false;
+    }
+    this.scrubStart = null;
+    this.clearTapChain();
+    if (dy >= dx) {
+      this.suppressClick = true;
+      return false; // Vertical intent belongs to page scrolling.
+    }
+    const scrubber = this.owner.scrubber;
+    const current = () =>
+      this.owner.active &&
+      this.owner.session === start.session &&
+      this.owner.ui?.stage === this.stage;
+    if (!current() || !scrubber?.matchesSource(start.source) || !current()) {
+      return false;
+    }
+    scrubber.start(event, { surface: this.stage, origin: start });
+    if (!scrubber.active || scrubber.surface !== this.stage) {
+      return false;
+    }
+    this.suppressClick = true;
+    return true;
+  }
+
   down(event) {
     if (this.validTouch(event)) {
       this.lastTouchAt = this.now();
@@ -177,7 +231,34 @@ class IOSPlayerGestures {
     if (!this.validTouch(event) || this.points.has(event.pointerId)) {
       return;
     }
+    const scrubber = this.owner.scrubber;
+    if (
+      scrubber?.active &&
+      scrubber.surface === this.stage &&
+      event.pointerId !== scrubber.pointerId
+    ) {
+      const pointerId = scrubber.pointerId;
+      const first = this.points.get(pointerId);
+      scrubber.finish(null, true);
+      if (!this.owner.active || this.owner.ui?.stage !== this.stage) {
+        return;
+      }
+      this.points.set(pointerId, first || { x: event.clientX, y: event.clientY });
+      this.points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      this.blocked = true;
+      return;
+    }
     if (this.points.size === 0) {
+      this.blocked = false;
+      this.scrubStart = scrubber
+        ? {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            session: this.owner.session,
+            source: scrubber.captureSource(),
+          }
+        : null;
       this.suppressClick = false;
       this.committed = false;
       this.initialDistance = 0;
@@ -190,12 +271,18 @@ class IOSPlayerGestures {
     }
     if (this.points.size >= 1) {
       this.clearTapChain();
+      this.scrubStart = null;
     }
     if (this.points.size >= 2) {
       return;
     }
     this.points.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (this.points.size !== 2) {
+      return;
+    }
+    if (this.blocked || typeof this.owner.setFit !== 'function') {
+      this.blocked = true; // Inline two-finger gestures stay with the browser.
+      this.suppressClick = true;
       return;
     }
     if (!this.active) {
@@ -224,6 +311,9 @@ class IOSPlayerGestures {
     this.lastTouchAt = this.now();
     if (!this.owner.active || this.owner.controlsLocked) {
       this.clearTapChain();
+      return;
+    }
+    if (this.blocked || this.startScrub(event)) {
       return;
     }
     if (
@@ -271,11 +361,19 @@ class IOSPlayerGestures {
   }
 
   end(event) {
+    if (event.type === 'lostpointercapture' && event.target !== this.stage) {
+      return; // Transferring implicit capture from the video to its stage is expected.
+    }
     if (!this.points.has(event.pointerId)) {
       return;
     }
     // Tracked pointers are touches, even when cancellation omits coordinates.
     this.lastTouchAt = this.now();
+    if (this.owner.scrubber?.active && this.owner.scrubber.surface === this.stage) {
+      this.owner.scrubber.finish(event, true);
+      return;
+    }
+    this.scrubStart = null;
     this.finishTap(event);
     if (this.active) {
       this.suppressClick = true;
@@ -286,6 +384,7 @@ class IOSPlayerGestures {
     if (this.points.size === 0) {
       this.active = false;
       this.initialDistance = 0;
+      this.blocked = false;
     }
   }
 
@@ -297,6 +396,7 @@ class IOSPlayerGestures {
       stage.removeEventListener('pointerup', this.onEnd, true);
       stage.removeEventListener('pointercancel', this.onEnd, true);
       stage.removeEventListener('lostpointercapture', this.onLost, true);
+      stage.removeEventListener('touchmove', this.onNativeMove, true);
     }
     // Clear first: releasing capture can synchronously dispatch lostpointercapture.
     this.points.clear();
@@ -306,6 +406,8 @@ class IOSPlayerGestures {
     this.stage = null;
     this.clearTapChain();
     this.lastTouchAt = null;
+    this.scrubStart = null;
+    this.blocked = false;
     this.active = false;
     this.suppressClick = false;
     this.initialDistance = 0;

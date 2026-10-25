@@ -376,6 +376,113 @@ describe('owned iOS inline transport', () => {
     }
   });
 
+  it('starts a relative picture scrub while the entire transport is idle and suppresses its click', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    vi.advanceTimersByTime(4000);
+    expect(player.idle).toBe(true);
+    const point = (type, x, target = video) => {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerId: 17, pointerType: 'touch', clientX: x, clientY: 170 });
+      target.dispatchEvent(event);
+      return event;
+    };
+    point('pointerdown', 140);
+    expect(point('pointermove', 180).defaultPrevented).toBe(true);
+    expect(player.scrubber.surface).toBe(video);
+    expect(player.idle).toBe(false);
+    expect(Number(player.refs.timeline.value)).toBe(24);
+    expect(paused).toBe(true);
+    point('pointerup', 200, window);
+    expect(video.currentTime).toBe(30);
+    expect(video.play).toHaveBeenCalledOnce();
+    video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+    expect(player.idle).toBe(false);
+    point('pointerdown', 200);
+    point('pointerup', 200, video);
+    video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+    expect(player.idle).toBe(true);
+  });
+
+  it('restores scoped touch policy on handback without changing inline touch styles', () => {
+    video.style.touchAction = 'manipulation';
+    video.setAttribute('data-vsc-inline-scrub', 'site-value');
+    player.setOwned(true);
+    const policy = player.surfacePolicy;
+    expect(policy.style.isConnected).toBe(true);
+    expect(video.style.touchAction).toBe('manipulation');
+    expect(policy.style.textContent).toContain('pan-y pinch-zoom');
+    player.setOwned(false);
+    expect(video.getAttribute('data-vsc-inline-scrub')).toBe('site-value');
+    expect(policy.style.isConnected).toBe(false);
+    expect(player.gestures.stage).toBeNull();
+    expect(video.style.touchAction).toBe('manipulation');
+  });
+
+  it('installs touch policy in the media open shadow root and releases it on cleanup', () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const root = parent.attachShadow({ mode: 'open' });
+    root.append(video);
+    player.setOwned(true);
+    expect(player.surfacePolicy.style.getRootNode()).toBe(root);
+    const style = player.surfacePolicy.style;
+    player.cleanup();
+    expect(style.isConnected).toBe(false);
+    expect(video.hasAttribute('data-vsc-inline-scrub')).toBe(false);
+    parent.remove();
+  });
+
+  it('refreshes scoped touch policy through document and shadow-root placement repairs', () => {
+    player.setOwned(true);
+    const first = document.createElement('section'),
+      second = document.createElement('section');
+    document.body.append(first, second);
+    const a = first.attachShadow({ mode: 'open' }),
+      b = second.attachShadow({ mode: 'open' });
+    for (const root of [a, b, document.body]) {
+      const previous = player.surfacePolicy;
+      root.append(video);
+      position();
+      expect(player.surfacePolicy.root).toBe(video.getRootNode());
+      expect(player.surfacePolicy.style.getRootNode()).toBe(video.getRootNode());
+      expect(previous.style.isConnected).toBe(false);
+      expect(video.currentTime).toBe(12);
+      expect(video.pause).not.toHaveBeenCalled();
+    }
+    first.remove();
+    second.remove();
+  });
+
+  it('scrubs through a recognized picture overlay and removes its gesture subscriptions', () => {
+    const container = document.createElement('section');
+    document.body.append(container);
+    const cover = document.createElement('button');
+    cover.getBoundingClientRect = () => media;
+    container.append(video, cover);
+    video.vsc.iosPlayer.siteControls = { container };
+    player.setOwned(true);
+    const release = player.observeSurface(container);
+    const pointer = (type, x) => {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerId: 7, pointerType: 'touch', clientX: x, clientY: 170 });
+      cover.dispatchEvent(event);
+    };
+    pointer('pointerdown', 140);
+    pointer('pointermove', 180);
+    expect(player.scrubber.active).toBe(true);
+    pointer('pointerup', 180);
+    expect(video.currentTime).toBe(24);
+    release();
+    pointer('pointerdown', 140);
+    pointer('pointermove', 180);
+    expect(player.scrubber.active).toBe(false);
+    container.appendChild(video); // Keep normal fixture teardown ownership.
+    document.body.append(video);
+    container.remove();
+  });
+
   it('fades the entire playing transport together, retaining layout and restoring on pause', () => {
     player.setOwned(true);
     vi.advanceTimersByTime(5000);

@@ -32,6 +32,7 @@ const suites = {
   youtube: runYouTube,
   mobile: runMobile,
   'ios-player': runIOSPlayer,
+  'ios-surface': (options) => runIOSPlayer({ ...options, onlyChecks: ['video-surface'] }),
   'twitter-inline': runTwitterInline,
   'twitter-layout': runTwitterLayout,
   'twitter-visual': runTwitterVisual,
@@ -50,7 +51,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use startup, resume, basic, options, mobile, ios-player, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 

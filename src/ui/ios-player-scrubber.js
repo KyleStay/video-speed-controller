@@ -68,7 +68,7 @@ class IOSPlayerScrubber {
   }
 
   geometry() {
-    const rect = this.range.getBoundingClientRect();
+    const rect = (this.surface || this.range).getBoundingClientRect();
     return Number.isFinite(rect.left) &&
       Number.isFinite(rect.top) &&
       Number.isFinite(rect.width) &&
@@ -128,19 +128,21 @@ class IOSPlayerScrubber {
     event.stopPropagation();
   }
 
-  start(event) {
+  start(event, { surface = null, origin = null } = {}) {
     if (
       this.active ||
       this.finishing ||
       this.range.disabled ||
       event.isPrimary === false ||
-      (event.button !== undefined && event.button !== 0) ||
+      (event.button !== undefined && event.button !== 0 && !(surface && event.button === -1)) ||
       !Number.isFinite(event.pointerId) ||
       !Number.isFinite(event.clientX) ||
       !Number.isFinite(event.clientY)
     ) {
       return;
     }
+    this.surface = surface;
+    this.originY = origin?.y;
     // Native loadstart/emptied notifications are queued. A page-wrapped seek or
     // pause can replace the source synchronously before those events arrive.
     this.source = this.captureSource();
@@ -148,6 +150,8 @@ class IOSPlayerScrubber {
     const bounds = this.bounds();
     const rect = this.geometry();
     if (!this.currentPresentation() || !bounds || !rect) {
+      this.surface = null;
+      this.originY = null;
       return;
     }
     this.consume(event);
@@ -157,8 +161,8 @@ class IOSPlayerScrubber {
     );
     this.value = this.startTime;
     this.pointerId = event.pointerId;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
+    this.lastX = origin?.x ?? event.clientX;
+    this.lastY = origin?.y ?? event.clientY;
     this.wasPlaying = !this.video.paused;
     this.active = true;
     try {
@@ -176,7 +180,7 @@ class IOSPlayerScrubber {
     const source = this.source;
     const sameGesture = () => this.active && this.pointerId === pointerId && this.source === source;
     try {
-      this.range.setPointerCapture?.(pointerId);
+      (this.surface || this.range).setPointerCapture?.(pointerId);
     } catch {
       // Window capture still delivers the gesture when capture is unavailable.
     }
@@ -187,7 +191,7 @@ class IOSPlayerScrubber {
       } else if (!this.active || this.pointerId !== pointerId) {
         try {
           // Cleanup can finish before a wrapper delegates the actual capture.
-          this.range.releasePointerCapture?.(pointerId);
+          (surface || this.range).releasePointerCapture?.(pointerId);
         } catch {
           // The pointer may already be released or belong to another element.
         }
@@ -216,11 +220,14 @@ class IOSPlayerScrubber {
     );
     const thumbX =
       rect.left + ((this.startTime - bounds[0]) / (bounds[1] - bounds[0])) * rect.width;
-    if (Math.abs(event.clientX - thumbX) > 22) {
+    if (!surface && Math.abs(event.clientX - thumbX) > 22) {
       this.write(bounds[0] + ((event.clientX - rect.left) / rect.width) * (bounds[1] - bounds[0]));
     }
     this.precision(1);
     this.owner.showControls();
+    if (surface && this.active) {
+      this.move(event);
+    }
   }
 
   precision(rate) {
@@ -265,7 +272,7 @@ class IOSPlayerScrubber {
     if (!bounds || !rect || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
       return;
     }
-    const centerY = rect.top + rect.height / 2;
+    const centerY = this.surface ? this.originY : rect.top + rect.height / 2;
     const rate = this.rateForDistance(Math.abs(event.clientY - centerY));
     const gain = this.movementRate(this.lastY, event.clientY, centerY);
     const delta = ((event.clientX - this.lastX) / rect.width) * (bounds[1] - bounds[0]) * gain;
@@ -374,8 +381,12 @@ class IOSPlayerScrubber {
       for (const remove of this.gestureListeners.splice(0)) {
         remove();
       }
+      const surface = this.surface;
+      if (surface) {
+        this.owner.gestures?.finishScrub();
+      }
       try {
-        this.range.releasePointerCapture?.(pointerId);
+        (surface || this.range).releasePointerCapture?.(pointerId);
       } catch {
         // The browser may already have released capture for cancel/up.
       }
@@ -399,6 +410,8 @@ class IOSPlayerScrubber {
       }
       this.wasPlaying = false;
       this.rate = null;
+      this.surface = null;
+      this.originY = null;
     } finally {
       this.finishing = false;
     }
@@ -407,6 +420,8 @@ class IOSPlayerScrubber {
   cleanup() {
     this.finish(null, false, false, false);
     this.cancelPending();
+    this.surface = null;
+    this.originY = null;
     for (const remove of this.listeners.splice(0)) {
       remove();
     }

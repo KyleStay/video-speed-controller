@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { installPrecisionTrace } from './precision-trace.js';
+import { installPrecisionTrace, installSurfaceTrace } from './precision-trace.js';
 import {
   RATE_PROBE_RATES,
   summarizeFrameCadence,
@@ -57,6 +57,7 @@ const mobileHtml = `<!doctype html>
     <script>
       const video = document.querySelector('video');
       if (new URLSearchParams(location.search).has('precision')) (${installPrecisionTrace.toString()})(video);
+      if (new URLSearchParams(location.search).has('surface-scrub')) (${installSurfaceTrace.toString()})(video);
       if (new URLSearchParams(location.search).has('rtl')) document.documentElement.dir = 'rtl';
       const scrollFixture = new URLSearchParams(location.search).get('scroll');
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
@@ -295,6 +296,9 @@ const mobileHtml = `<!doctype html>
             '; seek feedback: ' + (video.vsc?.iosPlayer?.ui?.refs.seekFeedback?.textContent || 'none') +
             '; owned fullscreen: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.owns?.() +
             '; fullscreen available: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.available?.();
+          if (window.__stayfastSurface?.report) {
+            text += '; surface scrub: ' + JSON.stringify(window.__stayfastSurface.report);
+          }
           if (window.__stayfastPrecision?.report) {
             text += '; precision: ' + JSON.stringify(window.__stayfastPrecision.report);
           }
@@ -317,6 +321,7 @@ const mobileHtml = `<!doctype html>
       };
       const controllerObserver = new MutationObserver(updateStatus);
       if (window.__stayfastPrecision) window.__stayfastPrecision.onReport = updateStatus;
+      if (window.__stayfastSurface) window.__stayfastSurface.onReport = updateStatus;
       controllerObserver.observe(video, { attributes: true, attributeFilter: ['playsinline', 'webkit-playsinline'] });
       if (scrollFixture === 'page' || scrollFixture === 'nested') {
         const actions = document.createElement('div');

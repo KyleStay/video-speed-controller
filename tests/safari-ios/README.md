@@ -12,6 +12,20 @@ continues, and an open speed menu prevents idle hiding until dismissed. On a fre
 `OwnedPlayerQATests/testInlineBottomPrecisionAndFrames` to verify the precision
 bands, blank normal-rate feedback, fractional labels and paused frame controls.
 
+For picture swipes, open
+`/mobile.html?mp4&owned&takeover&reveal-overlay&surface-scrub` and run
+`OwnedPlayerQATests/testPictureSurfaceScrubbing`. It observes genuine native
+pointer paths, checks horizontal inline/fullscreen swipes and fullscreen diagonal
+precision, verifies numeric feedback and paused-state preservation, then scrubs a playing
+video while its inline interface is hidden and checks resumed playback. The
+fixture observer reads state after dispatch and never drives the media. XCTest
+provides a single straight drag; Safari may take an inline diagonal-from-start as
+page scrolling before DOM input. Inline horizontal-then-vertical precision is
+covered by the browser counterpart; its exact native multiphase path remains a
+manual device check. Run
+`STAYFAST_EXTENSION_DIR=dist/chrome node tests/e2e/run-isolated.js ios-surface`
+for the built Chrome fixture counterpart, including real vertical page scrolling.
+
 ## Build 13 takeover acceptance — r4 (historical)
 
 Build 13, now Testing, owns iOS inline controls by default and routes

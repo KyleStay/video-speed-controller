@@ -181,7 +181,9 @@ buttons and timeline together, including recognized single-video site overlays.
 While playing, the interface hides after four seconds of inactivity. Paused
 playback, scrubbing, held controls, keyboard focus and open menus prevent idle
 hiding. Dismissing a menu starts a fresh interval. Small-player fallback buttons
-stay available.
+stay available. Swipe horizontally across the picture to scrub; move your finger
+up or down from where it started for finer precision. Vertical swipes still scroll
+inline pages.
 Controls stay at least 44px; small or cropped players progressively
 reduce the transport controls. When the actual clipped video is smaller than
 52px on either axis, the surface hides and native/site controls return. An active

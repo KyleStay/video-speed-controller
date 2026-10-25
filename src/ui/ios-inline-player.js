@@ -141,10 +141,13 @@ class IOSInlinePlayer {
       ui,
       video,
       get active() {
-        return inline.available() && !inline.idle && !group.hidden;
+        return inline.available() && (inline.scrubber?.surface || (!inline.idle && !group.hidden));
       },
       get session() {
         return inline.generation;
+      },
+      get gestures() {
+        return inline.gestures;
       },
       seekBounds: () => this.bounds(),
       seekTo: (value) => this.seekTo(value),
@@ -161,6 +164,21 @@ class IOSInlinePlayer {
       play: () => this.play(),
     });
     this.scrubber.attach();
+    this.gestures = new window.VSC.IOSPlayerGestures({
+      video,
+      view: this.view,
+      ui: { stage: video },
+      get active() {
+        return inline.available();
+      },
+      get session() {
+        return inline.generation;
+      },
+      get scrubber() {
+        return inline.scrubber;
+      },
+      showControls: () => this.reveal(),
+    });
     this.listen(timeline, 'input', () => {
       if (!this.seekCancelled) {
         this.seekTo(Number(timeline.value));
@@ -218,6 +236,7 @@ class IOSInlinePlayer {
     for (const type of ['emptied', 'loadstart']) {
       this.listen(video, type, () => {
         this.cancelScrub();
+        this.gestures.cleanup();
         this.releasePointers();
         this.pictureTap = null;
         this.generation++;
@@ -264,6 +283,7 @@ class IOSInlinePlayer {
       return;
     }
     this.cancelScrub();
+    this.gestures.cleanup();
     this.releasePointers();
     this.pictureTap = null;
     this.owned = Boolean(owned);
@@ -271,6 +291,7 @@ class IOSInlinePlayer {
     this.host.toggleAttribute('data-vsc-inline-owned', this.owned);
     this.clearTimer();
     if (!this.owned) {
+      this.releaseSurfacePolicy();
       this.seekCancelled = this.seekCancelled || this.seeking;
       this.seeking = false;
       for (const name of ['play', 'rewind', 'forward', 'mute', 'timelineGroup']) {
@@ -294,6 +315,7 @@ class IOSInlinePlayer {
       this.setIdle(false);
       return;
     }
+    this.installSurfacePolicy();
     this.update();
     this.manager.positionInlineControls(this.shadow, this.video);
     this.reveal();
@@ -304,6 +326,9 @@ class IOSInlinePlayer {
       return;
     }
     const couldAutoHide = this.canAutoHide();
+    if (this.available()) {
+      this.installSurfacePolicy();
+    }
     this.layout = layout;
     let x = 1;
     let y = 1;
@@ -487,6 +512,7 @@ class IOSInlinePlayer {
   update() {
     if (!this.available()) {
       this.cancelScrub();
+      this.gestures.cleanup();
       this.clearTimer();
       this.releasePointers();
       this.pictureTap = null;
@@ -541,6 +567,94 @@ class IOSInlinePlayer {
 
   error(message) {
     this.set(this.refs.status, 'textContent', message);
+  }
+
+  installSurfacePolicy() {
+    const root = this.video.getRootNode();
+    if (this.surfacePolicy?.root === root) {
+      return;
+    }
+    this.releaseSurfacePolicy();
+    const attribute = 'data-vsc-inline-scrub';
+    const original = this.video.getAttribute(attribute);
+    const token = String(
+      (IOSInlinePlayer.nextSurfaceId = (IOSInlinePlayer.nextSurfaceId || 0) + 1)
+    );
+    const style = this.video.ownerDocument.createElement('style');
+    // A scoped rule also covers media in open shadow roots without taking over
+    // inline styles that the owned fullscreen presentation must independently restore.
+    style.textContent = `video[${attribute}="${token}"] { touch-action: pan-y pinch-zoom !important; }`;
+    this.surfacePolicy = { root, attribute, original, token, style };
+    try {
+      this.video.setAttribute(attribute, token);
+      (root.nodeType === 9 ? root.head || root.documentElement : root).append(style);
+    } catch {
+      this.releaseSurfacePolicy();
+    }
+  }
+
+  releaseSurfacePolicy() {
+    const policy = this.surfacePolicy;
+    this.surfacePolicy = null;
+    if (!policy) {
+      return;
+    }
+    try {
+      if (this.video.getAttribute(policy.attribute) === policy.token) {
+        if (policy.original === null) {
+          this.video.removeAttribute(policy.attribute);
+        } else {
+          this.video.setAttribute(policy.attribute, policy.original);
+        }
+      }
+    } catch {
+      // A recycled or adopted node may have lost its page-owned DOM methods.
+    }
+    try {
+      policy.style.remove();
+    } catch {
+      /* Continue gesture and media cleanup. */
+    }
+  }
+
+  observeSurface(target) {
+    const removers = [];
+    for (const [type, method] of [
+      ['pointerdown', 'down'],
+      ['pointermove', 'move'],
+      ['pointerup', 'end'],
+      ['pointercancel', 'end'],
+      ['touchmove', 'preventNativeScroll'],
+    ]) {
+      const onInput = (event) => {
+        try {
+          const path = event.composedPath();
+          if (!this.available() || path.includes(this.host) || path.includes(this.video)) {
+            return;
+          }
+          if (
+            type === 'touchmove' ||
+            this.gestures.points.has(event.pointerId) ||
+            this.isPictureInteraction(event)
+          ) {
+            this.gestures[method](event);
+          }
+        } catch {
+          // A recognized player can be replaced during the same touch sequence.
+        }
+      };
+      try {
+        target.addEventListener(type, onInput, { capture: true, passive: false });
+        removers.push(() => target.removeEventListener(type, onInput, true));
+      } catch {
+        // Keep other input paths usable if a site patches one listener API.
+      }
+    }
+    return () => {
+      for (const remove of removers) {
+        remove();
+      }
+    };
   }
 
   canAutoHide() {
@@ -700,6 +814,12 @@ class IOSInlinePlayer {
     if (!this.available()) {
       return;
     }
+    if (this.gestures.suppressClick) {
+      this.gestures.suppressClick = false;
+      this.pictureTap = null;
+      this.reveal();
+      return;
+    }
     const visible = event?.detail === 0 ? !this.idle : (this.pictureTap?.visible ?? !this.idle);
     this.pictureTap = null;
     if (this.host.classList.contains('vsc-touch-open')) {
@@ -728,6 +848,7 @@ class IOSInlinePlayer {
       return;
     }
     const generation = this.generation;
+    this.gestures.attach();
     this.clearTimer();
     this.setIdle(false);
     this.update();

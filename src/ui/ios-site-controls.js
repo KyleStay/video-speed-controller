@@ -273,13 +273,15 @@ class IOSSiteControls {
       const style = doc.createElement('style');
       this.style = style;
       const scope = `[${SITE_CONTROL_ATTRIBUTE}="${this.token}"]`;
-      style.textContent = profile.controls
-        .map((control) => `${scope} ${control} { display: none !important; }`)
-        .join('\n');
+      style.textContent =
+        `${profile.controls
+          .map((control) => `${scope} ${control} { display: none !important; }`)
+          .join('\n')  }\n${scope} { touch-action: pan-y pinch-zoom !important; }`;
       node.setAttribute(SITE_CONTROL_ATTRIBUTE, this.token);
       (doc.head || doc.documentElement).appendChild(style);
       // Site picture overlays can receive input instead of the video itself.
       // Keep wake-up scoped to the same validated single-video container.
+      this.releaseSurface = this.video.vsc?.controlsManager?.inlinePlayer?.observeSurface?.(node);
       this.releaseInteraction = window.VSC.IOSInlinePlayer.observeInteractions(node, (event) => {
         this.video.vsc?.controlsManager?.inlinePlayer?.surfaceInteraction(event);
       });
@@ -291,6 +293,8 @@ class IOSSiteControls {
   }
 
   release() {
+    this.releaseSurface?.();
+    this.releaseSurface = null;
     this.releaseInteraction?.();
     this.releaseInteraction = null;
     const container = this.container;

@@ -706,6 +706,214 @@ export default async function runIOSPlayer({
       });
     };
     await navigate();
+    for (const presentation of ['inline', 'overlay', 'fullscreen']) {
+      await check(`video-surface precision scrubbing in ${presentation}`, async () => {
+        await navigate(
+          `&takeover&standard-fullscreen&precision${
+            presentation === 'overlay' ? '&reveal-overlay' : ''
+          }`
+        );
+        await page.evaluate(() => {
+          window.__ownedOriginal.pause();
+          window.__ownedOriginal.currentTime = 20;
+        });
+        if (presentation === 'fullscreen') {
+          await tapInline(page, '.inline-fullscreen');
+          await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.active);
+        }
+        const geometry = await page.evaluate(() => {
+          const video = window.__ownedOriginal;
+          const owner = video.vsc.iosPlayer;
+          const stage = owner.active ? owner.ui.stage : video;
+          const rect = stage.getBoundingClientRect();
+          return {
+            x: rect.left + rect.width * 0.3,
+            y: rect.top + rect.height * (owner.active ? 0.25 : 0.45),
+            width: rect.width,
+            duration: video.duration,
+            before: video.currentTime,
+            action: getComputedStyle(video).touchAction,
+          };
+        });
+        if (presentation !== 'fullscreen') {
+          assert.true(geometry.action.includes('pan-y'), geometry.action);
+        }
+        const session = await page.createCDPSession();
+        let ended = false;
+        const send = (type, x, y) =>
+          session.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints:
+              type === 'touchEnd' || type === 'touchCancel'
+                ? []
+                : [{ x, y, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
+          });
+        const state = () =>
+          page.evaluate(() => {
+            const video = window.__ownedOriginal,
+              owner = video.vsc.iosPlayer;
+            const scrubber = owner.active
+              ? owner.scrubber
+              : video.vsc.controlsManager.inlinePlayer.scrubber;
+            return {
+              active: scrubber.active,
+              value: scrubber.value,
+              rate: scrubber.rate,
+              hint: scrubber.ui.refs.scrubHint.textContent,
+              paused: video.paused,
+            };
+          });
+        try {
+          await send('touchStart', geometry.x, geometry.y);
+          await send('touchMove', geometry.x + 30, geometry.y);
+          await page.waitForFunction(
+            () => {
+              const v = window.__ownedOriginal,
+                o = v.vsc.iosPlayer;
+              return (o.active ? o.scrubber : v.vsc.controlsManager.inlinePlayer.scrubber).active;
+            },
+            { timeout: 3000 }
+          );
+          let expected = geometry.before + (30 / geometry.width) * geometry.duration;
+          let current = await state();
+          assert.true(
+            current.paused && Math.abs(current.value - expected) < 0.15 && current.hint === '',
+            JSON.stringify(current)
+          );
+          let x = geometry.x + 30;
+          for (const [distance, gain, label] of [
+            [44, 0.5, '×1/2'],
+            [88, 0.25, '×1/4'],
+            [132, 0.1, '×1/10'],
+          ]) {
+            await send('touchMove', x, geometry.y - distance);
+            await page.waitForFunction(
+              (rate) => {
+                const v = window.__ownedOriginal,
+                  o = v.vsc.iosPlayer;
+                return (
+                  (o.active ? o.scrubber : v.vsc.controlsManager.inlinePlayer.scrubber).rate ===
+                  rate
+                );
+              },
+              {},
+              gain
+            );
+            current = await state();
+            assert.true(
+              Math.abs(current.value - expected) < 0.15 && current.hint === label,
+              JSON.stringify(current)
+            );
+            x += 20;
+            expected += (20 / geometry.width) * geometry.duration * gain;
+            await send('touchMove', x, geometry.y - distance);
+            await page.waitForFunction(
+              (target) => {
+                const v = window.__ownedOriginal,
+                  o = v.vsc.iosPlayer;
+                return (
+                  Math.abs(
+                    (o.active ? o.scrubber : v.vsc.controlsManager.inlinePlayer.scrubber).value -
+                      target
+                  ) < 0.15
+                );
+              },
+              {},
+              expected
+            );
+          }
+          await page.screenshot({
+            path: resolve(`tests/e2e/screenshots/ios-surface-${presentation}.png`),
+          });
+          await send('touchEnd');
+          ended = true;
+          await page.waitForFunction(
+            (target) =>
+              window.__ownedOriginal.paused &&
+              Math.abs(window.__ownedOriginal.currentTime - target) < 0.3,
+            {},
+            expected
+          );
+          current = await state();
+          assert.true(!current.active && current.hint === '', JSON.stringify(current));
+        } catch (error) {
+          console.error(
+            'Surface gesture failure:',
+            JSON.stringify({ geometry, state: await state() })
+          );
+          throw error;
+        } finally {
+          if (!ended) {
+            await send('touchCancel');
+          }
+          await session.detach();
+        }
+      });
+    }
+    await check(
+      'video-surface touch policy follows connected media between tree roots',
+      async () => {
+        await navigate('&takeover');
+        for (const root of ['first', 'second', 'document']) {
+          await page.evaluate((name) => {
+            const video = window.__ownedOriginal;
+            let parent = document.body;
+            if (name !== 'document') {
+              const host = document.createElement('section');
+              host.id = `surface-${  name}`;
+              host.style.cssText = 'width:360px;height:220px;';
+              document.body.prepend(host);
+              parent = host.attachShadow({ mode: 'open' });
+            }
+            parent.append(video);
+          }, root);
+          await page.waitForFunction(() => {
+            const video = window.__ownedOriginal;
+            const inline = video.vsc?.controlsManager?.inlinePlayer;
+            return (
+              inline?.surfacePolicy?.root === video.getRootNode() &&
+              inline.surfacePolicy.style.getRootNode() === video.getRootNode() &&
+              getComputedStyle(video).touchAction.includes('pan-y')
+            );
+          });
+        }
+      }
+    );
+    await check('video-surface vertical movement preserves real page scrolling', async () => {
+      await navigate('&takeover&scroll=page');
+      await page.evaluate(() => {
+        window.__ownedOriginal.pause();
+        window.__ownedOriginal.currentTime = 20;
+      });
+      const rect = await page.$eval('video', (video) => {
+        const r = video.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height * 0.7 };
+      });
+      const session = await page.createCDPSession();
+      try {
+        await session.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
+        });
+        for (let d = 30; d <= 150; d += 30) {
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: rect.x, y: rect.y - d, id: 1 }],
+          });
+        }
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForFunction(() => scrollY > 10);
+        assert.true(
+          await page.evaluate(
+            () =>
+              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+              Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2
+          )
+        );
+      } finally {
+        await session.detach();
+      }
+    });
     await check(
       'page-load and synthetic fullscreen calls cannot open a player or move the page',
       async () => {
