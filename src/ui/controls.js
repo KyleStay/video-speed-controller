@@ -333,14 +333,30 @@ class ControlsManager {
     };
     const placement = {
       x: anchor(media.left, media.right, left, right, rect.width),
-      y: anchor(media.top, media.bottom, top, bottom, rect.height),
+      y: this.inlinePlayer?.owned
+        ? media.top + 4
+        : anchor(media.top, media.bottom, top, bottom, rect.height),
       width: rect.width,
       height: rect.height,
       right: Math.min(media.right, right) - 4,
       bottom: Math.min(media.bottom, bottom) - 4,
     };
-    if (visible) {
+    const anchoredY = placement.y;
+    if (visible && placement.y >= top) {
       this.avoidInlineOcclusion(shadow, video, placement);
+    }
+    if (this.inlinePlayer?.owned) {
+      // Keep transport attached to the picture as its top scrolls away. A
+      // header may hide that strip, but must not push it down across the video.
+      const hidden =
+        anchoredY < top || anchoredY + rect.height > bottom || placement.y !== anchoredY;
+      placement.y = anchoredY;
+      shadow.host.toggleAttribute('data-vsc-inline-strip-hidden', hidden);
+      if (hidden) {
+        this.setTouchExpanded(shadow, false);
+      }
+    } else {
+      shadow.host.removeAttribute('data-vsc-inline-strip-hidden');
     }
     const scale = this.inlinePlayer?.owned ? this.inlinePlayer.scale : null;
     controller.style.transform = `translate(${(placement.x - rect.left) / (scale?.x || 1)}px, ${(placement.y - rect.top) / (scale?.y || 1)}px)`;
@@ -477,7 +493,7 @@ class ControlsManager {
         }
         this.setTouchExpanded(shadow, false);
       }
-    }, 2500);
+    }, 4000);
   }
 
   setTouchMode(shadow, enabled) {

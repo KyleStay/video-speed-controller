@@ -37,7 +37,8 @@ advertising, analytics, or StayTech backend.
   then tenth-speed scrubbing; moving back toward the bar restores sensitivity
   without jumping, and lifting commits the selected position. The same captured
   gesture works on inline and fullscreen timelines; fractional selected time and
-  the active precision mode stay visible while dragging. The inline timeline
+  modified precision (`×1/2`, `×1/4`, `×1/10`) stay visible while dragging;
+  normal scrubbing has no rate label. The inline timeline
   sits at the video’s bottom, independently of the speed controls.
   The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
   site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
@@ -174,7 +175,13 @@ status are tracked in the [Safari guide](docs/safari.md).
 
 Inline controls use the video's connected layout for placement as a player
 loads or moves. This avoids temporarily oversized controller geometry during
-insertion. Controls stay at least 44px; small or cropped players progressively
+insertion. The top buttons scroll with the video and disappear with its top edge;
+the timeline remains at the visible video's bottom. Picture taps, transport
+activation, keyboard focus and pointer movement reveal the timeline with the
+controls, including recognized single-video site overlays. While playing, it
+stays available for four seconds after interaction;
+paused playback and active scrubbing keep it visible.
+Controls stay at least 44px; small or cropped players progressively
 reduce the transport controls. When the actual clipped video is smaller than
 52px on either axis, the surface hides and native/site controls return. An active
 owned fullscreen player acquires controls independently of inline fit.

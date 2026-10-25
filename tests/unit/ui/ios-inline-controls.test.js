@@ -153,7 +153,13 @@ describe('compact iOS inline controls', () => {
       window.dispatchEvent(new Event('scroll'));
       vi.advanceTimersByTime(20);
       expect(railRect()).toEqual({ left: 24, top: 292, width: 692, right: 716, bottom: 336 });
-      expect(controller.getBoundingClientRect().top).toBe(4);
+      expect(controller.getBoundingClientRect().top).toBe(-76);
+      expect(host.hasAttribute('data-vsc-inline-strip-hidden')).toBe(true);
+      media = { ...media, top: 40, bottom: 460 };
+      window.dispatchEvent(new Event('scroll'));
+      vi.advanceTimersByTime(20);
+      expect(controller.getBoundingClientRect().top).toBe(44);
+      expect(host.hasAttribute('data-vsc-inline-strip-hidden')).toBe(false);
       expect(scroll).not.toHaveBeenCalled();
     });
 
@@ -1189,7 +1195,7 @@ describe('compact iOS inline controls', () => {
     paused = false;
     video.dispatchEvent(new Event('playing'));
     openByTouch();
-    vi.advanceTimersByTime(2499);
+    vi.advanceTimersByTime(3999);
     expect(host.classList.contains('vsc-touch-open')).toBe(true);
     vi.advanceTimersByTime(1);
     expect(host.classList.contains('vsc-touch-open')).toBe(false);
@@ -1220,7 +1226,7 @@ describe('compact iOS inline controls', () => {
     pointer(shadow.querySelector('[data-action="faster"]'));
     vi.advanceTimersByTime(2000);
     expect(host.classList.contains('vsc-touch-open')).toBe(true);
-    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(2000);
     expect(host.classList.contains('vsc-touch-open')).toBe(false);
   });
 

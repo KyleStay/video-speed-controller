@@ -65,6 +65,29 @@ import XCTest
         if !close.isHittable { safari.otherElements["Media"].tap() }
         XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
     }
+    /// /mobile.html?mp4&owned&takeover&precision&reveal-overlay
+    func testTimelineRevealsWithInterface() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
+        safari.buttons["Play test video"].tap()
+        wait(safari, ["ready: 4", "paused: false", "inline timeline hidden: true", "errors: 0"])
+        capture(safari, "playing-timeline-idle")
+        let picture = safari.buttons["Video picture"]
+        XCTAssertTrue(picture.isHittable)
+        picture.tap()
+        wait(safari, ["paused: false", "inline timeline hidden: false", "owner active: false", "errors: 0"])
+        XCTAssertTrue(safari.sliders["Seek video"].isHittable)
+        capture(safari, "picture-overlay-reveals-timeline")
+        wait(safari, ["inline timeline hidden: true"])
+        let speed = safari.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Playback speed '")).firstMatch
+        XCTAssertTrue(speed.isHittable)
+        speed.tap()
+        wait(safari, ["inline timeline hidden: false", "paused: false", "errors: 0"])
+        XCTAssertTrue(safari.sliders["Seek video"].isHittable)
+        capture(safari, "speed-control-reveals-timeline")
+    }
+
     func testInlineUntilExplicitFullscreen() {
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.activate()

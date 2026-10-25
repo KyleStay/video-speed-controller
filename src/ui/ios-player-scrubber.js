@@ -230,13 +230,7 @@ class IOSPlayerScrubber {
     this.rate = rate;
     if (this.ui.refs.scrubHint) {
       this.ui.refs.scrubHint.textContent =
-        rate === 0.1
-          ? 'Fine scrubbing · Tenth speed'
-          : rate === 0.25
-            ? 'Fine scrubbing · Quarter speed'
-            : rate === 0.5
-              ? 'Fine scrubbing · Half speed'
-              : 'Scrubbing';
+        rate === 0.1 ? '×1/10' : rate === 0.25 ? '×1/4' : rate === 0.5 ? '×1/2' : '';
     }
   }
 

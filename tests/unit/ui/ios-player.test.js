@@ -2862,6 +2862,23 @@ describe('iOS player ownership, playback, and restoration', () => {
     );
   });
 
+  it.each(['focusin', 'keydown', 'pointermove'])(
+    'reveals the complete HUD and timeline on %s while preserving Lock',
+    (type) => {
+      const { player } = makeController();
+      player.attach();
+      player.open();
+      const { host, refs } = player.ui;
+      host.setAttribute('data-controls-hidden', '');
+      refs.seek.dispatchEvent(new Event(type, { bubbles: true, composed: true }));
+      expect(host.hasAttribute('data-controls-hidden')).toBe(false);
+      player.setControlsLocked(true);
+      refs.seek.dispatchEvent(new Event(type, { bubbles: true, composed: true }));
+      expect(host.hasAttribute('data-controls-hidden')).toBe(true);
+      expect(player.controlsLocked).toBe(true);
+    }
+  );
+
   it('keeps the HUD hidden through a delayed control blur and lets a subsequent stage tap wake it', () => {
     const { player } = makeController();
     player.attach();
@@ -2878,6 +2895,8 @@ describe('iOS player ownership, playback, and restoration', () => {
     refs.duration.dispatchEvent(
       new FocusEvent('focusout', { bubbles: true, composed: true, relatedTarget: stage })
     );
+    expect(host.hasAttribute('data-controls-hidden')).toBe(true);
+    player.ui.dialog.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
     expect(host.hasAttribute('data-controls-hidden')).toBe(true);
     stage.dispatchEvent(
       new MouseEvent('click', { bubbles: true, composed: true, cancelable: true })

@@ -493,6 +493,12 @@ class ShadowDOMManager {
         pointer-events: none;
       }
       :host([data-vsc-inline-owned]) .inline-scrub-hint:empty { display: none; }
+      :host([data-vsc-ios-inline][data-vsc-inline-owned][data-vsc-inline-strip-hidden]) #controller {
+        visibility: hidden !important;
+      }
+      :host([data-vsc-inline-owned][data-vsc-inline-strip-hidden]) .inline-timeline {
+        visibility: visible;
+      }
       :host([data-vsc-inline-owned]) .inline-owned-status {
         display: block;
         position: absolute;

@@ -1,10 +1,25 @@
 # StayFast Video — iOS TestFlight
 
-Release packet updated October 22, 2026. Target: iPhone and iPad on iOS/iPadOS
-18.4+. This packet distinguishes local artifacts, Apple upload/processing, and
-tester availability; a successful build alone does not complete the latter two.
+Release packet updated October 25, 2026. Target: iPhone and iPad on iOS/iPadOS
+18.4+. Archive/export, Apple upload/processing and tester availability are
+separate verification steps.
 
-## Current release preparation — October 22, 2026
+## Current release preparation — October 25, 2026
+
+**0.11.6 (19)** is the next candidate. Inline controls and the timeline reveal
+together on picture/control input, keyboard focus and pointer movement, including
+recognized single-video site overlays. Playing controls use a four-second idle
+delay; paused media and active scrubbing retain the timeline. The top transport
+stays anchored to the video as it scrolls offscreen. Precision feedback is blank
+at normal sensitivity and shows `×1/2`, `×1/4` or `×1/10` at slower sensitivities.
+Dependency updates are verified through local CI; hosted workflows stay inactive.
+
+Record the merged source, checks, archive/export, upload receipt, processing and
+Personal Auto tester availability under `build/safari/testflight/0.11.6-build19/`.
+Preparation alone does not establish upload or Testing. Physical-device and live
+Safari site checks remain separate from simulator and controlled-fixture proof.
+
+## Earlier release preparation
 
 **0.11.4 (18)** is the next candidate. Delayed media initialization now reads
 current speed preferences when metadata arrives and preserves a newer command

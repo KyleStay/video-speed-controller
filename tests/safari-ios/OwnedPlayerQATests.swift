@@ -343,6 +343,7 @@ import XCTest
         let active, paused, truncated: Bool
         let mode: String
         let fractionalFeedback: Bool
+        let rateLabelsValid: Bool
     }
 
     private func precisionReport(_ safari: XCUIApplication) -> PrecisionReport? {
@@ -447,6 +448,7 @@ import XCTest
             let report = try XCTUnwrap(precisionReport(safari))
             XCTAssertEqual(report.mode, "inline")
             XCTAssertTrue(report.fractionalFeedback)
+            XCTAssertTrue(report.rateLabelsValid)
             XCTAssertFalse(report.truncated)
             XCTAssertTrue(report.paused)
             XCTAssertLessThan(report.maxError, 0.00001)

@@ -108,7 +108,7 @@ describe('owned-player pointer precision scrubbing', () => {
     expect(Number(range.value)).toBe(60);
     expect(owner.ui.refs.current.textContent).toBe('1:00.00');
     expect(range.getAttribute('aria-valuetext')).toBe('1:00.00 of 1:40');
-    expect(owner.ui.refs.scrubHint.textContent).toBe('Scrubbing');
+    expect(owner.ui.refs.scrubHint.textContent).toBe('');
   });
 
   it('uses the owner time formatter for long-duration preview and accessibility text', () => {
@@ -148,12 +148,12 @@ describe('owned-player pointer precision scrubbing', () => {
   });
 
   it.each([
-    [0, 1, 'Scrubbing'],
-    [43, 1, 'Scrubbing'],
-    [44, 0.5, 'Half speed'],
-    [88, 0.25, 'Quarter speed'],
-    [132, 0.1, 'Tenth speed'],
-    [200, 0.1, 'Tenth speed'],
+    [0, 1, ''],
+    [43, 1, ''],
+    [44, 0.5, '×1/2'],
+    [88, 0.25, '×1/4'],
+    [132, 0.1, '×1/10'],
+    [200, 0.1, '×1/10'],
   ])(
     'scales the same horizontal motion at distance %s above and below the bar',
     (distance, rate, label) => {
@@ -165,7 +165,7 @@ describe('owned-player pointer precision scrubbing', () => {
         expect(Number(range.value)).toBeCloseTo(50 + 10 * rate);
         vi.advanceTimersByTime(50);
         expect(owner.video.currentTime).toBeCloseTo(50 + 10 * rate);
-        expect(owner.ui.refs.scrubHint.textContent).toContain(label);
+        expect(owner.ui.refs.scrubHint.textContent).toBe(label);
         pointer('pointerup', 190, 122 + distance * direction);
       }
     }

@@ -1112,9 +1112,35 @@ class IOSPlayer {
     );
     this.listen(
       this.ui.shadow,
+      'pointermove',
+      (event) => {
+        if (event.pointerType !== 'touch') {
+          this.pointerInteraction = true;
+          this.showControls();
+        }
+      },
+      true,
+      { capture: true, passive: true }
+    );
+    this.listen(
+      this.ui.shadow,
+      'focusin',
+      (event) => {
+        // A picture tap can focus the dialog before its click toggles the HUD.
+        // Only focusing a control should wake it ahead of that click.
+        if (event.target.matches?.('button,select,input')) {
+          this.showControls();
+        }
+      },
+      true,
+      true
+    );
+    this.listen(
+      this.ui.shadow,
       'keydown',
       (event) => {
         this.pointerInteraction = false;
+        this.showControls();
         if (event.key === 'Escape' && this.controlsLocked) {
           event.preventDefault();
           event.stopPropagation();

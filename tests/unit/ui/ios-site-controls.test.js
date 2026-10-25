@@ -30,6 +30,26 @@ afterEach(() => {
 });
 
 describe('scoped iOS site controls', () => {
+  it('reveals owned inline controls through a site overlay and removes wake listeners on handback', () => {
+    const { container, video, owner, button } = fixture();
+    const reveal = vi.fn();
+    video.vsc = { controlsManager: { inlinePlayer: { reveal } } };
+    button.addEventListener('click', (event) => event.stopImmediatePropagation());
+    expect(owner.acquire()).toBe(true);
+    expect(owner.acquire()).toBe(true);
+    button.click();
+    expect(reveal).toHaveBeenCalledOnce();
+    owner.release();
+    button.click();
+    container.dispatchEvent(new Event('touchstart', { bubbles: true }));
+    expect(reveal).toHaveBeenCalledOnce();
+    expect(owner.acquire()).toBe(true);
+    container.append(document.createElement('video'));
+    expect(owner.acquire()).toBe(false);
+    button.click();
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+
   function modernX() {
     const result = fixture('');
     const trigger = document.createElement('div');

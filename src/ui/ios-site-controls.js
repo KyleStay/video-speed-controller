@@ -278,6 +278,11 @@ class IOSSiteControls {
         .join('\n');
       node.setAttribute(SITE_CONTROL_ATTRIBUTE, this.token);
       (doc.head || doc.documentElement).appendChild(style);
+      // Site picture overlays can receive input instead of the video itself.
+      // Keep wake-up scoped to the same validated single-video container.
+      this.releaseInteraction = window.VSC.IOSInlinePlayer.revealOnInteraction(node, () => {
+        this.video.vsc?.controlsManager?.inlinePlayer?.reveal();
+      });
       return true;
     } catch {
       this.release();
@@ -286,6 +291,8 @@ class IOSSiteControls {
   }
 
   release() {
+    this.releaseInteraction?.();
+    this.releaseInteraction = null;
     const container = this.container;
     const style = this.style;
     const hadMarker = this.hadMarker;
