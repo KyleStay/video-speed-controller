@@ -414,6 +414,18 @@ with direct `chrome.*` access.
   playing, still-current visible session. Close/cleanup cancels capture, timers,
   and gesture listeners without a stale resume. Edge touch double taps seek ±10s;
   center taps do not seek, and touch-derived `dblclick` never runs a second seek.
+  A one-finger picture swipe commits only after more than 10px of horizontal-dominant
+  movement; vertical intent keeps inline page scrolling. It reuses the shared
+  scrubber, starts relative to current time, and measures precision from the
+  finger's starting Y in either direction. The rail stays anchored to its own Y.
+  Source/session checks run again at commitment. Capture begins only after intent;
+  its synthesized click is suppressed. Two fingers before commitment retain owned
+  fullscreen pinch or inline browser pinch; a second finger after commitment
+  cancels the scrub and blocks further action until both lift. Scoped inline
+  touch-action rules permit pan-y and pinch-zoom without changing media inline
+  styles; handback/cleanup restores marker intent and removes the style/listeners.
+  Fullscreen keeps its separate touch-action ownership. Lost capture on a slotted
+  descendant during transfer to the stage must not cancel the stage's gesture.
   Gesture runtime proof requires two observed DOM touch pairs; an XCTest
   double-tap invocation that delivers only one pair is incomplete coverage.
   Pinch Fit/Fill owns stage touches separately. Active sessions own and restore

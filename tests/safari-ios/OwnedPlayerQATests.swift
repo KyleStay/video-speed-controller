@@ -408,6 +408,79 @@ import XCTest
         wait(safari, ["owner active: false", "owned hosts: 0", "errors: 0"])
     }
 
+    private struct SurfaceReport: Decodable {
+        let gesture, moves: Int
+        let mode: String
+        let bands: [Double]
+        let active, trusted, wasPlaying, paused, labelsValid, fractionalFeedback: Bool
+        let start, after, selected, delta: Double
+    }
+    private func surfaceReport(_ safari: XCUIApplication) -> SurfaceReport? {
+        let pieces = status(safari).label.components(separatedBy: "; surface scrub: ")
+        guard pieces.count == 2, let data = pieces[1].components(separatedBy: "; precision: ")[0].data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(SurfaceReport.self, from: data)
+    }
+    /// Fresh /mobile.html?mp4&owned&takeover&reveal-overlay&surface-scrub
+    func testPictureSurfaceScrubbing() throws {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
+        safari.buttons["Play test video"].tap()
+        wait(safari, ["ready: 4", "paused: false", "errors: 0"])
+        safari.buttons["Pause test video"].tap()
+        wait(safari, ["paused: true", "precision mode: inline"])
+        func drag(_ surface: XCUIElement, _ dy: CGFloat, _ mode: String) throws -> SurfaceReport {
+            let seek = safari.sliders["Seek video"]
+            target(seek)
+            seek.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - 7.5) < 0.6 }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [centered], timeout: 10), .completed)
+            let prior = surfaceReport(safari)?.gesture ?? 0
+            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: mode == "inline" ? 0.72 : 0.25))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 180, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0.1)
+            let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let report = self.surfaceReport(safari) else { return false }
+                return report.gesture > prior && !report.active && report.moves > 2
+            }, object: status(safari))
+            XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+            let report = try XCTUnwrap(surfaceReport(safari))
+            XCTAssertEqual(report.mode, mode); XCTAssertTrue(report.trusted)
+            XCTAssertTrue(report.paused); XCTAssertFalse(report.wasPlaying)
+            XCTAssertTrue(report.labelsValid); XCTAssertTrue(report.fractionalFeedback)
+            XCTAssertGreaterThan(report.delta, 0.1)
+            wait(safari, ["original identity: true", "source preserved: true", "errors: 0"])
+            return report
+        }
+        for mode in ["inline", "fullscreen"] {
+            if mode == "fullscreen" {
+                safari.buttons["Open video fullscreen"].tap()
+                wait(safari, ["owner active: true", "paused: true"])
+            }
+            let surface = mode == "inline" ? safari.buttons["Video picture"] : safari.otherElements["Video display"]
+            XCTAssertTrue(surface.waitForExistence(timeout: 5))
+            let normal = try drag(surface, 0, mode)
+            let precise = try drag(surface, -140, mode)
+            XCTAssertTrue(precise.bands.contains(0.5)); XCTAssertTrue(precise.bands.contains(0.25)); XCTAssertTrue(precise.bands.contains(0.1))
+            XCTAssertLessThan(precise.delta, normal.delta * 0.85)
+            print("SURFACE " + mode + " normal=" + String(normal.delta) + " precise=" + String(precise.delta) + " bands=" + String(describing: precise.bands))
+            capture(safari, mode + "-picture-scrubbing")
+        }
+        safari.buttons["Close StayFast video player"].tap()
+        safari.buttons["Play test video"].tap()
+        wait(safari, ["paused: false", "inline timeline hidden: true"])
+        let prior = surfaceReport(safari)?.gesture ?? 0
+        let picture = safari.buttons["Video picture"]
+        let start = picture.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.7))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 80, dy: 0)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let report = self.surfaceReport(safari) else { return false }
+            return report.gesture > prior && !report.active && report.wasPlaying && !report.paused
+        }, object: status(safari))
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 10), .completed)
+        wait(safari, ["paused: false", "inline timeline hidden: false", "errors: 0"])
+        capture(safari, "hidden-picture-scrub-resumes")
+    }
+
     func testInlineBottomPrecisionAndFrames() throws {
         try checkInlineBottomPrecision(false)
     }

@@ -192,3 +192,99 @@ export function installPrecisionTrace(video) {
     { once: true }
   );
 }
+
+/** Fixture-only evidence of native picture swipes; never changes media or input. */
+export function installSurfaceTrace(video) {
+  const trace = { report: null, sequence: 0 };
+  window.__stayfastSurface = trace;
+  let pending = null;
+  const surface = () => {
+    const owner = video.vsc?.iosPlayer;
+    const inline = video.vsc?.controlsManager?.inlinePlayer;
+    return owner?.active
+      ? { stage: owner.ui.stage, scrubber: owner.scrubber, mode: 'fullscreen' }
+      : { stage: video, scrubber: inline?.scrubber, mode: 'inline' };
+  };
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+    window.addEventListener(
+      type,
+      (event) => {
+        if (event.pointerType !== 'touch') {return;}
+        if (type === 'pointerdown') {
+          if (pending) {return;}
+          const current = surface();
+          const path = event.composedPath();
+          if (
+            !path.includes(current.stage) &&
+            event.target.getAttribute?.('aria-label') !== 'Video picture'
+          )
+            {return;}
+          pending = {
+            id: event.pointerId,
+            wasPlaying: !video.paused,
+            trusted: event.isTrusted,
+            report: null,
+          };
+          return;
+        }
+        const gesture = pending;
+        if (!gesture || gesture.id !== event.pointerId) {return;}
+        // Native event dispatch can run a microtask checkpoint between capture
+        // listeners. Observe next task, after the product's target handlers finish.
+        setTimeout(() => {
+          if (pending !== gesture) {return;}
+          const current = surface();
+          const scrubber = current.scrubber;
+          if (!gesture.report && scrubber?.active && scrubber.surface) {
+            gesture.report = {
+              gesture: ++trace.sequence,
+              mode: current.mode,
+              moves: 0,
+              bands: [],
+              active: true,
+              trusted: gesture.trusted,
+              start: scrubber.startTime,
+              after: video.currentTime,
+              selected: scrubber.value,
+              delta: 0,
+              wasPlaying: gesture.wasPlaying,
+              paused: video.paused,
+              labelsValid: true,
+              fractionalFeedback: false,
+            };
+          }
+          const report = gesture.report;
+          if (report) {
+            report.trusted = report.trusted && event.isTrusted;
+            if (scrubber.active) {
+              report.moves++;
+              if (!report.bands.includes(scrubber.rate)) {report.bands.push(scrubber.rate);}
+              const expected =
+                scrubber.rate === 0.1
+                  ? '×1/10'
+                  : scrubber.rate === 0.25
+                    ? '×1/4'
+                    : scrubber.rate === 0.5
+                      ? '×1/2'
+                      : '';
+              report.labelsValid =
+                report.labelsValid && scrubber.ui.refs.scrubHint.textContent === expected;
+              report.fractionalFeedback =
+                report.fractionalFeedback ||
+                /\d+:\d{2}\.\d{2}/.test(scrubber.range.getAttribute('aria-valuetext') || '');
+            }
+            report.active = scrubber.active;
+            report.after = video.currentTime;
+            report.selected = scrubber.value;
+            report.delta = report.after - report.start;
+            report.paused = video.paused;
+            trace.report = { ...report, bands: [...report.bands] };
+            trace.onReport?.();
+          }
+          if (type === 'pointerup' || type === 'pointercancel') {pending = null;}
+        }, 0);
+      },
+      true
+    );
+  }
+}
