@@ -324,7 +324,30 @@ async function tapPlayer(page, ref, context = page) {
   }
 }
 
+async function revealInline(page, mediaId = 'mobile-video', context = page) {
+  const picture = await context.evaluate((id) => {
+    const video = document.getElementById(id);
+    if (!video?.vsc?.controlsManager?.inlinePlayer?.idle) {
+      return null;
+    }
+    const rect = video.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }, mediaId);
+  if (!picture) {
+    return;
+  }
+  const offset =
+    context === page ? { x: 0, y: 0 } : await (await context.frameElement()).boundingBox();
+  await tapAt(page, offset.x + picture.x, offset.y + picture.y);
+  await context.waitForFunction(
+    (id) => !document.getElementById(id).vsc.controlsManager.inlinePlayer.idle,
+    {},
+    mediaId
+  );
+}
+
 async function tapInline(page, selector, mediaId = 'mobile-video', context = page) {
+  await revealInline(page, mediaId, context);
   await context.evaluate(
     (id, query) =>
       document
@@ -380,6 +403,7 @@ async function tapInline(page, selector, mediaId = 'mobile-video', context = pag
 }
 
 async function tapInlinePlayer(page, ref) {
+  await revealInline(page);
   const handle = await page.evaluateHandle(
     (name) => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs[name],
     ref
@@ -818,39 +842,60 @@ export default async function runIOSPlayer({
       }
     );
     await check(
-      'inline picture taps reveal the timeline for four seconds after interaction',
+      'inline picture taps toggle one interface with a shared four-second deadline',
       async () => {
         await navigate('&takeover&standard-fullscreen');
         await tapInlinePlayer(page, 'play');
         await page.waitForFunction(() => !window.__ownedOriginal.paused);
-        // Clear the touch button's browser focus so this exercises idle behavior,
-        // rather than the separate keyboard-focus guarantee.
         await page.evaluate(() => window.__ownedOriginal.vsc.div.shadowRoot.activeElement?.blur());
         await new Promise((resolve) => setTimeout(resolve, 3000));
         assert.true(
-          await page.evaluate(
-            () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
-          ),
-          'Timeline must remain visible beyond the old 2.5-second deadline'
+          await page.evaluate(() => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle)
         );
         await page.waitForFunction(
-          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
         );
+        await page.waitForFunction(() => {
+          const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+          return (
+            getComputedStyle(inline.root).opacity === '0' &&
+            [inline.refs.play, inline.refs.rewind, inline.refs.timeline].every(
+              (node) => getComputedStyle(node).pointerEvents === 'none'
+            )
+          );
+        });
         const picture = await page.$eval('video', (video) => {
           const rect = video.getBoundingClientRect();
           return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         });
         await tapAt(page, picture.x, picture.y);
         await page.waitForFunction(
-          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
         );
-        assert.true(
-          await page.evaluate(() => !window.__ownedOriginal.paused),
-          'Picture reveal must preserve playback'
-        );
+        assert.true(await page.evaluate(() => !window.__ownedOriginal.paused));
         await page.screenshot({
           path: resolve('tests/e2e/screenshots/ios-inline-picture-reveal.png'),
         });
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+        );
+        await page.evaluate(() => window.__ownedOriginal.pause());
+        await page.waitForFunction(
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+        );
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+        );
+        await page.evaluate(() => window.__ownedOriginal.dispatchEvent(new Event('timeupdate')));
+        assert.true(
+          await page.evaluate(() => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle)
+        );
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+        );
       }
     );
     await check(
@@ -859,8 +904,7 @@ export default async function runIOSPlayer({
         await navigate('&takeover&reveal-overlay');
         await tapInlinePlayer(page, 'play');
         await page.evaluate(() => window.__ownedOriginal.vsc.div.shadowRoot.activeElement?.blur());
-        const hidden = () =>
-          window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden;
+        const hidden = () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle;
         await page.waitForFunction(hidden);
         const picture = await page.$eval('[aria-label="Video picture"]', (node) => {
           const rect = node.getBoundingClientRect();
@@ -868,13 +912,17 @@ export default async function runIOSPlayer({
         });
         await tapAt(page, picture.x, picture.y);
         await page.waitForFunction(
-          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
         );
         assert.true(
           await page.evaluate(() => !window.__ownedOriginal.paused),
           'Overlay wake must retain playback despite the site stopping propagation at its surface'
         );
         await page.waitForFunction(hidden);
+        await tapAt(page, picture.x, picture.y);
+        await page.waitForFunction(
+          () => !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+        );
         const speed = await page.evaluate(() => {
           const rect = window.__ownedOriginal.vsc.div.shadowRoot
             .querySelector('.draggable')
@@ -886,7 +934,7 @@ export default async function runIOSPlayer({
           const video = window.__ownedOriginal;
           return (
             video.vsc.div.classList.contains('vsc-touch-open') &&
-            !video.vsc.controlsManager.inlinePlayer.refs.timelineGroup.hidden &&
+            !video.vsc.controlsManager.inlinePlayer.idle &&
             !video.paused
           );
         });
@@ -1504,20 +1552,32 @@ export default async function runIOSPlayer({
       }
     );
     await check(
-      'touch speed controls collapse while playing and stay open while paused',
+      'speed menus retain the interface until dismissed and reset the shared idle deadline',
       async () => {
         await tapInline(page, '.draggable');
         await page.waitForFunction(() =>
           window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open')
         );
-        await page.waitForFunction(
-          () => !window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open'),
-          { timeout: 5000 }
+        await new Promise((resolve) => setTimeout(resolve, 4500));
+        assert.true(
+          await page.evaluate(() => {
+            const manager = window.__ownedOriginal.vsc.controlsManager;
+            return (
+              manager.inlineHideTimer === null &&
+              !manager.inlinePlayer.idle &&
+              manager.inlinePlayer.host.classList.contains('vsc-touch-open')
+            );
+          })
         );
-        await page.tap('#play');
+        await tapInline(page, '[data-action="close"]');
+        await page.evaluate(() => window.__ownedOriginal.vsc.div.shadowRoot.activeElement?.blur());
+        await page.waitForFunction(
+          () => window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle,
+          { timeout: 5500 }
+        );
         await page.evaluate(() => window.__ownedOriginal.pause());
         await tapInline(page, '.draggable');
-        await new Promise((resolve) => setTimeout(resolve, 2800));
+        await new Promise((resolve) => setTimeout(resolve, 4500));
         assert.true(
           await page.evaluate(() =>
             window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open')
@@ -1527,17 +1587,24 @@ export default async function runIOSPlayer({
       }
     );
     await check(
-      'adopting a playing video with an open panel disposes its original-window timer safely',
+      'adopting a playing video releases its menu, held pointer and original-window subscriptions',
       async () => {
         await page.tap('#play');
         await page.waitForFunction(() => !window.__ownedOriginal.paused);
         await tapInline(page, '.draggable');
-        await page.waitForFunction(
-          () => window.__ownedOriginal.vsc.controlsManager.inlineHideTimer !== null
-        );
+        await page.evaluate(() => {
+          const inline = window.__ownedOriginal.vsc.controlsManager.inlinePlayer;
+          inline.refs.play.dispatchEvent(
+            new PointerEvent('pointerdown', { bubbles: true, pointerId: 99, pointerType: 'touch' })
+          );
+          if (!inline.heldPointers.size || inline.timer !== null) {
+            throw new Error('Held input must suspend the shared timer');
+          }
+        });
         await page.evaluate(() => {
           window.__adoptedController = window.__ownedOriginal.vsc;
           window.__adoptedManager = window.__adoptedController.controlsManager;
+          window.__adoptedInline = window.__adoptedManager.inlinePlayer;
           window.__adoptedDocument = document.implementation.createHTMLDocument('site replacement');
           window.__adoptedDocument.adoptNode(window.__ownedOriginal);
         });
@@ -1552,10 +1619,19 @@ export default async function runIOSPlayer({
           inert: window.__ownedOriginal.ownerDocument.defaultView === null,
           timer: window.__adoptedManager.inlineHideTimer,
           listeners: window.__adoptedManager.cleanupHandlers.length,
+          pointers: window.__adoptedInline.heldPointers.size,
+          pointerListeners: window.__adoptedInline.pointerRemovers.length,
+          sharedTimer: window.__adoptedInline.timer,
           disposed: window.__adoptedController.disposed,
         }));
         assert.true(
-          state.inert && state.timer === null && state.listeners === 0 && state.disposed,
+          state.inert &&
+            state.timer === null &&
+            state.listeners === 0 &&
+            state.pointers === 0 &&
+            state.pointerListeners === 0 &&
+            state.sharedTimer === null &&
+            state.disposed,
           JSON.stringify(state)
         );
         await navigate();

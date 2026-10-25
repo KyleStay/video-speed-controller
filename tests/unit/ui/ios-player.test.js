@@ -2879,6 +2879,35 @@ describe('iOS player ownership, playback, and restoration', () => {
     }
   );
 
+  it('uses a four-second deadline and keeps held fullscreen controls visible until release', () => {
+    vi.useFakeTimers();
+    try {
+      const { player, video } = makeController();
+      player.attach();
+      player.open();
+      video.play();
+      const { host, refs } = player.ui;
+      vi.advanceTimersByTime(3999);
+      expect(host.hasAttribute('data-controls-hidden')).toBe(false);
+      const down = new Event('pointerdown', { bubbles: true, composed: true });
+      Object.assign(down, { pointerId: 8, pointerType: 'touch' });
+      refs.more.dispatchEvent(down);
+      vi.advanceTimersByTime(6000);
+      expect(host.hasAttribute('data-controls-hidden')).toBe(false);
+      const up = new Event('pointerup');
+      Object.assign(up, { pointerId: 8 });
+      window.dispatchEvent(up);
+      vi.advanceTimersByTime(3999);
+      expect(host.hasAttribute('data-controls-hidden')).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(host.hasAttribute('data-controls-hidden')).toBe(true);
+      player.close();
+      expect(player.controlPointers.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the HUD hidden through a delayed control blur and lets a subsequent stage tap wake it', () => {
     const { player } = makeController();
     player.attach();
@@ -2889,6 +2918,8 @@ describe('iOS player ownership, playback, and restoration', () => {
     stage.dispatchEvent(
       new MouseEvent('click', { bubbles: true, composed: true, cancelable: true })
     );
+    expect(host.hasAttribute('data-controls-hidden')).toBe(true);
+    player.video.dispatchEvent(new Event('timeupdate'));
     expect(host.hasAttribute('data-controls-hidden')).toBe(true);
 
     // Safari can deliver this after the stage's blur-and-hide handler returns.

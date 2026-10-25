@@ -244,10 +244,10 @@ class IOSPlayerTakeover {
       }
       if (!fullscreen) {
         const inline = owner.video.vsc?.controlsManager?.inlinePlayer;
-        if (!inline?.available?.() || typeof inline.reveal !== 'function') {
+        if (!inline?.available?.() || typeof inline.pictureClicked !== 'function') {
           return;
         }
-        inline.reveal();
+        inline.pictureClicked(event);
         event.preventDefault();
         event.stopImmediatePropagation();
         return;

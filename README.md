@@ -176,11 +176,12 @@ status are tracked in the [Safari guide](docs/safari.md).
 Inline controls use the video's connected layout for placement as a player
 loads or moves. This avoids temporarily oversized controller geometry during
 insertion. The top buttons scroll with the video and disappear with its top edge;
-the timeline remains at the visible video's bottom. Picture taps, transport
-activation, keyboard focus and pointer movement reveal the timeline with the
-controls, including recognized single-video site overlays. While playing, it
-stays available for four seconds after interaction;
-paused playback and active scrubbing keep it visible.
+the timeline remains at the visible video's bottom. Picture taps toggle the
+buttons and timeline together, including recognized single-video site overlays.
+While playing, the interface hides after four seconds of inactivity. Paused
+playback, scrubbing, held controls, keyboard focus and open menus prevent idle
+hiding. Dismissing a menu starts a fresh interval. Small-player fallback buttons
+stay available.
 Controls stay at least 44px; small or cropped players progressively
 reduce the transport controls. When the actual clipped video is smaller than
 52px on either axis, the surface hides and native/site controls return. An active

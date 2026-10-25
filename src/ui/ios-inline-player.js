@@ -3,10 +3,11 @@ window.VSC = window.VSC || {};
 
 class IOSInlinePlayer {
   /** Observe input without claiming the site's click, playback or scroll gesture. */
-  static revealOnInteraction(target, reveal) {
+  static observeInteractions(target, onInteraction) {
     const types = [
       'pointerdown',
       'pointerup',
+      'pointercancel',
       'pointermove',
       'touchstart',
       'touchend',
@@ -18,7 +19,7 @@ class IOSInlinePlayer {
     const onInput = (event) => {
       try {
         if (event.type !== 'pointermove' || event.pointerType !== 'touch') {
-          reveal();
+          onInteraction(event);
         }
       } catch {
         // Page-owned getters may disappear during the same interaction.
@@ -56,6 +57,10 @@ class IOSInlinePlayer {
     this.timer = null;
     this.layout = null;
     this.idle = false;
+    this.pointerInteraction = false;
+    this.heldPointers = new Set();
+    this.pointerRemovers = [];
+    this.pictureTap = null;
     this.seeking = false;
     this.seekCancelled = false;
     this.refs = {};
@@ -68,8 +73,7 @@ class IOSInlinePlayer {
       node.setAttribute('aria-label', label);
       node.textContent = text;
       node.hidden = true;
-      // Keep permanent primary targets ahead of idle-hidden controls. Revealing
-      // secondary transport on pointerdown/focus must not move the tapped target.
+      // Keep primary targets in a stable order across responsive layout changes.
       this.root.insertBefore(
         node,
         shadow.querySelector(name === 'play' ? '.draggable' : '#controls')
@@ -137,7 +141,7 @@ class IOSInlinePlayer {
       ui,
       video,
       get active() {
-        return inline.available() && !group.hidden;
+        return inline.available() && !inline.idle && !group.hidden;
       },
       get session() {
         return inline.generation;
@@ -189,9 +193,10 @@ class IOSInlinePlayer {
       },
       true
     );
-    for (const target of [this.root, video]) {
-      this.removers.push(IOSInlinePlayer.revealOnInteraction(target, () => this.reveal()));
-    }
+    this.removers.push(
+      IOSInlinePlayer.observeInteractions(this.root, (event) => this.controlInteraction(event)),
+      IOSInlinePlayer.observeInteractions(video, (event) => this.surfaceInteraction(event))
+    );
     for (const type of ['play', 'playing', 'pause', 'ended']) {
       this.listen(video, type, () => this.reveal());
     }
@@ -213,6 +218,8 @@ class IOSInlinePlayer {
     for (const type of ['emptied', 'loadstart']) {
       this.listen(video, type, () => {
         this.cancelScrub();
+        this.releasePointers();
+        this.pictureTap = null;
         this.generation++;
         this.seekCancelled = this.seekCancelled || this.seeking;
         this.seeking = false;
@@ -257,6 +264,8 @@ class IOSInlinePlayer {
       return;
     }
     this.cancelScrub();
+    this.releasePointers();
+    this.pictureTap = null;
     this.owned = Boolean(owned);
     this.generation++;
     this.host.toggleAttribute('data-vsc-inline-owned', this.owned);
@@ -282,6 +291,7 @@ class IOSInlinePlayer {
       this.host.removeAttribute('data-vsc-inline-layout');
       this.host.removeAttribute('data-vsc-inline-idle');
       this.host.removeAttribute('data-vsc-inline-strip-hidden');
+      this.setIdle(false);
       return;
     }
     this.update();
@@ -293,6 +303,7 @@ class IOSInlinePlayer {
     if (!this.owned || this.disposed) {
       return;
     }
+    const couldAutoHide = this.canAutoHide();
     this.layout = layout;
     let x = 1;
     let y = 1;
@@ -335,7 +346,14 @@ class IOSInlinePlayer {
         this.root.style.setProperty(property, value);
       }
     }
-    this.update();
+    if (this.idle && !this.canAutoHide()) {
+      this.reveal();
+    } else {
+      this.update();
+      if (couldAutoHide !== this.canAutoHide()) {
+        this.scheduleIdleHide();
+      }
+    }
   }
 
   applyLayout(bounds = this.bounds()) {
@@ -349,15 +367,11 @@ class IOSInlinePlayer {
       this.host.setAttribute('data-vsc-inline-layout', mode);
     }
     this.set(this.refs.play, 'hidden', false);
-    const secondary = !this.idle && width >= 320 && height >= 96;
+    const secondary = width >= 320 && height >= 96;
     for (const name of ['rewind', 'forward', 'mute']) {
       this.set(this.refs[name], 'hidden', !secondary);
     }
-    this.set(
-      this.refs.timelineGroup,
-      'hidden',
-      this.idle || width < 240 || height < 144 || !bounds
-    );
+    this.set(this.refs.timelineGroup, 'hidden', width < 240 || height < 144 || !bounds);
   }
 
   bounds() {
@@ -474,6 +488,8 @@ class IOSInlinePlayer {
     if (!this.available()) {
       this.cancelScrub();
       this.clearTimer();
+      this.releasePointers();
+      this.pictureTap = null;
       return;
     }
     try {
@@ -496,7 +512,7 @@ class IOSInlinePlayer {
       this.set(this.refs.rewind, 'disabled', !bounds);
       this.set(this.refs.forward, 'disabled', !bounds);
       this.applyLayout(bounds);
-      if (bounds && !this.refs.timelineGroup.hidden) {
+      if (bounds && !this.idle && !this.refs.timelineGroup.hidden) {
         // Reserve fractional feedback before a drag; changing the label must
         // never resize the range underneath the captured finger.
         const timeWidth = `${Math.max(this.format(bounds[0]).length, this.format(bounds[1]).length) + this.format(bounds[1]).length + 6}ch`;
@@ -527,6 +543,175 @@ class IOSInlinePlayer {
     this.set(this.refs.status, 'textContent', message);
   }
 
+  canAutoHide() {
+    return this.layout?.width >= 240 && this.layout?.height >= 144;
+  }
+
+  setIdle(idle) {
+    this.idle = idle;
+    this.host.toggleAttribute('data-vsc-inline-idle', idle);
+  }
+
+  releasePointers() {
+    this.heldPointers.clear();
+    for (const remove of this.pointerRemovers.splice(0)) {
+      try {
+        remove();
+      } catch {
+        // Release the remaining original-window subscriptions on patched pages.
+      }
+    }
+  }
+
+  holdPointer(event) {
+    if (!Number.isFinite(event.pointerId)) {
+      return;
+    }
+    this.heldPointers.add(event.pointerId);
+    this.clearTimer();
+    if (this.pointerRemovers.length) {
+      return;
+    }
+    const finish = (end) => {
+      if (!this.heldPointers.delete(end.pointerId)) {
+        return;
+      }
+      if (end.type === 'pointercancel') {
+        this.pictureTap = null;
+      }
+      if (!this.heldPointers.size) {
+        this.releasePointers();
+        this.scheduleIdleHide();
+      }
+    };
+    const cancel = () => {
+      this.pictureTap = null;
+      this.releasePointers();
+      this.scheduleIdleHide();
+    };
+    for (const [type, listener] of [
+      ['pointerup', finish],
+      ['pointercancel', finish],
+      ['blur', cancel],
+      ['pagehide', cancel],
+    ]) {
+      try {
+        this.view.addEventListener(type, listener, true);
+        this.pointerRemovers.push(() => this.view.removeEventListener(type, listener, true));
+      } catch {
+        this.releasePointers();
+        break;
+      }
+    }
+  }
+
+  controlInteraction(event) {
+    if (!this.available() || (event.type === 'focusout' && this.idle)) {
+      return;
+    }
+    if (event.type === 'pointerdown') {
+      this.pointerInteraction = true;
+      this.holdPointer(event);
+    } else if (event.type === 'keydown' || (event.type === 'click' && event.detail === 0)) {
+      this.pointerInteraction = false;
+    }
+    this.reveal();
+  }
+
+  isPictureInteraction(event) {
+    try {
+      const path = event.composedPath();
+      if (path.includes(this.host)) {
+        return false;
+      }
+      if (path.includes(this.video)) {
+        return true;
+      }
+      const container = this.video.vsc?.iosPlayer?.siteControls?.container;
+      if (!container || !path.includes(container)) {
+        return false;
+      }
+      const point = event.touches?.[0] || event.changedTouches?.[0] || event;
+      const rect = this.video.getBoundingClientRect();
+      if (!(
+        point.clientX >= rect.left &&
+        point.clientX <= rect.right &&
+        point.clientY >= rect.top &&
+        point.clientY <= rect.bottom
+      )) {
+        return false;
+      }
+      const control = event.target.closest?.('button,a,input,select,textarea,[role="button"]');
+      if (!control) {
+        return true;
+      }
+      // A full-picture button is a cover surface; retain independent site controls.
+      const cover = control.getBoundingClientRect();
+      return (
+        control.localName === 'button' &&
+        container.contains(control) &&
+        cover.left <= rect.left + 1 &&
+        cover.top <= rect.top + 1 &&
+        cover.right >= rect.right - 1 &&
+        cover.bottom >= rect.bottom - 1
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  surfaceInteraction(event) {
+    if (!this.available()) {
+      return;
+    }
+    const path = event.composedPath();
+    // The video and controller own their input even inside a recognized player.
+    if (
+      path.includes(this.host) ||
+      (event.currentTarget !== this.video && path.includes(this.video))
+    ) {
+      return;
+    }
+    if (!this.isPictureInteraction(event)) {
+      this.controlInteraction(event);
+      return;
+    }
+    if (event.type === 'pointerdown') {
+      this.pointerInteraction = true;
+      this.pictureTap = { visible: !this.idle };
+      this.holdPointer(event);
+      if (event.pointerType === 'mouse') {
+        this.reveal();
+      }
+    } else if (event.type === 'click') {
+      this.pictureClicked(event);
+    } else if (
+      event.type === 'keydown' ||
+      event.type === 'focusin' ||
+      event.type === 'pointermove'
+    ) {
+      this.controlInteraction(event);
+    }
+  }
+
+  pictureClicked(event) {
+    if (!this.available()) {
+      return;
+    }
+    const visible = event?.detail === 0 ? !this.idle : (this.pictureTap?.visible ?? !this.idle);
+    this.pictureTap = null;
+    if (this.host.classList.contains('vsc-touch-open')) {
+      this.manager.setTouchExpanded(this.shadow, false);
+      this.reveal();
+    } else if (visible && this.canAutoHide() && !this.scrubber.active) {
+      this.clearTimer();
+      this.setIdle(true);
+      this.shadow.activeElement?.blur();
+    } else {
+      this.reveal();
+    }
+  }
+
   clearTimer() {
     if (this.timer !== null) {
       this.view.clearTimeout(this.timer);
@@ -542,8 +727,7 @@ class IOSInlinePlayer {
     }
     const generation = this.generation;
     this.clearTimer();
-    this.idle = false;
-    this.host.removeAttribute('data-vsc-inline-idle');
+    this.setIdle(false);
     this.update();
     if (generation !== this.generation) {
       return;
@@ -553,37 +737,58 @@ class IOSInlinePlayer {
       this.clearTimer();
       return;
     }
+    this.scheduleIdleHide();
+  }
+
+  scheduleIdleHide() {
+    this.clearTimer();
+    const generation = this.generation;
     try {
-      const playing = !this.video.paused && !this.video.ended;
-      if (playing && this.available() && generation === this.generation) {
-        this.clearTimer();
-        this.timer = this.view.setTimeout(() => {
-          if (generation !== this.generation) {
-            return;
-          }
-          this.timer = null;
-          try {
-            if (
-              !this.available() ||
-              this.video.paused ||
-              this.video.ended ||
-              this.scrubber.active ||
-              this.root.contains(this.shadow.activeElement) ||
-              this.host.classList.contains('vsc-touch-open') ||
-              generation !== this.generation
-            ) {
-              return;
-            }
-            this.idle = true;
-            this.host.setAttribute('data-vsc-inline-idle', '');
-            this.applyLayout();
-          } catch {
-            // Playback getters can disappear after this timer was scheduled.
-          }
-        }, 4000);
+      if (
+        !this.available() ||
+        this.idle ||
+        !this.canAutoHide() ||
+        this.video.paused ||
+        this.video.ended ||
+        this.scrubber.active ||
+        this.heldPointers.size ||
+        this.host.classList.contains('vsc-touch-open')
+      ) {
+        return;
       }
+      const focused = this.shadow.activeElement;
+      if (
+        this.root.contains(focused) &&
+        (!this.pointerInteraction || focused.matches(':focus-visible'))
+      ) {
+        return;
+      }
+      if (generation !== this.generation || !this.available()) {
+        return;
+      }
+      this.timer = this.view.setTimeout(() => {
+        this.timer = null;
+        try {
+          if (
+            generation === this.generation &&
+            this.available() &&
+            this.canAutoHide() &&
+            !this.video.paused &&
+            !this.video.ended &&
+            !this.scrubber.active &&
+            !this.heldPointers.size &&
+            !this.host.classList.contains('vsc-touch-open') &&
+            generation === this.generation &&
+            this.available()
+          ) {
+            this.setIdle(true);
+          }
+        } catch {
+          // A site can replace playback getters after the timer was scheduled.
+        }
+      }, 4000);
     } catch {
-      // Keep the transport available if playback state is inaccessible.
+      // Keep the transport available if page-owned state is inaccessible.
     }
   }
 

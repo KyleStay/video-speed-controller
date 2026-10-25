@@ -476,6 +476,10 @@ class ControlsManager {
 
   scheduleInlineCollapse(shadow) {
     this.clearInlineCollapse();
+    if (this.inlinePlayer?.owned) {
+      this.inlinePlayer.scheduleIdleHide();
+      return;
+    }
     if (
       !this.inlineIOS ||
       !this.inlinePointerActivity ||
@@ -573,6 +577,9 @@ class ControlsManager {
     }
     const onOutside = (event) => {
       if (!event.composedPath().includes(host)) {
+        if (this.inlinePlayer?.owned && this.inlinePlayer.isPictureInteraction(event)) {
+          return; // The picture click dismisses the menu without hiding the transport.
+        }
         this.setTouchExpanded(shadow, false);
       }
     };
@@ -616,6 +623,7 @@ class ControlsManager {
       }
       this.positionTouchPanel = null;
       this.closeTouchControls = null;
+      this.inlinePlayer?.scheduleIdleHide();
     };
     positionPanel();
     this.scheduleInlineCollapse(shadow);

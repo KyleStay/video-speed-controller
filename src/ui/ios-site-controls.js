@@ -280,8 +280,8 @@ class IOSSiteControls {
       (doc.head || doc.documentElement).appendChild(style);
       // Site picture overlays can receive input instead of the video itself.
       // Keep wake-up scoped to the same validated single-video container.
-      this.releaseInteraction = window.VSC.IOSInlinePlayer.revealOnInteraction(node, () => {
-        this.video.vsc?.controlsManager?.inlinePlayer?.reveal();
+      this.releaseInteraction = window.VSC.IOSInlinePlayer.observeInteractions(node, (event) => {
+        this.video.vsc?.controlsManager?.inlinePlayer?.surfaceInteraction(event);
       });
       return true;
     } catch {

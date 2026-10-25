@@ -108,6 +108,8 @@ class IOSPlayer {
           } else if (type === 'playing') {
             this.ui.refs.status.textContent = '';
             this.showControls();
+          } else if (type === 'play' || type === 'pause' || type === 'ended') {
+            this.showControls();
           } else if (type === 'error') {
             this.ui.refs.status.textContent =
               'Playback unavailable. You can return to the site player.';
@@ -692,6 +694,7 @@ class IOSPlayer {
     this.endingOrigin = false;
     this.session = (this.session || 0) + 1;
     this.pointerInteraction = true;
+    this.controlPointers = new Set();
     this.focusBeforeOpen = this.doc.activeElement;
     this.ui = new window.VSC.IOSPlayerView(this.doc);
     this.portalNode = this.video;
@@ -1103,13 +1106,45 @@ class IOSPlayer {
       this.ui.shadow,
       'pointerdown',
       (event) => {
+        this.pointerInteraction = true;
+        if (Number.isFinite(event.pointerId)) {
+          this.controlPointers.add(event.pointerId);
+        }
         if (!event.composedPath().includes(this.ui.stage)) {
-          this.pointerInteraction = true;
           this.showControls();
         }
       },
       true
     );
+    for (const type of ['pointerup', 'pointercancel']) {
+      this.listen(
+        this.view,
+        type,
+        (event) => {
+          if (
+            this.controlPointers.delete(event.pointerId) &&
+            !this.ui.host.hasAttribute('data-controls-hidden')
+          ) {
+            this.showControls();
+          }
+        },
+        true,
+        true
+      );
+    }
+    for (const type of ['blur', 'pagehide']) {
+      this.listen(
+        this.view,
+        type,
+        () => {
+          this.controlPointers.clear();
+          if (!this.ui.host.hasAttribute('data-controls-hidden')) {
+            this.showControls();
+          }
+        },
+        true
+      );
+    }
     this.listen(
       this.ui.shadow,
       'pointermove',
@@ -1636,9 +1671,6 @@ class IOSPlayer {
       });
     }
     setControlProperty(refs.audio, 'value', String(audio.findIndex((track) => track.enabled)));
-    if (this.video.paused) {
-      this.showControls();
-    }
   }
 
   showControls() {
@@ -1656,6 +1688,7 @@ class IOSPlayer {
           !this.moreOpen &&
           !this.scrubber?.active &&
           !this.gestures?.active &&
+          !this.controlPointers.size &&
           (this.pointerInteraction || !this.ui.shadow.activeElement?.matches('button,select,input'))
         ) {
           if (this.pointerInteraction && this.ui.shadow.activeElement?.matches('button')) {
@@ -1665,7 +1698,7 @@ class IOSPlayer {
             this.ui.host.setAttribute('data-controls-hidden', '');
           }
         }
-      }, 3500);
+      }, 4000);
     }
   }
 
@@ -1689,6 +1722,7 @@ class IOSPlayer {
     this.gestures?.cleanup();
     this.gestures = null;
     this.active = false;
+    this.controlPointers.clear();
     this.dismissed = true;
     this.view.clearTimeout(this.hideTimer);
     this.hideTimer = null;
