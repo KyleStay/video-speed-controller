@@ -509,6 +509,28 @@ describe('owned iOS inline transport', () => {
     }
   );
 
+  it('retains held input and the picture snapshot through ordinary control focus transfer', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    player.refs.play.focus();
+    const down = new Event('pointerdown', { bubbles: true });
+    Object.assign(down, { pointerId: 17, pointerType: 'touch' });
+    video.dispatchEvent(down);
+    player.refs.rewind.focus();
+    expect(player.heldPointers.size).toBe(1);
+    expect(player.pictureTap).toEqual({ visible: true });
+    vi.advanceTimersByTime(6000);
+    expect(player.idle).toBe(false);
+    const up = new Event('pointerup');
+    Object.assign(up, { pointerId: 17 });
+    window.dispatchEvent(up);
+    expect(player.heldPointers.size).toBe(0);
+    expect(player.pointerRemovers).toHaveLength(0);
+    video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+    expect(player.idle).toBe(true);
+  });
+
   it.each(['pointercancel', 'blur', 'pagehide', 'loadstart', 'handback', 'cleanup'])(
     'releases held pointers on %s',
     (type) => {

@@ -596,8 +596,10 @@ class IOSInlinePlayer {
       ['pagehide', cancel],
     ]) {
       try {
-        this.view.addEventListener(type, listener, true);
-        this.pointerRemovers.push(() => this.view.removeEventListener(type, listener, true));
+        // Element blur is not a lost window interaction; focus may move while held.
+        const capture = type !== 'blur';
+        this.view.addEventListener(type, listener, capture);
+        this.pointerRemovers.push(() => this.view.removeEventListener(type, listener, capture));
       } catch {
         this.releasePointers();
         break;
