@@ -860,7 +860,7 @@ export default async function runIOSPlayer({
             let parent = document.body;
             if (name !== 'document') {
               const host = document.createElement('section');
-              host.id = 'surface-' + name;
+              host.id = `surface-${  name}`;
               host.style.cssText = 'width:360px;height:220px;';
               document.body.prepend(host);
               parent = host.attachShadow({ mode: 'open' });
