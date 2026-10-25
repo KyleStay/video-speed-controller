@@ -224,7 +224,7 @@ const mobileHtml = `<!doctype html>
           const speedSelect = document.querySelector('vsc-ios-player')?.shadowRoot?.querySelector('[aria-label="Playback speed"]');
           const inlineHost = video.vsc?.div;
           const inlinePanel = inlineHost?.shadowRoot?.querySelector('#controls');
-          if (inlineHost) controllerObserver.observe(inlineHost, { attributes: true, attributeFilter: ['class'] });
+          if (inlineHost) controllerObserver.observe(inlineHost, { attributes: true, attributeFilter: ['class', 'data-vsc-inline-idle'] });
           text += '; inline speed label: ' + (inlineHost?.shadowRoot?.querySelector('.draggable')?.textContent || 'none');
           const inlineOpen = inlineHost?.classList.contains('vsc-touch-open');
           const inlineStyle = inlinePanel && inlineOpen ? getComputedStyle(inlinePanel) : null;
@@ -239,7 +239,8 @@ const mobileHtml = `<!doctype html>
           const shellBottom = document.querySelector('.player').getBoundingClientRect().bottom;
           const inlineBottom = Math.min(innerHeight, mediaBottom, shellBottom);
           text += '; precision mode: ' + (owner?.active ? 'fullscreen' : inline?.available() ? 'inline' : 'none') +
-            '; inline timeline hidden: ' + !!inline?.refs.timelineGroup.hidden +
+            '; inline timeline hidden: ' + !!(inline?.idle || inline?.refs.timelineGroup.hidden) +
+            '; inline opacity: ' + (inline ? getComputedStyle(inline.root).opacity : 'none') +
             '; inline scrub active: ' + !!inline?.scrubber?.active +
             '; inline scrub hint: ' + (inline?.refs.scrubHint?.textContent || 'none') +
             '; inline selected time: ' + (inline?.refs.time?.textContent || 'none') +

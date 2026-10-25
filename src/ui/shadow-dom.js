@@ -372,7 +372,7 @@ class ShadowDOMManager {
         overflow-wrap: anywhere;
       }
 
-      :host([data-vsc-ios-inline].vsc-inline-playing:not(.vsc-touch-open):not(.vsc-show):not(:focus-within)) #controller {
+      :host([data-vsc-ios-inline]:not([data-vsc-inline-owned]).vsc-inline-playing:not(.vsc-touch-open):not(.vsc-show):not(:focus-within)) #controller {
         opacity: var(--vsc-inline-playing-opacity) !important;
       }
 
@@ -388,6 +388,7 @@ class ShadowDOMManager {
         row-gap: calc(4px / var(--vsc-inline-scale-y, 1));
         opacity: 1 !important;
         visibility: visible !important;
+        transition: opacity 0.16s ease;
       }
       :host([data-vsc-inline-owned]) .inline-owned-control:not([hidden]) {
         display: inline-flex;
@@ -496,7 +497,7 @@ class ShadowDOMManager {
       :host([data-vsc-ios-inline][data-vsc-inline-owned][data-vsc-inline-strip-hidden]) #controller {
         visibility: hidden !important;
       }
-      :host([data-vsc-inline-owned][data-vsc-inline-strip-hidden]) .inline-timeline {
+      :host([data-vsc-inline-owned][data-vsc-inline-strip-hidden]:not([data-vsc-inline-idle])) .inline-timeline {
         visibility: visible;
       }
       :host([data-vsc-inline-owned]) .inline-owned-status {
@@ -507,8 +508,12 @@ class ShadowDOMManager {
         overflow: hidden;
         clip-path: inset(50%);
       }
-      :host([data-vsc-inline-owned][data-vsc-inline-idle]:not(:focus-within):not(.vsc-touch-open)) #controller {
-        opacity: 0.6 !important;
+      :host([data-vsc-ios-inline][data-vsc-inline-owned][data-vsc-inline-idle]) #controller {
+        opacity: 0 !important;
+      }
+      :host([data-vsc-inline-owned][data-vsc-inline-idle]) #controller,
+      :host([data-vsc-inline-owned][data-vsc-inline-idle]) #controller * {
+        pointer-events: none !important;
       }
 
       @media (prefers-reduced-motion: reduce) {

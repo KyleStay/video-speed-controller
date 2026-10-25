@@ -273,15 +273,20 @@ with direct `chrome.*` access.
   also refresh placement. Cleanup removes each entry and the last group's
   listeners/frame through its original window, including after document adoption.
   This schedules layout from events, without polling or page-scroll writes.
-  Owned inline Play, speed and fullscreen precede idle-hidden controls so reveal
-  cannot move a target between pointerdown and click.
+  Owned inline Play, speed and fullscreen retain stable ordering across responsive layouts.
+  Idle visibility hides the entire root without changing child geometry; the root
+  ignores pointer input while faded; keyboard focus can still reveal it.
   Popovers anchor beside the primary controls, clamp text to 13–18px, and make
   child buttons inherit that font rather than the configured global button size.
-  While playing, inline secondary controls and touch panels collapse after 4s;
-  picture/control input, keyboard focus and pointer movement reveal the owned
-  timeline and transport together, including recognized single-video site overlays.
-  Active scrubbing and paused media keep it available; keyboard focus preserves
-  controls until focus leaves. Size changes
+  Inline and fullscreen transport share a four-second idle delay while playing.
+  Picture taps toggle the complete transport/timeline, including recognized
+  single-video site overlays; a tap with an open menu dismisses that menu first.
+  Paused media, active scrubbing, held pointers, open menus and keyboard focus
+  prevent idle hiding. Dismissal/release starts a fresh interval. Explicit picture
+  taps may hide paused controls; progress updates must not undo that choice.
+  Inline layouts below 240px wide or 144px high keep their fallback controls
+  available because the picture is too small for a reliable reveal target.
+  Mouse movement and control/keyboard input reveal the interface. Size changes
   preserve minimum touch targets. Popover height/block-size stays intrinsic and
   grid rows use non-stretching 44px minima; narrow panels can use one column.
   Cleanup clears idle timers through the original scheduling window even after

@@ -163,7 +163,7 @@ describe('iOS fullscreen request takeover', () => {
         width: 300,
         height: 200,
       });
-      const inline = { available: vi.fn(() => true), reveal: vi.fn() };
+      const inline = { available: vi.fn(() => true), pictureClicked: vi.fn() };
       video.vsc.controlsManager = { inlinePlayer: inline };
       const play = vi.spyOn(video, 'play');
       const pause = vi.spyOn(video, 'pause');
@@ -180,7 +180,7 @@ describe('iOS fullscreen request takeover', () => {
         clientX: 100,
         clientY: 100,
       });
-      expect(inline.reveal).toHaveBeenCalledOnce();
+      expect(inline.pictureClicked).toHaveBeenCalledOnce();
       expect(owner.open).not.toHaveBeenCalled();
       expect(play).not.toHaveBeenCalled();
       expect(pause).not.toHaveBeenCalled();
@@ -194,7 +194,7 @@ describe('iOS fullscreen request takeover', () => {
     (kind) => {
       vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
       const { owner, video, container } = xEntry();
-      const inline = { available: vi.fn(() => true), reveal: vi.fn() };
+      const inline = { available: vi.fn(() => true), pictureClicked: vi.fn() };
       video.vsc.controlsManager = { inlinePlayer: inline };
       video.getBoundingClientRect = () => ({
         left: 20,
@@ -215,7 +215,7 @@ describe('iOS fullscreen request takeover', () => {
           ? {}
           : { clientX: kind === 'outside-picture' ? 400 : 100, clientY: 100 };
       const event = explicitClick(Takeover.managers.get(window), target, coordinates);
-      expect(inline.reveal).not.toHaveBeenCalled();
+      expect(inline.pictureClicked).not.toHaveBeenCalled();
       expect(event.preventDefault).not.toHaveBeenCalled();
       expect(owner.open).not.toHaveBeenCalled();
     }
@@ -232,7 +232,7 @@ describe('iOS fullscreen request takeover', () => {
   ])('picture reveal preserves the original %s behavior', (kind) => {
     vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
     const { owner, video, container } = xEntry();
-    const inline = { available: vi.fn(() => kind !== 'unavailable'), reveal: vi.fn() };
+    const inline = { available: vi.fn(() => kind !== 'unavailable'), pictureClicked: vi.fn() };
     video.vsc.controlsManager = { inlinePlayer: inline };
     let target = video;
     if (kind.startsWith('transport-')) {
@@ -257,7 +257,7 @@ describe('iOS fullscreen request takeover', () => {
     } else {
       click();
     }
-    expect(inline.reveal).not.toHaveBeenCalled();
+    expect(inline.pictureClicked).not.toHaveBeenCalled();
     expect(owner.open).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();
   });

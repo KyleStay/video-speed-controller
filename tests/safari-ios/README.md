@@ -7,8 +7,8 @@ physical iPhone/iPad, or live video site.
 
 For timeline reveal, open `/mobile.html?mp4&owned&takeover&precision&reveal-overlay`
 and run `InlinePlaybackQATests/testTimelineRevealsWithInterface`. It verifies
-that picture-overlay and speed-control taps reveal the seek rail while playback
-continues. On a fresh `/mobile.html?mp4&owned&takeover&precision`, run
+that picture taps toggle the buttons and seek rail together while playback
+continues, and an open speed menu prevents idle hiding until dismissed. On a fresh `/mobile.html?mp4&owned&takeover&precision`, run
 `OwnedPlayerQATests/testInlineBottomPrecisionAndFrames` to verify the precision
 bands, blank normal-rate feedback, fractional labels and paused frame controls.
 

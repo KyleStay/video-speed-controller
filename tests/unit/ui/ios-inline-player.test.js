@@ -376,25 +376,26 @@ describe('owned iOS inline transport', () => {
     }
   });
 
-  it('keeps paused controls available, collapses playing secondary controls and restores on interaction', () => {
+  it('fades the entire playing transport together, retaining layout and restoring on pause', () => {
     player.setOwned(true);
     vi.advanceTimersByTime(5000);
-    expect(player.refs.rewind.hidden).toBe(false);
+    expect(player.idle).toBe(false);
     paused = false;
     video.dispatchEvent(new Event('playing'));
-    vi.advanceTimersByTime(4000);
+    vi.advanceTimersByTime(3999);
+    expect(player.idle).toBe(false);
+    vi.advanceTimersByTime(1);
     expect(host.hasAttribute('data-vsc-inline-idle')).toBe(true);
-    expect(player.refs.rewind.hidden).toBe(true);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
-    expect(player.refs.play.hidden).toBe(false);
-    touch(player.refs.play);
+    // Geometry stays stable; one parent visibility state hides every control.
     expect(player.refs.rewind.hidden).toBe(false);
     expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(player.refs.play.hidden).toBe(false);
+    video.click();
+    expect(player.idle).toBe(false);
     paused = true;
     video.dispatchEvent(new Event('pause'));
     vi.advanceTimersByTime(5000);
-    expect(host.hasAttribute('data-vsc-inline-idle')).toBe(false);
-    expect(player.refs.rewind.hidden).toBe(false);
+    expect(player.idle).toBe(false);
   });
 
   it('does not write hidden progress until the inline transport is revealed', () => {
@@ -402,7 +403,7 @@ describe('owned iOS inline transport', () => {
     paused = false;
     video.dispatchEvent(new Event('play'));
     vi.advanceTimersByTime(4000);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
+    expect(player.idle).toBe(true);
     const previous = player.refs.timeline.value;
     const observer = new MutationObserver(() => {});
     observer.observe(player.root, {
@@ -417,30 +418,28 @@ describe('owned iOS inline transport', () => {
     expect(observer.takeRecords()).toEqual([]);
     expect(player.refs.timeline.value).toBe(previous);
     player.reveal();
-    expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(player.idle).toBe(false);
     expect(player.refs.timeline.value).toBe('40');
     expect(player.refs.timeline.getAttribute('aria-valuetext')).toBe('0:40 / 2:00');
     observer.disconnect();
   });
 
-  it('reveals on picture taps for a full interval without changing playback', () => {
+  it('toggles on picture taps while playing or paused without changing playback', () => {
     player.setOwned(true);
-    paused = false;
-    video.dispatchEvent(new Event('playing'));
-    vi.advanceTimersByTime(3000);
-    expect(player.refs.timelineGroup.hidden).toBe(false);
-    vi.advanceTimersByTime(1000);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
-    video.click();
-    expect(player.refs.timelineGroup.hidden).toBe(false);
+    for (const playing of [true, false]) {
+      paused = !playing;
+      video.dispatchEvent(new Event(playing ? 'playing' : 'pause'));
+      video.click();
+      expect(player.idle).toBe(true);
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(player.idle).toBe(true);
+      video.click();
+      expect(player.idle).toBe(false);
+      vi.advanceTimersByTime(4000);
+      expect(player.idle).toBe(playing);
+    }
     expect(video.pause).not.toHaveBeenCalled();
     expect(video.play).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(3000);
-    video.click();
-    vi.advanceTimersByTime(3999);
-    expect(player.refs.timelineGroup.hidden).toBe(false);
-    vi.advanceTimersByTime(1);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
     player.setOwned(false);
     video.click();
     expect(player.timer).toBeNull();
@@ -453,48 +452,151 @@ describe('owned iOS inline transport', () => {
     scrubPointer('pointerdown');
     vi.advanceTimersByTime(7000);
     expect(player.scrubber.active).toBe(true);
-    expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(player.idle).toBe(false);
     scrubPointer('pointerup', 60);
     expect(video.play).toHaveBeenCalledOnce();
     vi.advanceTimersByTime(3999);
-    expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(player.idle).toBe(false);
     vi.advanceTimersByTime(1);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
+    expect(player.idle).toBe(true);
   });
 
-  it.each(['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click', 'keydown', 'focusin'])(
-    'reveals the timeline with the transport on video %s without consuming the interaction',
+  it.each(['click', 'keydown', 'focusin', 'pointermove'])(
+    'reveals the entire transport on picture %s without consuming input',
     (type) => {
       player.setOwned(true);
       paused = false;
       video.dispatchEvent(new Event('playing'));
       vi.advanceTimersByTime(4000);
-      expect(player.refs.timelineGroup.hidden).toBe(true);
+      expect(player.idle).toBe(true);
       const event = new Event(type, { bubbles: true, cancelable: true });
       video.dispatchEvent(event);
-      expect(player.refs.timelineGroup.hidden).toBe(false);
-      expect(player.refs.rewind.hidden).toBe(false);
+      expect(player.idle).toBe(false);
       expect(event.defaultPrevented).toBe(false);
       expect(video.pause).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(3999);
-      expect(player.refs.timelineGroup.hidden).toBe(false);
-      vi.advanceTimersByTime(1);
-      expect(player.refs.timelineGroup.hidden).toBe(true);
+      vi.advanceTimersByTime(4000);
+      expect(player.idle).toBe(true);
     }
   );
 
-  it('reveals on control activation without a pointer event and on mouse movement', () => {
+  it.each(['touch', 'mouse'])(
+    'uses the pre-press visibility for a %s picture click and holds the idle deadline',
+    (pointerType) => {
+      player.setOwned(true);
+      paused = false;
+      video.dispatchEvent(new Event('playing'));
+      const pointer = (type, target = video) => {
+        const event = new Event(type, { bubbles: true });
+        Object.assign(event, { pointerId: 17, pointerType });
+        target.dispatchEvent(event);
+      };
+      pointer('pointerdown');
+      vi.advanceTimersByTime(6000);
+      expect(player.idle).toBe(false);
+      pointer('pointerup', window);
+      video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+      expect(player.idle).toBe(true);
+      pointer('pointerdown');
+      pointer('pointerup', window);
+      video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+      expect(player.idle).toBe(false);
+      vi.advanceTimersByTime(3999);
+      expect(player.idle).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(player.idle).toBe(true);
+      expect(player.heldPointers.size).toBe(0);
+      expect(player.pointerRemovers).toHaveLength(0);
+    }
+  );
+
+  it('retains held input and the picture snapshot through ordinary control focus transfer', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    player.refs.play.focus();
+    const down = new Event('pointerdown', { bubbles: true });
+    Object.assign(down, { pointerId: 17, pointerType: 'touch' });
+    video.dispatchEvent(down);
+    player.refs.rewind.focus();
+    expect(player.heldPointers.size).toBe(1);
+    expect(player.pictureTap).toEqual({ visible: true });
+    vi.advanceTimersByTime(6000);
+    expect(player.idle).toBe(false);
+    const up = new Event('pointerup');
+    Object.assign(up, { pointerId: 17 });
+    window.dispatchEvent(up);
+    expect(player.heldPointers.size).toBe(0);
+    expect(player.pointerRemovers).toHaveLength(0);
+    video.dispatchEvent(new MouseEvent('click', { detail: 1 }));
+    expect(player.idle).toBe(true);
+  });
+
+  it.each(['pointercancel', 'blur', 'pagehide', 'loadstart', 'handback', 'cleanup'])(
+    'releases held pointers on %s',
+    (type) => {
+      player.setOwned(true);
+      const event = new Event('pointerdown', { bubbles: true });
+      Object.assign(event, { pointerId: 7, pointerType: 'touch' });
+      player.refs.play.dispatchEvent(event);
+      expect(player.heldPointers.size).toBe(1);
+      if (type === 'handback') {
+        player.setOwned(false);
+      } else if (type === 'cleanup') {
+        player.cleanup();
+      } else {
+        const end = new Event(type);
+        Object.assign(end, { pointerId: 7 });
+        (type === 'loadstart' ? video : window).dispatchEvent(end);
+      }
+      expect(player.heldPointers.size).toBe(0);
+      expect(player.pointerRemovers).toHaveLength(0);
+    }
+  );
+
+  it('keeps the speed menu open and starts a fresh shared interval on picture dismissal', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
+    shadow.querySelector('.draggable').click();
+    vi.advanceTimersByTime(7000);
+    expect(host.classList.contains('vsc-touch-open')).toBe(true);
+    expect(player.idle).toBe(false);
+    expect(manager.inlineHideTimer).toBeNull();
+    video.click();
+    expect(host.classList.contains('vsc-touch-open')).toBe(false);
+    expect(player.idle).toBe(false);
+    vi.advanceTimersByTime(4000);
+    expect(player.idle).toBe(true);
+  });
+
+  it('lets keyboard focus reveal idle controls without introducing another tab stop', () => {
     player.setOwned(true);
     paused = false;
     video.dispatchEvent(new Event('playing'));
     vi.advanceTimersByTime(4000);
-    shadow.querySelector('.draggable').click();
-    expect(player.refs.timelineGroup.hidden).toBe(false);
-    manager.setTouchExpanded(shadow, false);
+    expect(player.idle).toBe(true);
+    expect(player.root.inert).toBeFalsy();
+    player.refs.play.focus();
+    expect(player.idle).toBe(false);
+    expect(shadow.activeElement).toBe(player.refs.play);
+    vi.advanceTimersByTime(5000);
+    expect(player.idle).toBe(false);
+  });
+
+  it('keeps the compact fallback reachable and restores it when resized from an idle player', () => {
+    player.setOwned(true);
+    paused = false;
+    video.dispatchEvent(new Event('playing'));
     vi.advanceTimersByTime(4000);
-    expect(player.refs.timelineGroup.hidden).toBe(true);
-    video.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    expect(player.refs.timelineGroup.hidden).toBe(false);
+    expect(player.idle).toBe(true);
+    position(200, 120);
+    expect(player.idle).toBe(false);
+    video.click();
+    vi.advanceTimersByTime(6000);
+    expect(player.idle).toBe(false);
+    position();
+    vi.advanceTimersByTime(4000);
+    expect(player.idle).toBe(true);
   });
 
   it.each(['pointercancel', 'handback', 'loadstart'])(
@@ -523,12 +625,14 @@ describe('owned iOS inline transport', () => {
   );
 
   it.each(['play', 'speed', 'fullscreen'])(
-    'keeps the idle %s target in place through pointerdown, focus, pointerup and activation',
+    'keeps the revealed %s target in place through pointerdown, focus, pointerup and activation',
     (control) => {
       player.setOwned(true);
       paused = false;
       video.dispatchEvent(new Event('playing'));
       vi.advanceTimersByTime(4000);
+      video.click();
+      expect(player.idle).toBe(false);
       const primary = [
         player.refs.play,
         shadow.querySelector('.draggable'),
@@ -557,7 +661,7 @@ describe('owned iOS inline transport', () => {
       };
       expect([...player.root.children].slice(0, 3)).toEqual(primary);
       const before = offset();
-      expect(player.refs.rewind.hidden).toBe(true);
+      expect(player.refs.rewind.hidden).toBe(false);
       touch(target);
       expect(player.refs.rewind.hidden).toBe(false);
       expect(offset()).toBe(before);

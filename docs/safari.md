@@ -23,11 +23,18 @@ ancestor scaling, without writing scroll or polling.
 The top transport retains its vertical position relative to the video as the page
 scrolls. When its anchor passes the viewport edge or under a header, that strip
 hides instead of sliding down over the picture; the bottom rail remains independent.
-Picture taps, touch/pointer input, control activation, keyboard input/focus and
-pointer movement reveal the inline rail together with the transport. Recognized
-single-video site overlays share this reveal behavior without consuming input.
-Playing secondary controls and touch panels use a four-second idle delay; paused playback, active scrubbing
-and keyboard focus retain controls. Leaving focus starts a fresh idle delay.
+Inline and fullscreen controls use one visibility state for their buttons and
+timeline, with a four-second idle delay while playing. Tap the picture to toggle
+the interface; recognized single-video site overlays share this behavior without
+consuming unrelated site actions. Mouse movement and control/keyboard input reveal
+it. Paused playback, active scrubbing, held pointers, keyboard focus and open menus
+prevent idle hiding; release or menu dismissal starts a fresh interval. A picture
+tap dismisses an open menu first, keeping the transport visible. Explicit taps can
+hide paused controls, and progress updates preserve that choice. Hidden inline
+controls retain their geometry and keyboard access while ignoring pointer input. Inline players below 240px wide
+or 144px high retain visible fallback buttons because their picture offers too
+little reliable space for reveal taps. Scrolling may still clip the top strip
+independently, without waking an idle timeline.
 
 Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
 playhead, move upward into the video to select half, quarter or fine sensitivity,
