@@ -434,6 +434,27 @@ describe('owned iOS inline transport', () => {
     parent.remove();
   });
 
+  it('refreshes scoped touch policy through document and shadow-root placement repairs', () => {
+    player.setOwned(true);
+    const first = document.createElement('section'),
+      second = document.createElement('section');
+    document.body.append(first, second);
+    const a = first.attachShadow({ mode: 'open' }),
+      b = second.attachShadow({ mode: 'open' });
+    for (const root of [a, b, document.body]) {
+      const previous = player.surfacePolicy;
+      root.append(video);
+      position();
+      expect(player.surfacePolicy.root).toBe(video.getRootNode());
+      expect(player.surfacePolicy.style.getRootNode()).toBe(video.getRootNode());
+      expect(previous.style.isConnected).toBe(false);
+      expect(video.currentTime).toBe(12);
+      expect(video.pause).not.toHaveBeenCalled();
+    }
+    first.remove();
+    second.remove();
+  });
+
   it('scrubs through a recognized picture overlay and removes its gesture subscriptions', () => {
     const container = document.createElement('section');
     document.body.append(container);

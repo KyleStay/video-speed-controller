@@ -326,6 +326,9 @@ class IOSInlinePlayer {
       return;
     }
     const couldAutoHide = this.canAutoHide();
+    if (this.available()) {
+      this.installSurfacePolicy();
+    }
     this.layout = layout;
     let x = 1;
     let y = 1;

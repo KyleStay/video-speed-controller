@@ -850,6 +850,35 @@ export default async function runIOSPlayer({
         }
       });
     }
+    await check(
+      'video-surface touch policy follows connected media between tree roots',
+      async () => {
+        await navigate('&takeover');
+        for (const root of ['first', 'second', 'document']) {
+          await page.evaluate((name) => {
+            const video = window.__ownedOriginal;
+            let parent = document.body;
+            if (name !== 'document') {
+              const host = document.createElement('section');
+              host.id = 'surface-' + name;
+              host.style.cssText = 'width:360px;height:220px;';
+              document.body.prepend(host);
+              parent = host.attachShadow({ mode: 'open' });
+            }
+            parent.append(video);
+          }, root);
+          await page.waitForFunction(() => {
+            const video = window.__ownedOriginal;
+            const inline = video.vsc?.controlsManager?.inlinePlayer;
+            return (
+              inline?.surfacePolicy?.root === video.getRootNode() &&
+              inline.surfacePolicy.style.getRootNode() === video.getRootNode() &&
+              getComputedStyle(video).touchAction.includes('pan-y')
+            );
+          });
+        }
+      }
+    );
     await check('video-surface vertical movement preserves real page scrolling', async () => {
       await navigate('&takeover&scroll=page');
       await page.evaluate(() => {
