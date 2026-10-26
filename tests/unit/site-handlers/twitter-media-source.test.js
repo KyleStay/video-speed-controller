@@ -75,6 +75,53 @@ describe('TwitterMediaSource', () => {
     });
   });
 
+  it('prefers the recorded player accessory renditions over its 1080p download', () => {
+    const variants = publicVariants().map((entry) => ({
+      ...entry,
+      url: entry.url === publicHls ? originalUrl : `${entry.url}?tag=21`,
+    }));
+    metadata({
+      children: [
+        null,
+        null,
+        null,
+        {
+          props: {
+            downloadUrl: progressiveUrl,
+            timeRemainingAccessory: { props: { media: { video_info: { variants } } } },
+            poppedOutSource: { playerProps: pair() },
+          },
+        },
+      ],
+    });
+    expect(find()?.progressiveUrl).toBe(variants[3].url);
+  });
+
+  it('requires an exact active HLS match inside the accessory array', () => {
+    metadata({
+      props: {
+        ...pair(),
+        timeRemainingAccessory: {
+          props: { media: { video_info: { variants: publicVariants() } } },
+        },
+      },
+    });
+    expect(find()?.progressiveUrl).toBe(progressiveUrl);
+  });
+
+  it('does not invoke or inherit player accessory metadata', () => {
+    const getter = vi.fn(() => {
+      throw Error('Page accessor');
+    });
+    const props = { ...pair() };
+    Object.defineProperty(props, 'timeRemainingAccessory', { get: getter });
+    metadata({ props });
+    expect(find()?.progressiveUrl).toBe(progressiveUrl);
+    expect(getter).not.toHaveBeenCalled();
+    metadata({ props: Object.assign(Object.create({ timeRemainingAccessory: {} }), pair()) });
+    expect(find()?.progressiveUrl).toBe(progressiveUrl);
+  });
+
   it('supports the recorded video.variants type/src form and known videoProps/videoInfo', () => {
     property(video, 'currentSrc', publicHls);
     video.src = publicHls;

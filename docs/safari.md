@@ -19,6 +19,23 @@ retain descriptive labels. The star sets preferred speed, the padlock locks
 controls, the ellipsis opens More, and the close (×) icon returns to the page.
 Icon shadows preserve contrast over the picture.
 
+## Open Twitter regressions
+
+These October 26, 2026 reports remain open after TestFlight 0.11.6 (24).
+Keep the original report separate from a passing controlled fixture. A fix must
+retain repeatable regression coverage and record the exact browser, device,
+source build and observed result before its status becomes verified.
+
+| ID      | Reported behavior                                                                                                         | Required acceptance                                                                                                                                                                                                                                        | Status                                                                                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SF-TW-1 | Picture freezes or stutters at any speed above 2× in iOS Safari Twitter videos.                                           | Check 2×, 2.1× and 4× on an affected post, decoded frame cadence and media-time progress, audible output, same-clip rendition selection, scroll/pause retention and the next feed clip. A numeric playback rate or one 720p fixture alone is insufficient. | Candidate fix selects the same player's supplied 720p variants before its 1080p download. Native 2.1×/4× fixture passes; live affected-post/device acceptance remains open.          |
+| SF-TW-2 | Picture-swipe seeking regressed for videos embedded in tweets in the normal feed, after overlay/viewer support was added. | A navigable tweet wrapper and focusable X picture trigger must allow a genuine horizontal seek. Retain vertical page scrolling, pinch, small buttons/links, normal playback and the existing generic overlay/expanded-viewer cases.                        | Candidate fix reuses exact X picture recognition. Controlled browser horizontal seek passes with a navigable tweet wrapper and focusable trigger; live feed acceptance remains open. |
+| SF-TW-3 | Twitter's mute action is difficult to reach.                                                                              | A 300px embedded player must expose a visible mute/unmute action with a measured 44px target, without seeking, opening fullscreen or changing playback. Verify responsive boundaries and keep independent site controls usable.                            | Candidate fix retains mute at 240px width/96px height. Controlled 300px mute/unmute taps pass with 44px targets; live acceptance remains open.                                       |
+
+The resolver and inline-player unit suites encode these cases. Native fixture
+and browser evidence belongs with the corresponding test run; a prepared or
+uploaded build does not close the original live-site report.
+
 ## Inline timeline and precision gestures
 
 The inline seek rail is independently positioned at the clipped video's bottom,

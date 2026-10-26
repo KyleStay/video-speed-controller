@@ -62,6 +62,7 @@
     <button id="next" disabled>Add remembered-speed clip</button>
     <button id="replace" disabled>Replace active clip</button>
     <button id="early" disabled>Set 4x while loading</button>
+    <button id="threshold" disabled>Set 2.1x inline</button>
   </div>
   <p id="state" role="status">X playback: loading</p>
   <script>
@@ -71,6 +72,9 @@
       'https://video.twimg.com/amplify_video/2041611432752742400/pl/OJFA7eAdt1CV9YgM.m3u8?tag=21&v=87a';
     const MP4 =
       'https://video.twimg.com/amplify_video/2041611432752742400/vid/avc1/1920x1080/oK7YYmqZfrOjsrWa.mp4?tag=21';
+    const MP4_720 =
+      'https://video.twimg.com/amplify_video/2041611432752742400/vid/avc1/1280x720/aTg4GLUneEKKiMmS.mp4?tag=21';
+    const accessoryVariants = new URLSearchParams(location.search).has('accessory-variants');
     const state = document.querySelector('#state'),
       errors = [],
       history = [];
@@ -99,6 +103,7 @@
         controlled: !!video?.vsc,
         sameNode: video === original,
         mp4: !!video?.currentSrc && video.currentSrc === video.dataset.progressiveUrl,
+        currentSrc: video?.currentSrc,
         rate: video?.playbackRate,
         paused: video?.paused,
         time: video?.currentTime,
@@ -133,14 +138,39 @@
       parent.className = 'player';
       const v = document.createElement('video');
       v.dataset.twitterFixture = 'true';
-      v.dataset.progressiveUrl = progressiveUrl;
+      v.dataset.progressiveUrl = accessoryVariants ? MP4_720 : progressiveUrl;
       v.muted = true;
       v.playsInline = true;
       v.controls = true;
       v.preload = 'auto';
-      parent.__reactProps$fixture = {
-        children: { props: { src: HLS, downloadUrl: progressiveUrl } },
-      };
+      parent.__reactProps$fixture = accessoryVariants
+        ? {
+            children: [
+              null,
+              null,
+              null,
+              {
+                props: {
+                  downloadUrl: MP4,
+                  timeRemainingAccessory: {
+                    props: {
+                      media: {
+                        video_info: {
+                          variants: [
+                            { content_type: 'application/x-mpegURL', url: HLS },
+                            { content_type: 'video/mp4', url: MP4_720 },
+                            { content_type: 'video/mp4', url: MP4 },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                  poppedOutSource: { playerProps: { src: HLS, downloadUrl: MP4 } },
+                },
+              },
+            ],
+          }
+        : { children: { props: { src: HLS, downloadUrl: progressiveUrl } } };
       parent.append(v);
       document.querySelector('#players').append(parent);
       for (const type of [
@@ -226,7 +256,7 @@
         draw();
       }
     };
-    function change(mode) {
+    function change(mode, rate = 4) {
       commandPosition = video.currentTime;
       cadence = null;
       phase = 'transition';
@@ -238,7 +268,7 @@
           video,
           player.active ? player.originParent : undefined
         ),
-        canSwitch: window.VSC.SafariHLSPlayback.canSwitch(video.vsc, 4, 'user'),
+        canSwitch: window.VSC.SafariHLSPlayback.canSwitch(video.vsc, rate, 'user'),
         matches: window.VSC.SafariHLSPlayback.matches(video),
         currentSrc: video.currentSrc,
         src: video.src,
@@ -256,7 +286,7 @@
         nativeSession: player.nativeSession,
         relinquished: window.VSC.IOSPlayer.siteRelinquished.has(video),
       };
-      if (!video.vsc.actionHandler.setSpeed(video, 4, 'user')) errors.push('Rate rejected');
+      if (!video.vsc.actionHandler.setSpeed(video, rate, 'user')) errors.push('Rate rejected');
       if (mode === 'paused') {
         video.addEventListener(
           'loadeddata',
@@ -274,6 +304,7 @@
       draw();
     }
     document.querySelector('#inline').onclick = () => change('inline');
+    document.querySelector('#threshold').onclick = () => change('inline', 2.1);
     document.querySelector('#owned').onclick = () => change('owned');
     document.querySelector('#paused').onclick = () => change('paused');
     document.querySelector('#early').onclick = () => {

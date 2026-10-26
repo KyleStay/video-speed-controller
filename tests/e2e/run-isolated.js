@@ -19,6 +19,7 @@ import runTwitterLayout from './twitter-layout.e2e.js';
 import runTwitterVisual from './twitter-visual.e2e.js';
 import runVideoDiagnostics from './video-diagnostics.e2e.js';
 import runTwitterPristine from './twitter-pristine.e2e.js';
+import runTwitterModernPlayer from './twitter-modern-player.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
@@ -38,6 +39,7 @@ const suites = {
   'twitter-visual': runTwitterVisual,
   'video-diagnostics': runVideoDiagnostics,
   'twitter-pristine': runTwitterPristine,
+  'twitter-modern': runTwitterModernPlayer,
 };
 const externalSuites = {
   fixtures: ['tests/e2e/run-browser-fixtures.js', 'all'],
@@ -51,7 +53,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 

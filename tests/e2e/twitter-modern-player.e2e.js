@@ -60,10 +60,10 @@ async function picturePoint(page) {
     const trigger = player.querySelector('[data-slot="xds-context-menu-trigger"]');
     const bounds = video.getBoundingClientRect();
     for (const [dx, dy] of [
+      [0.8, 0.4],
       [0.5, 0.65],
       [0.6, 0.8],
       [0.4, 0.8],
-      [0.8, 0.4],
     ]) {
       const x = bounds.left + bounds.width * dx;
       const y = bounds.top + bounds.height * dy;
@@ -268,6 +268,13 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
             current.owned === 0,
           JSON.stringify(current)
         );
+        if (current.idle) {
+          // A paused picture starts visible; its first tap deliberately hides it.
+          await page.touchscreen.tap(pausedPoint.x, pausedPoint.y);
+          await page.waitForFunction(
+            () => !window.__modernX.video.vsc.controlsManager.inlinePlayer.idle
+          );
+        }
         await tapInline(page, 'play');
         await page.waitForFunction(
           () =>
@@ -297,6 +304,93 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
         await tapInline(page, 'play');
         await page.waitForFunction(() => window.__modernX.video.paused);
         await assertScroll(page, before, 'picture and dedicated transport taps');
+      }
+    );
+    await check(
+      'embedded tweet pictures seek horizontally and retain a 44px mute target at 300px',
+      async () => {
+        await navigate();
+        await page.evaluate(() => {
+          const { video, player } = window.__modernX;
+          player.style.width = '300px';
+          video.style.pointerEvents = 'none';
+          player.querySelector('[data-slot="xds-context-menu-trigger"]').style.pointerEvents =
+            'auto';
+          video.currentTime = Math.min(5, video.duration / 3);
+        });
+        await page.waitForFunction(() => {
+          const inline = window.__modernX.video.vsc.controlsManager.inlinePlayer;
+          return !inline.refs.mute.hidden && inline.layout.width <= 301;
+        });
+        const before = await state(page);
+        await tapInline(page, 'mute');
+        assert.false(await page.evaluate(() => window.__modernX.video.muted));
+        await tapInline(page, 'mute');
+        assert.true(await page.evaluate(() => window.__modernX.video.muted));
+        const afterMute = await state(page);
+        assert.true(afterMute.paused && Math.abs(afterMute.time - before.time) < 0.1);
+        const point = await picturePoint(page);
+        await page.evaluate(() => {
+          window.__feedGestureEvents = [];
+          for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+            document.addEventListener(
+              type,
+              (event) => {
+                const inline = window.__modernX.video.vsc.controlsManager.inlinePlayer;
+                const picture = inline.isPictureInteraction(event);
+                const target = event.target.getAttribute?.('data-slot') || event.target.id;
+                queueMicrotask(() =>
+                  window.__feedGestureEvents.push({
+                    type,
+                    target,
+                    picture,
+                    points: inline.gestures.points.size,
+                    pending: !!inline.gestures.scrubStart,
+                    active: inline.scrubber.active,
+                  })
+                );
+              },
+              true
+            );
+          }
+        });
+        const session = await page.createCDPSession();
+        try {
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [{ x: point.x, y: point.y, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
+          });
+          for (let step = 1; step <= 5; step++) {
+            await session.send('Input.dispatchTouchEvent', {
+              type: 'touchMove',
+              touchPoints: [
+                { x: point.x + step * 8, y: point.y, id: 1, radiusX: 1, radiusY: 1, force: 1 },
+              ],
+            });
+            await new Promise((done) => setTimeout(done, 20));
+          }
+          await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        } finally {
+          await session.detach();
+        }
+        const current = await state(page);
+        assertOriginal(current);
+        assert.true(
+          current.time > before.time + 1 &&
+            current.paused &&
+            current.surfaceClicks === 0 &&
+            !current.active &&
+            !current.fullscreen,
+          JSON.stringify({
+            before,
+            current,
+            events: await page.evaluate(() => window.__feedGestureEvents),
+          })
+        );
+        await assertScroll(page, before, 'embedded tweet picture seek');
+        await page.screenshot({
+          path: resolve('tests/e2e/screenshots/twitter-feed-seek-mute.png'),
+        });
       }
     );
     await check(

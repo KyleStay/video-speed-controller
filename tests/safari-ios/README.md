@@ -144,6 +144,15 @@ loading, then requires the supplied same-clip 720p MP4, preserved Play promise,
 4× decoded progress and no page/media errors. It covers a speed command that
 already matches `playbackRate` when metadata arrives.
 
+For SF-TW-1, open `/twitter-playback.html?accessory-variants` and run
+`TwitterPlaybackQATests/testInlineRenditionChange`, then open a fresh fixture and
+run `testJustAboveTwoSelectsPlayerRendition`. This reproduces the recorded X
+`timeRemainingAccessory.props.media.video_info.variants` beside its 1080p
+`downloadUrl`, and requires the supplied 720p rendition at 4× and 2.1× with
+presented frames, correct media-time progress and no page/media errors. Do not
+replace the download URL with 720p in the fixture: that would bypass the resolver
+regression. These controlled checks do not close the affected-post/device report.
+
 `HLSPlayerQATests/testPlayerRenditionSwitch` uses `/hls-players.html?provider=html`,
 `provider=videojs` or `provider=jwplayer`. The latter fixtures load real public
 publisher SDKs. Brightcove uses its published video and source metadata; JW
