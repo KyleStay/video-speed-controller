@@ -127,6 +127,60 @@ describe('scoped iOS site controls', () => {
   });
 
   it.each([
+    'valid',
+    'other-site',
+    'second-video',
+    'audio',
+    'iframe',
+    'outside',
+    'small',
+    'link',
+    'inert',
+    'wrong-component',
+    'wrong-id',
+    'wrong-video',
+  ])('bounds legacy X mini-picture recognition: %s', (kind) => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(kind !== 'other-site');
+    const node = document.createElement('div');
+    node.dataset.testid = 'videoPlayer';
+    node.innerHTML =
+      '<div data-testid="videoComponent"><video></video><div tabindex="0"><div><div data-testid="video-player-mini-ui-123"></div></div></div></div>';
+    document.body.append(node);
+    const component = node.firstChild;
+    const video = node.querySelector('video');
+    const target = node.querySelector('[data-testid^="video-player-mini-ui-"]');
+    const rect = { left: 10, top: 20, right: 410, bottom: 260, width: 400, height: 240 };
+    video.getBoundingClientRect = () => rect;
+    target.getBoundingClientRect = () => (kind === 'small' ? { ...rect, right: 100 } : rect);
+    if (['second-video', 'audio', 'iframe'].includes(kind)) {
+      node.append(document.createElement(kind === 'second-video' ? 'video' : kind));
+    }
+    if (kind === 'link') {
+      target.parentElement.setAttribute('role', 'button');
+    }
+    if (kind === 'inert') {
+      component.inert = true;
+    }
+    if (kind === 'inert') {
+      component.setAttribute('inert', '');
+    }
+    if (kind === 'wrong-component') {
+      component.dataset.testid = 'other';
+    }
+    if (kind === 'wrong-id') {
+      target.dataset.testid = 'video-player-mini-ui-other';
+    }
+    if (kind === 'wrong-video') {
+      node.append(video);
+    }
+    const result = window.VSC.IOSSiteControls.xSurfaceControl(target, {
+      clientX: kind === 'outside' ? 500 : 200,
+      clientY: 100,
+    });
+    expect(result).toEqual(kind === 'valid' ? { node, video } : null);
+  });
+
+  it.each([
     ['html5-video-player', 'ytp-chrome-bottom'],
     ['video-js', 'vjs-control-bar'],
     ['plyr', 'plyr__controls'],

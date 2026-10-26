@@ -140,6 +140,40 @@ class IOSSiteControls {
       if (!this.isXDocument(target?.ownerDocument)) {
         return null;
       }
+      // X's embedded feed player puts its picture hit surface beneath a
+      // focusable wrapper. Recognize only that exact target, never its buttons.
+      if (/^video-player-mini-ui-\d+$/.test(target.getAttribute('data-testid') || '')) {
+        const component = target.parentElement?.parentElement?.parentElement;
+        const node = component?.closest('[data-testid="videoPlayer"]');
+        const media = node?.querySelectorAll('video,audio,iframe');
+        const video = media?.length === 1 ? media[0] : null;
+        if (
+          component?.matches('[data-testid="videoComponent"]') &&
+          video?.localName === 'video' &&
+          component.contains(video) &&
+          !target.closest('button,a,[role="button"],[role="slider"],[inert]') &&
+          Number.isFinite(event?.clientX) &&
+          Number.isFinite(event?.clientY)
+        ) {
+          const rect = video.getBoundingClientRect();
+          const cover = target.getBoundingClientRect();
+          if (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            cover.left <= rect.left + 2 &&
+            cover.top <= rect.top + 2 &&
+            cover.right >= rect.right - 2 &&
+            cover.bottom >= rect.bottom - 2 &&
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom
+          ) {
+            return { node, video };
+          }
+        }
+        return null;
+      }
       if (target.localName === 'video') {
         const modern = this.findXPlayer(target);
         const node = modern?.node || target.closest('[data-testid="videoPlayer"]');
@@ -273,10 +307,9 @@ class IOSSiteControls {
       const style = doc.createElement('style');
       this.style = style;
       const scope = `[${SITE_CONTROL_ATTRIBUTE}="${this.token}"]`;
-      style.textContent =
-        `${profile.controls
-          .map((control) => `${scope} ${control} { display: none !important; }`)
-          .join('\n')  }\n${scope} { touch-action: pan-y pinch-zoom !important; }`;
+      style.textContent = `${profile.controls
+        .map((control) => `${scope} ${control} { display: none !important; }`)
+        .join('\n')}\n${scope} { touch-action: pan-y pinch-zoom !important; }`;
       node.setAttribute(SITE_CONTROL_ATTRIBUTE, this.token);
       (doc.head || doc.documentElement).appendChild(style);
       // Site picture overlays can receive input instead of the video itself.

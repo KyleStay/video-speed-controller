@@ -326,7 +326,9 @@ with direct `chrome.*` access.
   authorization timers; one lazy X-only click listener reveals inline controls on
   recognized picture taps and routes only explicit recognized fullscreen actions.
   Modern X recognition requires exact direct-video/XDS siblings and single-media
-  ownership; navigation links are same-origin/post-scoped. The last owner removes
+  ownership. Legacy mini-UI picture gestures require the exact numbered hit target,
+  observed videoComponent wrapper, one video and full-picture bounds; never claim
+  descendant controls. Navigation links are same-origin/post-scoped. The last owner removes
   that listener. Asynchronous requests have no routing
   guarantee. Requests without the current event are suppressed. Use site player restores controls
   and native passthrough. Last-owner cleanup restores only hooks still owned by

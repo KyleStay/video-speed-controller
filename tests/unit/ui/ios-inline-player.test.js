@@ -539,6 +539,46 @@ describe('owned iOS inline transport', () => {
     post.remove();
   });
 
+  it('scrubs the legacy X mini picture through its focusable feed wrapper', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const post = document.createElement('article');
+    post.setAttribute('role', 'link');
+    post.innerHTML =
+      '<div data-testid="videoPlayer"><div data-testid="videoComponent"><div class="media"></div><div tabindex="0"><div><div data-testid="video-player-mini-ui-123"><button>Mute</button><a href="/other">Details</a></div></div></div></div></div>';
+    document.body.append(post);
+    const container = post.firstChild;
+    const component = container.firstChild;
+    component.firstChild.append(video);
+    const cover = component.querySelector('[data-testid^="video-player-mini-ui-"]');
+    cover.getBoundingClientRect = () => media;
+    video.vsc.iosPlayer.siteControls = { container };
+    player.setOwned(true);
+    const release = player.observeSurface(container);
+    const pointer = (type, x, y, target = cover) => {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerId: 7, pointerType: 'touch', clientX: x, clientY: y });
+      target.dispatchEvent(event);
+      return event;
+    };
+    pointer('pointerdown', 140, 170);
+    expect(pointer('pointermove', 140, 210).defaultPrevented).toBe(false);
+    pointer('pointerup', 140, 210);
+    for (const target of cover.children) {
+      pointer('pointerdown', 140, 170, target);
+      pointer('pointermove', 180, 170, target);
+      pointer('pointerup', 180, 170, target);
+      expect(video.currentTime).toBe(12);
+    }
+    pointer('pointerdown', 140, 170);
+    pointer('pointermove', 180, 170);
+    expect(player.scrubber.active).toBe(true);
+    pointer('pointerup', 180, 170);
+    expect(video.currentTime).toBe(24);
+    release();
+    document.body.append(video);
+    post.remove();
+  });
+
   describe('unknown picture overlays', () => {
     let container, cover, pointDescriptor;
     const pointer = (type, x = 140, y = 170, target = cover, id = 7) => {
