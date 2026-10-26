@@ -31,6 +31,15 @@ import XCTest
         let parts = status(safari).label.components(separatedBy: "; time ")
         return parts.count > 1 ? Double(parts[1].components(separatedBy: ";")[0]) ?? -1 : -1
     }
+    private func requireTime(_ safari: XCUIApplication, _ label: String, _ condition: @escaping (Double) -> Bool) {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition(self.time(safari)) }, object: status(safari))
+        let result = XCTWaiter.wait(for: [expectation], timeout: 8)
+        if result != .completed {
+            capture(safari, "custom-feed-time-failure")
+            print("CUSTOM FEED TIME " + label + "; " + status(safari).label + "\n" + safari.debugDescription)
+        }
+        XCTAssertEqual(result, .completed)
+    }
     private func target(_ element: XCUIElement) {
         XCTAssertTrue(element.isHittable)
         XCTAssertGreaterThanOrEqual(element.frame.width, 44)
@@ -44,7 +53,7 @@ import XCTest
         if delayed.exists && delayed.isHittable { delayed.tap() }
         let play = safari.buttons["Play video"]
         XCTAssertTrue(play.waitForExistence(timeout: 20)); target(play)
-        wait(safari, ["Clip 1;", "paused true", "errors 0"])
+        wait(safari, ["Clip 1;", "paused true", "loaded true", "controllers 1;", "attached true", "connected true", "errors 0"])
         play.tap(); wait(safari, ["paused false"])
         safari.buttons["Pause video"].tap(); wait(safari, ["paused true"])
         let mute = safari.buttons["Unmute video"]; target(mute); mute.tap()
@@ -54,17 +63,21 @@ import XCTest
         // XCTest's slider-adjust API lacks WebKit's min/max coordinates. Use
         // a genuine touch at the observed accessible target instead.
         let timelineStart = time(safari)
-        seek.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
-        let timelineMoved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - timelineStart) > 0.1 }, object: status(safari))
-        XCTAssertEqual(XCTWaiter.wait(for: [timelineMoved], timeout: 8), .completed)
+        let durationText = status(safari).label.components(separatedBy: "; duration ")
+        let duration = durationText.count > 1 ? Double(durationText[1].components(separatedBy: ";")[0]) ?? 0 : 0
+        XCTAssertGreaterThan(duration, 0)
+        // Choose the opposite half so a successful seek cannot coincide with
+        // the position reached during the preceding Play/Pause check.
+        let fraction = timelineStart < duration / 2 ? 0.75 : 0.2
+        seek.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).tap()
+        requireTime(safari, "timeline moved") { abs($0 - timelineStart) > max(0.1, duration * 0.05) }
         let before = time(safari)
         let y = (play.frame.maxY + seek.frame.minY) / 2
         let origin = safari.coordinate(withNormalizedOffset: .zero)
         origin.withOffset(CGVector(dx: 90, dy: y)).press(forDuration: 0.05,
             thenDragTo: origin.withOffset(CGVector(dx: 220, dy: y)),
             withVelocity: .slow, thenHoldForDuration: 0)
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.time(safari) > before + 0.1 }, object: status(safari))
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 8), .completed)
+        requireTime(safari, "picture drag moved") { $0 > before + 0.1 }
         wait(safari, ["paused true", "owned false", "errors 0"])
         capture(safari, "custom-feed-inline")
         let fullscreen = safari.buttons["Open video fullscreen"]
@@ -80,14 +93,14 @@ import XCTest
                 safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Playback speed'")).firstMatch.tap()
                 XCTAssertTrue(safari.buttons["4×"].waitForExistence(timeout: 5)); safari.buttons["4×"].tap()
                 wait(safari, ["rate 4;", "paused true"])
+                safari.sliders["Seek video"].coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+                requireTime(safari, "frame precondition is away from seek bounds") { $0 > 0.1 && $0 < duration * 0.9 }
                 safari.buttons["More video options"].tap()
                 let frameStart = time(safari)
                 target(safari.buttons["Frame forward"]); safari.buttons["Frame forward"].tap()
-                let frameMoved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.time(safari) > frameStart + 0.005 }, object: status(safari))
-                XCTAssertEqual(XCTWaiter.wait(for: [frameMoved], timeout: 8), .completed)
+                requireTime(safari, "frame forward") { $0 > frameStart + 0.005 }
                 safari.buttons["Frame back"].tap()
-                let frameRestored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(self.time(safari) - frameStart) < 0.015 }, object: status(safari))
-                XCTAssertEqual(XCTWaiter.wait(for: [frameRestored], timeout: 8), .completed)
+                requireTime(safari, "frame back") { abs($0 - frameStart) < 0.015 }
                 safari.buttons["More video options"].tap()
                 safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Lock playback controls'")).firstMatch.tap()
                 XCTAssertTrue(safari.buttons["Unlock playback controls"].waitForExistence(timeout: 5))
@@ -104,8 +117,7 @@ import XCTest
         target(safari.buttons["Play video"])
         let clipStart = time(safari)
         safari.buttons["Play video"].tap(); wait(safari, ["paused false"])
-        let clipProgress = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.time(safari) > clipStart + 0.1 }, object: status(safari))
-        XCTAssertEqual(XCTWaiter.wait(for: [clipProgress], timeout: 8), .completed)
+        requireTime(safari, "next clip plays") { $0 > clipStart + 0.1 }
         safari.buttons["Pause video"].tap(); wait(safari, ["paused true"])
         capture(safari, "custom-feed-next-clip")
     }

@@ -219,7 +219,7 @@
           }
         }
         const state = window.__customFeedState();
-        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
+        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; duration ${state.duration.toFixed(2)}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
         const status = document.querySelector('#fixture-status');
         if (status.textContent !== text) status.textContent = text;
         for (const [container, id, prefix] of [
@@ -363,7 +363,15 @@
         update();
       };
       document.addEventListener('pointerup', scheduleUpdate, true);
-      const diagnosticObserver = new MutationObserver(scheduleUpdate);
+      const diagnosticObserver = new MutationObserver((records) => {
+        const external = records.some((record) => {
+          const target = record.target.nodeType === 3 ? record.target.parentElement : record.target;
+          return !target?.closest?.(
+            '#fixture-status, #viewer-fixture-status, #owned-fixture-status'
+          );
+        });
+        if (external) scheduleUpdate();
+      });
       diagnosticObserver.observe(document.body, { childList: true, subtree: true });
       update();
     </script>
