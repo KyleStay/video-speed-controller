@@ -182,6 +182,16 @@
       const trace = { pictureTouches: 0, linkClicks: 0, sources: 1 };
       const errors = [];
       window.addEventListener('error', (event) => errors.push(String(event.message)));
+      const bottomRail = () => {
+        const rail = video.vsc?.controlsManager?.inlinePlayer?.refs.timeline;
+        if (!rail) return false;
+        const viewport = window.visualViewport;
+        const bottom = Math.min(
+          video.getBoundingClientRect().bottom,
+          (viewport?.offsetTop || 0) + (viewport?.height || innerHeight)
+        );
+        return Math.abs(rail.getBoundingClientRect().bottom - (bottom - 4)) < 1;
+      };
       window.__customFeedState = () => ({
         clip,
         ready: video.readyState,
@@ -200,6 +210,7 @@
         feedY: feed.scrollTop,
         pageY: scrollY,
         mediaTop: video.getBoundingClientRect().top,
+        bottomRail: bottomRail(),
         controllers: document.querySelectorAll('vsc-controller').length,
         trace: { ...trace },
         errors: [...errors],
@@ -219,7 +230,7 @@
           }
         }
         const state = window.__customFeedState();
-        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; duration ${state.duration.toFixed(2)}; source ${state.sameSource}; metadata ${state.ready >= 1}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
+        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; bottom rail ${state.bottomRail}; duration ${state.duration.toFixed(2)}; source ${state.sameSource}; metadata ${state.ready >= 1}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
         const status = document.querySelector('#fixture-status');
         if (status.textContent !== text) status.textContent = text;
         for (const [container, id, prefix] of [

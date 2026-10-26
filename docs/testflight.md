@@ -6,6 +6,13 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+**0.11.6 (29)** keeps the inline progress bar at the clipped video's bottom edge.
+Site metadata no longer shifts it upward. Record reviewed source, local verification,
+archive/export, upload, notes and Personal Auto availability under
+`build/safari/testflight/0.11.6-build29/` before claiming distribution.
+
+## Previous custom-player candidate
+
 **0.11.6 (27)** is the custom-player compatibility candidate. Muted looping
 clips with nearby playback controls retain StayFast transport, including when
 those controls arrive after the video. Picture swipes suppress the site's trailing

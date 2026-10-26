@@ -87,6 +87,7 @@ with a 3px track, 12px thumb and 44px touch target. The speed/transport strip
 remains compact at the top; the controller does not grow into a video-sized
 hit box. Existing placement events update rail coordinates after occlusion and
 ancestor scaling, without writing scroll or polling.
+Site metadata and controls do not move the rail upward.
 The top transport retains its vertical position relative to the video as the page
 scrolls. When its anchor passes the viewport edge or under a header, that strip
 hides instead of sliding down over the picture; the bottom rail remains independent.

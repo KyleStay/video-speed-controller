@@ -365,21 +365,8 @@ class ControlsManager {
       // seek target follows the visible video's bottom, including clipped feeds
       // and transformed ancestors, without a full-video controller hit box.
       const railLeft = (visible ? Math.max(media.left, left) : media.left) + 4;
-      let railBottom = (visible ? Math.min(media.bottom, bottom) : media.bottom) - 4;
+      const railBottom = (visible ? Math.min(media.bottom, bottom) : media.bottom) - 4;
       const railWidth = Math.max(44, (visible ? visibleWidth : media.width) - 8);
-      if (visible && !this.inlinePlayer.refs.timelineGroup.hidden) {
-        railBottom = this.avoidInlineTimelineOcclusion(shadow, video, {
-          left: railLeft,
-          width: railWidth,
-          bottom: railBottom,
-          top: Math.max(
-            Math.max(media.top, top) + 4,
-            shadow.host.hasAttribute('data-vsc-inline-strip-hidden')
-              ? -Infinity
-              : placement.y + rect.height + 4
-          ),
-        });
-      }
       for (const [property, value] of [
         ['--vsc-inline-timeline-left', `${(railLeft - placement.x) / (scale?.x || 1)}px`],
         ['--vsc-inline-timeline-top', `${(railBottom - 44 - placement.y) / (scale?.y || 1)}px`],
@@ -424,54 +411,6 @@ class ControlsManager {
     } catch {
       // Hit testing is optional; cropped-media bounds remain the safe fallback.
     }
-  }
-
-  /** Keep the seek target above a player's own metadata without covering it. */
-  avoidInlineTimelineOcclusion(shadow, video, rail) {
-    let bottom = rail.bottom;
-    try {
-      const doc = video.ownerDocument;
-      const scope = this.inlinePlayer.surfaceContainer?.node || video.parentElement;
-      const media = video.getBoundingClientRect();
-      for (let attempt = 0; attempt < 3; attempt++) {
-        let next = bottom;
-        for (const x of [rail.left + 22, rail.left + rail.width / 2, rail.left + rail.width - 22]) {
-          for (const y of [bottom - 42, bottom - 2]) {
-            const hit = doc
-              .elementsFromPoint(x, y)
-              .find((node) => node !== shadow.host && !node.closest?.('vsc-controller'));
-            if (!hit || hit === video || hit.contains(video)) {
-              continue;
-            }
-            const cover = hit.getBoundingClientRect();
-            const picture =
-              !hit.closest('button, a, input, select, [role="button"], [role="slider"]') &&
-              cover.left <= media.left + 2 &&
-              cover.top <= media.top + 2 &&
-              cover.right >= media.right - 2 &&
-              cover.bottom >= media.bottom - 2;
-            if (picture) {
-              continue;
-            }
-            const dialog = hit.closest('dialog, [role="dialog"], [aria-modal="true"]');
-            if (!scope?.contains(hit) || (dialog && !dialog.contains(video))) {
-              return rail.bottom;
-            }
-            next = Math.min(next, cover.top - 4);
-          }
-        }
-        if (next === bottom) {
-          return bottom;
-        }
-        if (next - 44 < rail.top) {
-          return rail.bottom;
-        }
-        bottom = next;
-      }
-    } catch {
-      // Optional hit testing cannot prevent normal placement or media control.
-    }
-    return rail.bottom;
   }
 
   /** Fit the painted player, including a site's cropped-video wrapper. */

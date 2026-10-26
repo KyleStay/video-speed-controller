@@ -62,6 +62,7 @@ import XCTest
         XCTAssertTrue(safari.buttons["Mute video"].waitForExistence(timeout: 5))
         safari.buttons["Mute video"].tap()
         let seek = safari.sliders["Seek video"]; target(seek)
+        wait(safari, ["bottom rail true"])
         // XCTest's slider-adjust API lacks WebKit's min/max coordinates. Use
         // a genuine touch at the observed accessible target instead.
         let timelineStart = time(safari)
@@ -70,8 +71,10 @@ import XCTest
         XCTAssertGreaterThan(duration, 0)
         // Choose the opposite half so a successful seek cannot coincide with
         // the position reached during the preceding Play/Pause check.
+        // The site's metadata may cover the rail's middle; its bottom edge
+        // remains at the video bottom and receives genuine input.
         let fraction = timelineStart < duration / 2 ? 0.75 : 0.2
-        seek.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).tap()
+        seek.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.95)).tap()
         requireTime(safari, "timeline moved") { abs($0 - timelineStart) > max(0.1, duration * 0.05) }
         let before = time(safari)
         let y = (play.frame.maxY + seek.frame.minY) / 2
@@ -117,6 +120,7 @@ import XCTest
         }
         safari.buttons["Close site viewer"].tap()
         XCTAssertEqual(fullscreen.frame.minY, feedY, accuracy: 2)
+        wait(safari, ["bottom rail true"])
         safari.buttons["Next clip"].tap()
         wait(safari, ["Clip 2;", "paused true", "metadata true", "source true", "controllers 1;", "attached true", "connected true", "errors 0"])
         target(safari.buttons["Play video"])
