@@ -78,6 +78,18 @@ const mobileHtml = `<!doctype html>
           content.append(player);
         }
       }
+      const feedOverlay = new URLSearchParams(location.search).has('feed-overlay');
+      if (feedOverlay) {
+        // Video-sized player inside a zero-height tracker, with sibling chrome
+        // on the outer picture rather than the inner player.
+        const shell = video.parentElement;
+        shell.style.aspectRatio = '16 / 9';
+        const tracker = document.createElement('div');
+        tracker.style.cssText = 'height:0;overflow:visible';
+        const inner = document.createElement('div');
+        inner.style.position = 'relative';
+        shell.append(tracker); tracker.append(inner); inner.append(video);
+      }
       const ownedDiagnostics = new URLSearchParams(location.search).has('owned');
       if (ownedDiagnostics) {
         window.__stayfastOwnedFixture = { video, source: video.src, parent: video.parentNode, nativeFullscreenCalls: 0 };
@@ -86,15 +98,39 @@ const mobileHtml = `<!doctype html>
         }
       }
       const takeoverFixture = new URLSearchParams(location.search).has('takeover');
+      const theaterOverlay = new URLSearchParams(location.search).has('theater-overlay');
+      if (theaterOverlay) {
+        const open = document.createElement('button');
+        open.id = 'open-site-viewer'; open.textContent = 'Open site video viewer';
+        open.style.minHeight = '44px';
+        document.querySelector('#play').before(open);
+        open.addEventListener('click', () => {
+          const dialog = document.createElement('div');
+          dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+          dialog.style.cssText = 'position:fixed;inset:0;overflow-y:auto;background:#f3f7fa;z-index:10';
+          const picture = document.createElement('div');
+          picture.className = 'site-viewer-picture'; picture.style.position = 'relative';
+          const cover = document.createElement('div');
+          cover.setAttribute('aria-label', 'Video picture'); cover.setAttribute('role', 'button');
+          cover.style.cssText = 'position:absolute;inset:0';
+          for (const type of ['pointerdown', 'pointermove', 'touchstart', 'click']) {
+            cover.addEventListener(type, event => event.stopImmediatePropagation());
+          }
+          picture.append(document.querySelector('.player'), cover);
+          dialog.append(picture, document.querySelector('#play'), document.querySelector('#pause'), document.querySelector('#media-status'));
+          document.body.append(dialog);
+        });
+      }
       if (new URLSearchParams(location.search).has('reveal-overlay')) {
-        const overlay = document.createElement('button');
-        overlay.type = 'button';
+        const plain = new URLSearchParams(location.search).has('plain-overlay');
+        const overlay = document.createElement(plain ? 'div' : 'button');
+        if (!plain) overlay.type = 'button';
         overlay.setAttribute('aria-label', 'Video picture');
         overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;';
         for (const type of ['pointerdown', 'touchstart', 'click']) {
           overlay.addEventListener(type, event => event.stopImmediatePropagation());
         }
-        video.parentElement.append(overlay);
+        (feedOverlay ? document.querySelector('.player') : video.parentElement).append(overlay);
       }
       const fullscreenNames = ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen', 'webkitEnterFullscreen', 'webkitEnterFullScreen', 'webkitSetPresentationMode'];
       window.__stayfastInitialFullscreen = new Map(fullscreenNames.map((name) => [name, {

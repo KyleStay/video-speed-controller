@@ -775,13 +775,33 @@ export default async function runIOSPlayer({
       await tapPlayer(page, 'done');
       await navigate();
     });
-    for (const presentation of ['inline', 'overlay', 'fullscreen']) {
+    for (const presentation of [
+      'inline',
+      'overlay',
+      'unknown-overlay',
+      'unknown-div-overlay',
+      'unknown-feed-overlay',
+      'theater-overlay',
+      'fullscreen',
+    ]) {
       await check(`video-surface precision scrubbing in ${presentation}`, async () => {
         await navigate(
-          `&takeover&standard-fullscreen&precision${
-            presentation === 'overlay' ? '&reveal-overlay' : ''
+          `&standard-fullscreen&precision${presentation.startsWith('unknown') ? '' : '&takeover'}${presentation === 'unknown-div-overlay' ? '&plain-overlay' : ''}${presentation === 'unknown-feed-overlay' ? '&feed-overlay' : ''}${
+            presentation === 'theater-overlay'
+              ? '&theater-overlay'
+              : presentation.includes('overlay')
+                ? '&reveal-overlay'
+                : ''
           }`
         );
+        if (presentation === 'theater-overlay') {
+          await page.locator('#open-site-viewer').click();
+          await page.waitForFunction(
+            () =>
+              window.__ownedOriginal.vsc.controlsManager.inlinePlayer.surfaceContainer?.node
+                .className === 'site-viewer-picture'
+          );
+        }
         await page.evaluate(() => {
           window.__ownedOriginal.pause();
           window.__ownedOriginal.currentTime = 20;
@@ -948,41 +968,48 @@ export default async function runIOSPlayer({
         }
       }
     );
-    await check('video-surface vertical movement preserves real page scrolling', async () => {
-      await navigate('&takeover&scroll=page');
-      await page.evaluate(() => {
-        window.__ownedOriginal.pause();
-        window.__ownedOriginal.currentTime = 20;
-      });
-      const rect = await page.$eval('video', (video) => {
-        const r = video.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height * 0.7 };
-      });
-      const session = await page.createCDPSession();
-      try {
-        await session.send('Input.dispatchTouchEvent', {
-          type: 'touchStart',
-          touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
-        });
-        for (let d = 30; d <= 150; d += 30) {
-          await session.send('Input.dispatchTouchEvent', {
-            type: 'touchMove',
-            touchPoints: [{ x: rect.x, y: rect.y - d, id: 1 }],
+    for (const overlay of [false, true]) {
+      await check(
+        `video-surface vertical movement preserves real page scrolling${overlay ? ' through unknown overlays' : ''}`,
+        async () => {
+          await navigate(
+            overlay ? '&reveal-overlay&plain-overlay&scroll=page' : '&takeover&scroll=page'
+          );
+          await page.evaluate(() => {
+            window.__ownedOriginal.pause();
+            window.__ownedOriginal.currentTime = 20;
           });
+          const rect = await page.$eval('video', (video) => {
+            const r = video.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height * 0.7 };
+          });
+          const session = await page.createCDPSession();
+          try {
+            await session.send('Input.dispatchTouchEvent', {
+              type: 'touchStart',
+              touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
+            });
+            for (let d = 30; d <= 150; d += 30) {
+              await session.send('Input.dispatchTouchEvent', {
+                type: 'touchMove',
+                touchPoints: [{ x: rect.x, y: rect.y - d, id: 1 }],
+              });
+            }
+            await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            await page.waitForFunction(() => scrollY > 10);
+            assert.true(
+              await page.evaluate(
+                () =>
+                  !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+                  Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2
+              )
+            );
+          } finally {
+            await session.detach();
+          }
         }
-        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        await page.waitForFunction(() => scrollY > 10);
-        assert.true(
-          await page.evaluate(
-            () =>
-              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
-              Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2
-          )
-        );
-      } finally {
-        await session.detach();
-      }
-    });
+      );
+    }
     await check(
       'page-load and synthetic fullscreen calls cannot open a player or move the page',
       async () => {

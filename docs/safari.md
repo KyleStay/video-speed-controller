@@ -49,6 +49,23 @@ selected time. A vertical swipe before scrubbing begins still scrolls an inline
 page. Taps retain interface visibility behavior; pinch remains available. The
 video pauses only after the scrub begins and resumes only if it was playing.
 
+Unknown site overlays also forward horizontal drags when they share a
+picture-sized container with exactly one video. This gesture-only fallback
+leaves the overlay visible and preserves independent buttons, links, editable
+controls, unrelated dialogs, vertical scrolling and browser pinch. A site's
+expanded video viewer can forward drags from an overlay outside its recognized
+inner player; a dialog containing that video remains eligible within its picture
+boundary. It checks at most eight ancestors and revalidates media ownership on
+input; existing composition recovery
+refreshes the scope without polling. Zero-sized wrappers with visible overflow
+or `display: contents` may be crossed within that bound, covering feed layouts
+with a tracking wrapper between the video and sibling overlays. Larger page
+regions, ambiguous media,
+extension-inaccessible frames and overlays outside that container remain outside
+the fallback. StayFast's **Full screen** player provides a separate scrub surface
+for those layouts. Local fixtures do not establish all-site or live X
+expanded-viewer acceptance.
+
 Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
 playhead, move upward into the video to select half, quarter or fine sensitivity,
 then drag horizontally. The selected fractional time remains visible; modified

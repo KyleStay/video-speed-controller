@@ -486,6 +486,184 @@ describe('owned iOS inline transport', () => {
     container.remove();
   });
 
+  describe('unknown picture overlays', () => {
+    let container, cover;
+    const pointer = (type, x = 140, y = 170, target = cover, id = 7) => {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y });
+      target.dispatchEvent(event);
+      return event;
+    };
+
+    beforeEach(() => {
+      container = document.createElement('section');
+      cover = document.createElement('div');
+      container.getBoundingClientRect = () => media;
+      cover.getBoundingClientRect = () => media;
+      document.body.append(container);
+      container.append(video, cover);
+      cover.addEventListener('pointermove', (event) => event.stopImmediatePropagation());
+      player.setOwned(true);
+    });
+
+    afterEach(() => {
+      document.body.append(video);
+      container.remove();
+    });
+
+    it('captures horizontal intent through an unknown overlay without hiding it', () => {
+      expect(player.surfaceContainer.node).toBe(container);
+      expect(pointer('pointerdown').defaultPrevented).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(pointer('pointermove', 180).defaultPrevented).toBe(true);
+      expect(player.scrubber.active).toBe(true);
+      pointer('pointerup', 180, 170, window);
+      expect(video.currentTime).toBe(24);
+      expect(cover.style.cssText).toBe('');
+      expect(container.hasAttribute('data-vsc-ios-site-controls')).toBe(false);
+    });
+
+    it('leaves vertical intent and two-finger browser gestures alone', () => {
+      pointer('pointerdown');
+      expect(pointer('pointermove', 140, 210).defaultPrevented).toBe(false);
+      pointer('pointerup', 140, 210);
+      pointer('pointerdown');
+      expect(pointer('pointerdown', 180, 170, cover, 8).defaultPrevented).toBe(false);
+      expect(pointer('pointermove', 190).defaultPrevented).toBe(false);
+      expect(player.scrubber.active).toBe(false);
+      expect(video.currentTime).toBe(12);
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'button',
+      'a',
+      'input',
+      'label',
+      'summary',
+      'slider',
+      'editable',
+      'dialog',
+      'focusable',
+    ])('preserves independent %s input', (kind) => {
+      const control = document.createElement(
+        ['slider', 'editable', 'dialog', 'focusable'].includes(kind) ? 'div' : kind
+      );
+      if (kind === 'slider') {
+        control.setAttribute('role', 'slider');
+      }
+      if (kind === 'editable') {
+        control.setAttribute('contenteditable', 'true');
+      }
+      if (kind === 'dialog') {
+        control.setAttribute('role', 'dialog');
+      }
+      if (kind === 'focusable') {
+        control.tabIndex = 0;
+      }
+      control.getBoundingClientRect = () => ({ left: 100, top: 100, right: 144, bottom: 144 });
+      cover.append(control);
+      pointer('pointerdown', 120, 120, control);
+      expect(pointer('pointermove', 160, 120, control).defaultPrevented).toBe(false);
+      expect(player.scrubber.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it('accepts a full-picture ARIA button, preserving its ordinary taps', () => {
+      cover.setAttribute('role', 'button');
+      pointer('pointerdown');
+      expect(pointer('pointerup').defaultPrevented).toBe(false);
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(true);
+    });
+
+    it.each(['video', 'audio', 'iframe'])(
+      'rejects a recycled scope containing another %s',
+      (tag) => {
+        container.append(document.createElement(tag));
+        pointer('pointerdown');
+        pointer('pointermove', 180);
+        expect(player.scrubber.active).toBe(false);
+        player.refreshSurfaceContainer();
+        expect(player.surfaceContainer).toBeNull();
+      }
+    );
+
+    it('does not climb into a larger page region to claim an unrelated overlay', () => {
+      container.getBoundingClientRect = () => ({ ...media, bottom: media.bottom + 80 });
+      player.refreshSurfaceContainer();
+      expect(player.surfaceContainer).toBeNull();
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+    });
+
+    it('releases the old scope on reparenting and restores marker intent on handback', () => {
+      const old = player.surfaceContainer;
+      document.body.append(video);
+      position();
+      expect(old.style.isConnected).toBe(false);
+      expect(container.hasAttribute(old.attribute)).toBe(false);
+      container.append(video);
+      container.setAttribute(old.attribute, 'site-original');
+      position();
+      const current = player.surfaceContainer;
+      player.setOwned(false);
+      expect(current.style.isConnected).toBe(false);
+      expect(container.getAttribute(old.attribute)).toBe('site-original');
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+    });
+
+    it('reaches sibling feed overlays across a zero-height tracking wrapper', () => {
+      const tracker = document.createElement('div');
+      tracker.style.overflowX = tracker.style.overflowY = 'visible';
+      tracker.getBoundingClientRect = () => ({ ...media, height: 0, bottom: media.top });
+      const inner = document.createElement('div');
+      inner.getBoundingClientRect = () => media;
+      container.prepend(tracker);
+      tracker.append(inner);
+      inner.append(video);
+      player.installSurfacePolicy();
+      expect(player.surfaceContainer.node).toBe(container);
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(true);
+      pointer('pointerup', 180, 170, window);
+      expect(video.currentTime).toBe(24);
+      tracker.style.overflowY = 'hidden';
+      player.refreshSurfaceContainer();
+      expect(player.surfaceContainer.node).toBe(inner);
+      pointer('pointerdown');
+      pointer('pointermove', 220);
+      expect(player.scrubber.active).toBe(false);
+    });
+
+    it('scrubs an expanded site viewer overlay outside its recognized player', () => {
+      const known = document.createElement('div');
+      known.getBoundingClientRect = () => media;
+      container.prepend(known);
+      known.append(video);
+      video.vsc.iosPlayer.siteControls = { container: known };
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      document.body.append(dialog);
+      dialog.append(container);
+      player.installSurfacePolicy();
+      expect(player.surfaceContainer.node).toBe(container);
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(true);
+      pointer('pointerup', 180, 170, window);
+      expect(video.currentTime).toBe(24);
+      document.body.append(container);
+      dialog.remove();
+    });
+  });
+
   it('fades the entire playing transport together, retaining layout and restoring on pause', () => {
     player.setOwned(true);
     vi.advanceTimersByTime(5000);

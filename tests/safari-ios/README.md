@@ -25,6 +25,17 @@ covered by the browser counterpart; its exact native multiphase path remains a
 manual device check. Run
 `STAYFAST_EXTENSION_DIR=dist/chrome node tests/e2e/run-isolated.js ios-surface`
 for the built Chrome fixture counterpart, including real vertical page scrolling.
+Omit `takeover` to exercise the same native test through an unknown full-picture
+button instead of a recognized player; add `feed-overlay` for a zero-height
+tracking wrapper with the cover on the outer picture container. The browser
+counterpart also checks an unknown non-button overlay and real vertical scrolling
+through it. These local fixtures do not establish live-site or physical-device
+compatibility.
+For a site-expanded viewer with its touch overlay outside the recognized inner
+player, open `/mobile.html?mp4&owned&takeover&theater-overlay&surface-scrub` and run
+`OwnedPlayerQATests/testTheaterPictureSurfaceScrubbing`. It opens the site viewer
+through a genuine tap, then runs the same inline, fullscreen and resumed-playback
+assertions. This is a local structural regression, not live authenticated X proof.
 
 ## Build 13 takeover acceptance — r4 (historical)
 
