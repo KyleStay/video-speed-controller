@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local custom-player fixture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 16px system-ui;
+        background: #edf2f6;
+        color: #123;
+      }
+      header,
+      main {
+        max-width: 420px;
+        margin: auto;
+      }
+      header {
+        padding: 12px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      button {
+        min-width: 44px;
+        min-height: 44px;
+        font: inherit;
+      }
+      .feed {
+        height: calc(100dvh - 150px);
+        min-height: 300px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+      .clip-card,
+      .clip-slot,
+      .next-card {
+        position: relative;
+        flex: 0 0 auto;
+        height: 520px;
+        width: 100%;
+        background: #193e52;
+      }
+      .input-tracker {
+        height: 0;
+        overflow: visible;
+      }
+      .media-layer {
+        position: relative;
+        z-index: 0;
+        height: 520px;
+      }
+      video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #193e52;
+      }
+      .picture-surface {
+        position: absolute;
+        inset: 0;
+      }
+      .metadata {
+        position: absolute;
+        z-index: 2;
+        left: 16px;
+        right: 68px;
+        bottom: 20px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        background: #fff;
+        color: #123;
+      }
+      .site-controls {
+        position: absolute;
+        z-index: 2;
+        right: 8px;
+        top: 90px;
+        display: grid;
+        gap: 8px;
+      }
+      .site-controls button {
+        max-width: 100px;
+      }
+      .next-card {
+        display: grid;
+        place-items: center;
+        color: white;
+        background: #316054;
+      }
+      #site-viewer {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        overflow-y: auto;
+        background: #edf2f6;
+        padding-top: 52px;
+      }
+      #site-viewer[hidden] {
+        display: none;
+      }
+      #site-viewer > button {
+        position: absolute;
+        right: 8px;
+        top: 4px;
+      }
+      #site-viewer .clip-card {
+        max-width: 420px;
+        margin: auto;
+      }
+      #fixture-status {
+        padding: 8px 12px;
+        margin: auto;
+        max-width: 420px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Local custom-player fixture</h1>
+      <button id="show-transport" hidden>Show clip controls</button>
+      <button id="next-clip">Next clip</button>
+    </header>
+    <main>
+      <div class="feed" id="feed" aria-label="Local clip feed">
+        <article class="clip-card" id="clip-card" aria-label="Synthetic clip">
+          <div class="input-tracker">
+            <div class="media-layer">
+              <video
+                id="clip"
+                loop
+                muted
+                playsinline
+                disablepictureinpicture
+                preload="auto"
+              ></video>
+              <div class="picture-surface" id="picture-surface" aria-label="Clip picture"></div>
+            </div>
+          </div>
+          <a class="metadata" id="creator-link" href="#local-creator">Example creator</a>
+        </article>
+        <article class="next-card">Synthetic next post</article>
+      </div>
+    </main>
+    <section id="site-viewer" role="dialog" aria-label="Site clip viewer" aria-modal="true" hidden>
+      <button id="close-site-viewer">Close site viewer</button>
+    </section>
+    <p id="fixture-status" role="status"></p>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const feed = document.querySelector('#feed');
+      const card = document.querySelector('#clip-card');
+      const layer = document.querySelector('.media-layer');
+      const picture = document.querySelector('#picture-surface');
+      const viewer = document.querySelector('#site-viewer');
+      const mediaPath = params.has('mp4') ? '/sample.mp4' : '/sample.webm';
+      let video = document.querySelector('video');
+      let originalVideo = video;
+      let originalSource = '';
+      let clip = 1;
+      let slot = null;
+      const captionTracks = new WeakMap();
+      const observedRoots = new WeakSet();
+      let updateFrame = 0;
+      const scheduleUpdate = () => {
+        if (updateFrame) return;
+        updateFrame = requestAnimationFrame(() => {
+          updateFrame = 0;
+          update();
+        });
+      };
+      const trace = { pictureTouches: 0, linkClicks: 0, sources: 1 };
+      const errors = [];
+      window.addEventListener('error', (event) => errors.push(String(event.message)));
+      window.__customFeedState = () => ({
+        clip,
+        ready: video.readyState,
+        paused: video.paused,
+        muted: video.muted,
+        time: video.currentTime,
+        duration: video.duration,
+        rate: video.playbackRate,
+        sameVideo: document.querySelector('#clip') === originalVideo && video === originalVideo,
+        sameSource: video.currentSrc === originalSource,
+        connected: video.isConnected,
+        attached: !!video.vsc?.iosPlayer?.attached,
+        source: new URL(video.currentSrc || mediaPath, location.href).pathname,
+        owned: !!video.vsc?.iosPlayer?.active,
+        siteViewer: !viewer.hidden,
+        feedY: feed.scrollTop,
+        pageY: scrollY,
+        mediaTop: video.getBoundingClientRect().top,
+        controllers: document.querySelectorAll('vsc-controller').length,
+        trace: { ...trace },
+        errors: [...errors],
+        mediaError: video.error?.code || 0,
+      });
+      const update = () => {
+        for (const host of document.querySelectorAll('vsc-controller, vsc-ios-player')) {
+          if (host.shadowRoot && !observedRoots.has(host.shadowRoot)) {
+            observedRoots.add(host.shadowRoot);
+            diagnosticObserver.observe(host.shadowRoot, {
+              childList: true,
+              characterData: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['aria-label', 'aria-pressed'],
+            });
+          }
+        }
+        const state = window.__customFeedState();
+        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; duration ${state.duration.toFixed(2)}; source ${state.sameSource}; metadata ${state.ready >= 1}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
+        const status = document.querySelector('#fixture-status');
+        if (status.textContent !== text) status.textContent = text;
+        for (const [container, id, prefix] of [
+          [viewer.hidden ? null : viewer, 'viewer-fixture-status', 'Viewer clip '],
+          [video.vsc?.iosPlayer?.ui?.dialog, 'owned-fixture-status', 'Owned clip '],
+        ]) {
+          if (!container) continue;
+          let mirror = container.querySelector('#' + id);
+          if (!mirror) {
+            mirror = document.createElement('p');
+            mirror.id = id;
+            mirror.setAttribute('role', 'status');
+            mirror.style.cssText =
+              'position:absolute;top:64px;left:8px;right:8px;z-index:5;margin:0;padding:4px;font:10px/1.2 monospace;background:#fff;color:#123;pointer-events:none;';
+            container.append(mirror);
+          }
+          const mirrored = prefix + text.slice(5);
+          if (mirror.textContent !== mirrored) mirror.textContent = mirrored;
+        }
+      };
+      const prepare = (media) => {
+        media.muted = true;
+        originalSource = new URL(`${mediaPath}?clip=${clip}`, location.href).href;
+        media.src = originalSource;
+        for (const type of [
+          'loadedmetadata',
+          'loadeddata',
+          'canplay',
+          'emptied',
+          'loadstart',
+          'timeupdate',
+          'play',
+          'pause',
+          'ratechange',
+          'seeked',
+          'error',
+        ])
+          media.addEventListener(type, update);
+        if (params.has('captions')) {
+          let track = captionTracks.get(media);
+          if (!track || !Array.from(media.textTracks).includes(track)) {
+            track = media.addTextTrack('captions', 'Test captions', 'en');
+            captionTracks.set(media, track);
+          }
+          track.mode = 'hidden';
+          for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+          track.addCue(new VTTCue(0, 60, `Synthetic caption ${clip}`));
+          track.mode = 'disabled';
+        }
+      };
+      prepare(video);
+
+      // Deliberately unsophisticated site tap handling exercises trailing-touch
+      // isolation after a committed horizontal drag. It never owns vertical moves.
+      let start = null;
+      picture.addEventListener(
+        'touchstart',
+        (event) => {
+          const p = event.touches[0];
+          start = p && { x: p.clientX, y: p.clientY };
+        },
+        { passive: true }
+      );
+      picture.addEventListener('touchend', (event) => {
+        const p = event.changedTouches[0];
+        if (!start || !p || Math.abs(p.clientY - start.y) > Math.abs(p.clientX - start.x) + 10)
+          return;
+        trace.pictureTouches++;
+        if (video.paused) void video.play().catch(() => {});
+        else video.pause();
+        start = null;
+        update();
+      });
+      document.querySelector('#creator-link').addEventListener('click', (event) => {
+        event.preventDefault();
+        trace.linkClicks++;
+        update();
+      });
+      const showTransport = () => {
+        if (card.querySelector('.site-controls')) return;
+        const controls = document.createElement('div');
+        controls.className = 'site-controls';
+        controls.innerHTML =
+          '<button id="site-sound" aria-label="Sound Off">Sound</button><button id="open-site-viewer">Open site viewer</button>';
+        controls.querySelector('#site-sound').onclick = () => {
+          video.muted = !video.muted;
+          update();
+        };
+        controls.querySelector('#open-site-viewer').onclick = () => {
+          if (!viewer.hidden) return;
+          slot = document.createElement('div');
+          slot.className = 'clip-slot';
+          card.replaceWith(slot);
+          viewer.append(card);
+          viewer.hidden = false;
+          update();
+        };
+        card.append(controls);
+        document.querySelector('#show-transport').hidden = true;
+      };
+      document.querySelector('#close-site-viewer').onclick = () => {
+        slot?.replaceWith(card);
+        slot = null;
+        viewer.hidden = true;
+        update();
+      };
+      if (params.has('late-controls')) {
+        document.querySelector('#show-transport').hidden = false;
+        document.querySelector('#show-transport').onclick = showTransport;
+      } else showTransport();
+      document.querySelector('#next-clip').onclick = () => {
+        if (!viewer.hidden) document.querySelector('#close-site-viewer').click();
+        video.pause();
+        clip++;
+        trace.sources++;
+        if (!params.has('recycle')) {
+          const next = document.createElement('video');
+          next.id = 'clip';
+          next.loop = true;
+          next.playsInline = true;
+          next.disablePictureInPicture = true;
+          next.preload = 'auto';
+          video.replaceWith(next);
+          video = next;
+        }
+        prepare(video);
+        originalVideo = video;
+
+        update();
+      };
+      document.addEventListener('pointerup', scheduleUpdate, true);
+      const diagnosticObserver = new MutationObserver((records) => {
+        const external = records.some((record) => {
+          const target = record.target.nodeType === 3 ? record.target.parentElement : record.target;
+          return !target?.closest?.(
+            '#fixture-status, #viewer-fixture-status, #owned-fixture-status'
+          );
+        });
+        if (external) scheduleUpdate();
+      });
+      diagnosticObserver.observe(document.body, { childList: true, subtree: true });
+      update();
+    </script>
+  </body>
+</html>

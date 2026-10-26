@@ -37,6 +37,17 @@ player, open `/mobile.html?mp4&owned&takeover&theater-overlay&surface-scrub` and
 through a genuine tap, then runs the same inline, fullscreen and resumed-playback
 assertions. This is a local structural regression, not live authenticated X proof.
 
+## Synthetic custom-player feed
+
+The [local custom-player fixtures](../e2e/CUSTOM-PLAYER-FIXTURES.md) provide
+account-free feed, overlay, metadata, site-viewer, caption and recycled-media
+variants using generated local media. `CustomFeedQATests/testCustomFeedControlsAndReturn`
+checks genuine inline playback/mute/seek, picture swipes, speed/frame/Lock controls,
+two owned fullscreen returns inside the site viewer, feed restoration and the next
+clip. Open `/custom-feed.html?mp4` on a freshly activated extension; use
+`late-controls` or `recycle` for those variants. The browser matrix also verifies
+that no off-origin HTTP request occurs.
+
 ## Build 13 takeover acceptance — r4 (historical)
 
 Build 13, now Testing, owns iOS inline controls by default and routes
@@ -203,7 +214,7 @@ xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.mobilesafari
 xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.Preferences
 xcrun simctl install "$STAYFAST_SIMULATOR_UDID" "build/safari/ios-simulator/Build/Products/Release-iphonesimulator/StayFast Video.app"
 mkdir -p build/safari-ios-qa test-results/safari-ios
-cp tests/safari-ios/project.yml tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/FeedPositionQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift tests/safari-ios/TwitterPlaybackQATests.swift tests/safari-ios/HLSPlayerQATests.swift build/safari-ios-qa/
+cp tests/safari-ios/project.yml tests/safari-ios/CustomFeedQATests.swift tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/FeedPositionQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift tests/safari-ios/TwitterPlaybackQATests.swift tests/safari-ios/HLSPlayerQATests.swift build/safari-ios-qa/
 xcodegen generate --spec build/safari-ios-qa/project.yml
 ```
 
