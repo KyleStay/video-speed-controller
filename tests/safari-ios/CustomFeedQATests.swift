@@ -76,10 +76,13 @@ import XCTest
         let before = time(safari)
         let y = (play.frame.maxY + seek.frame.minY) / 2
         let origin = safari.coordinate(withNormalizedOffset: .zero)
-        origin.withOffset(CGVector(dx: 90, dy: y)).press(forDuration: 0.05,
-            thenDragTo: origin.withOffset(CGVector(dx: 220, dy: y)),
+        let forward = before < duration / 2
+        // Keep the swipe away from seek boundaries so this checks gesture
+        // movement independently of the clip's looping behavior.
+        origin.withOffset(CGVector(dx: forward ? 90 : 220, dy: y)).press(forDuration: 0.05,
+            thenDragTo: origin.withOffset(CGVector(dx: forward ? 220 : 90, dy: y)),
             withVelocity: .slow, thenHoldForDuration: 0)
-        requireTime(safari, "picture drag moved") { $0 > before + 0.1 }
+        requireTime(safari, "picture drag moved") { forward ? $0 > before + 0.1 : $0 < before - 0.1 }
         wait(safari, ["paused true", "owned false", "errors 0"])
         capture(safari, "custom-feed-inline")
         let fullscreen = safari.buttons["Open video fullscreen"]
