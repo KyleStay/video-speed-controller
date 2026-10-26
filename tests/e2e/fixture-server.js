@@ -727,6 +727,7 @@ export async function startFixtureServer({
   const media = await readFile(mediaPath);
   const mp4 = await readFile(mp4Path);
   const probeMp4 = probeMp4Path === mp4Path ? mp4 : await readFile(probeMp4Path);
+  const customFeed = await readFile(resolve('tests/e2e/custom-feed.html'), 'utf8');
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (url.pathname === '/sample.webm') {
@@ -757,6 +758,17 @@ export async function startFixtureServer({
         'Cache-Control': 'no-store',
       });
       response.end(rateProbeHtml);
+      return;
+    }
+
+    if (url.pathname === '/custom-feed.html') {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy':
+          "default-src 'self'; script-src 'self' 'unsafe-inline' chrome-extension: moz-extension: safari-web-extension:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
+      });
+      response.end(customFeed);
       return;
     }
 

@@ -8,6 +8,7 @@ targets:
     type: bundle.ui-testing
     platform: iOS
     sources:
+      - CustomFeedQATests.swift
       - SafariQATests.swift
       - OwnedPlayerQATests.swift
       - ScrollQATests.swift
