@@ -229,13 +229,18 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
           const range = await page.evaluateHandle(
             () => document.querySelector('video').vsc.controlsManager.inlinePlayer.refs.timeline
           );
+          const beforeKey = (await state(page)).time;
           try {
             await range.asElement().focus();
             await page.keyboard.press('ArrowRight');
           } finally {
             await range.dispose();
           }
-          await page.waitForFunction(() => document.querySelector('video').currentTime > 30.05);
+          await page.waitForFunction(
+            (before) => document.querySelector('video').currentTime > before + 0.05,
+            {},
+            beforeKey
+          );
           const beforeLink = (await state(page)).time;
           await page.click('#creator-link');
           assert.equal((await state(page)).trace.linkClicks, 1);
