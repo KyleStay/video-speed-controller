@@ -1,6 +1,6 @@
 # iPhone Safari playback above 2×: primary-source research
 
-Research date: 2026-10-26. This is a source investigation and proposed measurement plan, not a physical-device test result. WebKit source claims below are pinned to upstream commit [`15ab57a66f90f805ad8c8b6f42c9a54a8158ab2f`](https://github.com/WebKit/WebKit/commit/15ab57a66f90f805ad8c8b6f42c9a54a8158ab2f) (commit metadata: 2026-10-26T18:26:49Z); it does not establish which changes ship in the connected phone's Safari build.
+Research date: 2026-10-26. The source investigation and measurement plan below are separate from the bounded physical-device results recorded afterward. WebKit source claims are pinned to upstream commit [`15ab57a66f90f805ad8c8b6f42c9a54a8158ab2f`](https://github.com/WebKit/WebKit/commit/15ab57a66f90f805ad8c8b6f42c9a54a8158ab2f) (commit metadata: 2026-10-26T18:26:49Z); it does not establish which changes ship in the connected phone's Safari build.
 
 ## Findings
 
@@ -66,6 +66,27 @@ The current time-domain rate range was independently checked through a read-only
 
 The public [GitHub commit API](https://api.github.com/repos/WebKit/WebKit/commits/main) supplied the SHA above. The HTMLMediaElement setter, Cocoa preference, algorithm mapper and AVFoundation bridge were then read from `raw.githubusercontent.com` using that exact SHA and checked again before replacing moving links with immutable source links.
 
+## Physical iPhone comparison — October 26, 2026
+
+The wired iPhone 15 Pro Max reported iOS 26.7.1 through CoreDevice; its Safari user agent reported Version/26.6.2 and a frozen iPhone OS 18_7 value. A development-signed **0.11.6 (29)** was installed for this device. Its 25 extension resources matched the frozen TestFlight 29 resource hashes. Production JavaScript was unchanged during testing. Qorvex supplied genuine device taps after the phone's UI Automation gate became available.
+
+A generated 640×360/30fps H.264/AAC clip with a continuous 997Hz tone was served as MP4 and remuxed into four-second native-HLS segments, without an I-frame rendition. A closed shadow root kept the baseline video outside StayFast's controller. Each reported sample used a trusted rate-selection tap, one second of warm-up and eight seconds of frame-callback/media-clock measurement. The video was unmuted with pitch preservation enabled; **audio continuity was not recorded or independently verified**.
+
+| Native source | Requested rate | Media-time / wall-time | Frame callbacks/sec | p95 callback gap | Maximum callback gap |
+| ------------- | -------------- | ---------------------- | ------------------- | ---------------- | -------------------- |
+| MP4           | 4×             | 3.92×                  | 54.86               | 32ms             | 44ms                 |
+| HLS           | 4×             | 3.50×                  | 1.75                | 1436ms           | 1436ms               |
+| HLS           | 2×             | 2.00×                  | 52.11               | 37ms             | 79ms                 |
+| HLS           | 2.1×           | 2.50×                  | 7.62                | 572ms            | 1287ms               |
+
+The HLS measurements ran in the order 4×, 2×, 2.1×. Above 2×, repeated native waiting/playing events and large media-time jumps accompanied the sparse picture updates; the requested-rate getter alone concealed that behavior. The MP4 sample had no waiting/pause events during its measurement window. Buffering differed between formats, so this is evidence of native HLS degradation on this phone, not a universal throughput or smoothness guarantee. No repeated JavaScript load/seek/play loop drove the baseline. An earlier automatically sequenced run paused unexpectedly and was excluded; later interrupted/ended-clip attempts were also retained separately, not counted as passing samples.
+
+The existing public X rendition fixture was then exercised with its nearby accessory variants and 1080p download declaration, using an unmuted local copy. Content blocking initially prevented its CDN media from loading. Temporarily turning off content blockers for the local fixture allowed playback; the original setting was restored afterward. This does not establish that content blocking causes the reported live-feed problem.
+
+The unchanged extension selected the explicitly supplied same-clip 720p MP4 at 2.1× and 4×. The five-second measurement windows recorded 2.10×/56.19 callbacks/sec and 4.00×/59.80 callbacks/sec respectively, with the original video, scroll offset and playing state retained and no reported errors. A subsequent clip inherited 4× and selected MP4 (4.00×/59.59 callbacks/sec; original Play promise resolved). Owned presentation also measured 4.00×/59.79 callbacks/sec and returned the same node/source to its original page offset. These are controlled fixture results, not normal-feed, gesture or audible acceptance.
+
+Local receipts, raw reports, probe sources and screenshots are retained under `test-results/ios-fast-playback/`, including `phone-app-verification.json`, `phone-native-closed-root-{mp4,hls}-pitch.json`, `twitter-2.1-device.json`, `twitter-4-fresh-device.json`, `twitter-next-device.json` and `twitter-owned-device.json`. They remain local QA artifacts. The live X home page presented a login gate; no credentials were entered. The affected normal-feed source and its candidate/eligibility state therefore remain unobserved.
+
 ## Current issue
 
-SF-TW-1 remains open: the renewed report includes choppy picture and intermittent audio cutouts at every requested rate above 2×. Existing fixture cadence and speed-readback results do not close that report. Direct physical-device reproduction is still pending.
+SF-TW-1 remains open: the renewed report includes choppy picture and intermittent audio cutouts at every requested rate above 2×. Native HLS picture degradation is now reproduced on a physical phone, while the supplied-rendition fixture's existing MP4 workaround works there. The next diagnosis must capture the affected live-feed video's actual source and candidate/eligibility state to determine why that path differs. Independent audible continuity and affected-post reproduction are still pending; these measurements do not justify a new product fix or a claim that the user's issue is resolved.
