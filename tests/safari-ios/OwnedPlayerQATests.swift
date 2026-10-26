@@ -422,8 +422,21 @@ import XCTest
     }
     /// Fresh /mobile.html?mp4&owned&takeover&reveal-overlay&surface-scrub
     func testPictureSurfaceScrubbing() throws {
+        try checkPictureSurfaceScrubbing(openViewer: false)
+    }
+
+    /// Fresh /mobile.html?mp4&owned&takeover&theater-overlay&surface-scrub
+    func testTheaterPictureSurfaceScrubbing() throws {
+        try checkPictureSurfaceScrubbing(openViewer: true)
+    }
+
+    private func checkPictureSurfaceScrubbing(openViewer: Bool) throws {
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.activate()
+        if openViewer {
+            XCTAssertTrue(safari.buttons["Open site video viewer"].waitForExistence(timeout: 20))
+            safari.buttons["Open site video viewer"].tap()
+        }
         XCTAssertTrue(safari.buttons["Play test video"].waitForExistence(timeout: 20))
         safari.buttons["Play test video"].tap()
         wait(safari, ["ready: 4", "paused: false", "errors: 0"])

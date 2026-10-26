@@ -252,6 +252,7 @@ class IOSPlayer {
     }
     try {
       this.siteControls?.acquire();
+      this.controller.controlsManager?.inlinePlayer?.refreshSurfaceContainer();
     } catch {
       // Reparenting must not interrupt controller repair.
     }
@@ -263,6 +264,7 @@ class IOSPlayer {
       if (owned && this.shouldOwnInlineMedia()) {
         this.siteControls ||= new window.VSC.IOSSiteControls(this.video);
         this.siteControls.acquire();
+        this.controller.controlsManager?.inlinePlayer?.refreshSurfaceContainer();
       } else {
         this.siteControls?.release();
       }

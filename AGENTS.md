@@ -424,6 +424,17 @@ with direct `chrome.*` access.
   cancels the scrub and blocks further action until both lift. Scoped inline
   touch-action rules permit pan-y and pinch-zoom without changing media inline
   styles; handback/cleanup restores marker intent and removes the style/listeners.
+  Unknown inline overlays use a separate gesture-only scope: at most eight
+  picture-sized ancestors, exactly one video and no audio/iframe. Revalidate on
+  input; preserve independent controls, unrelated dialogs, links, vertical scroll
+  and pinch. A site's video dialog may own its picture; theater overlays outside
+  a recognized player use the enclosing validated gesture scope.
+  Fallback picture taps share menu dismissal/reveal with the video. Recheck the
+  same scope, media uniqueness and current hit at the original touch point before
+  committing a fallback drag; source/session checks run again afterward. Player
+  and dialog focusability does not make the picture an independent control.
+  Refresh through existing composition/placement recovery; never hide unknown
+  chrome or add discovery polling. Handback/cleanup releases the scope.
   Fullscreen keeps its separate touch-action ownership. Lost capture on a slotted
   descendant during transfer to the stage must not cancel the stage's gesture.
   Gesture runtime proof requires two observed DOM touch pairs; an XCTest

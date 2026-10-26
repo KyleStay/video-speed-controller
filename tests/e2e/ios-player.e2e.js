@@ -775,13 +775,33 @@ export default async function runIOSPlayer({
       await tapPlayer(page, 'done');
       await navigate();
     });
-    for (const presentation of ['inline', 'overlay', 'fullscreen']) {
+    for (const presentation of [
+      'inline',
+      'overlay',
+      'unknown-overlay',
+      'unknown-div-overlay',
+      'unknown-feed-overlay',
+      'theater-overlay',
+      'fullscreen',
+    ]) {
       await check(`video-surface precision scrubbing in ${presentation}`, async () => {
         await navigate(
-          `&takeover&standard-fullscreen&precision${
-            presentation === 'overlay' ? '&reveal-overlay' : ''
+          `&standard-fullscreen&precision${presentation.startsWith('unknown') ? '' : '&takeover'}${presentation === 'unknown-div-overlay' ? '&plain-overlay' : ''}${presentation === 'unknown-feed-overlay' ? '&feed-overlay' : ''}${
+            presentation === 'theater-overlay'
+              ? '&theater-overlay'
+              : presentation.includes('overlay')
+                ? '&reveal-overlay'
+                : ''
           }`
         );
+        if (presentation === 'theater-overlay') {
+          await page.locator('#open-site-viewer').click();
+          await page.waitForFunction(
+            () =>
+              window.__ownedOriginal.vsc.controlsManager.inlinePlayer.surfaceContainer?.node
+                .className === 'site-viewer-picture'
+          );
+        }
         await page.evaluate(() => {
           window.__ownedOriginal.pause();
           window.__ownedOriginal.currentTime = 20;
@@ -919,6 +939,106 @@ export default async function runIOSPlayer({
         }
       });
     }
+    for (const theater of [false, true]) {
+      await check(
+        `video-surface fallback picture tap dismisses its menu${theater ? ' in a site viewer' : ''}`,
+        async () => {
+          await navigate(theater ? '&takeover&theater-overlay' : '&reveal-overlay&plain-overlay');
+          if (theater) {
+            await page.locator('#open-site-viewer').click();
+            await page.waitForFunction(
+              () =>
+                window.__ownedOriginal.vsc.controlsManager.inlinePlayer.surfaceContainer?.node
+                  .className === 'site-viewer-picture'
+            );
+          }
+          await page.evaluate(() => window.__ownedOriginal.pause());
+          await tapInline(page, '.draggable');
+          await page.waitForFunction(() =>
+            window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open')
+          );
+          const point = await page.evaluate(() => {
+            const r = window.__ownedOriginal.getBoundingClientRect();
+            for (const x of [0.1, 0.5, 0.9]) {
+              for (const y of [0.3, 0.5, 0.7]) {
+                const point = { x: r.left + r.width * x, y: r.top + r.height * y };
+                if (document.elementFromPoint(point.x, point.y)?.id === 'site-picture-overlay') {
+                  return point;
+                }
+              }
+            }
+            return null;
+          });
+          assert.exists(point, 'An exposed picture point must remain available beside the menu');
+          await tapAt(page, point.x, point.y);
+          await page.waitForFunction(
+            () =>
+              !window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open') &&
+              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+          );
+        }
+      );
+    }
+    for (const changed of ['second-media', 'covering-dialog']) {
+      await check(`video-surface fallback rejects ${changed} before drag commitment`, async () => {
+        await navigate('&reveal-overlay&plain-overlay');
+        const point = await page.evaluate(() => {
+          const video = window.__ownedOriginal;
+          video.pause();
+          video.currentTime = 20;
+          document.addEventListener(
+            'pointermove',
+            (event) => {
+              window.__fallbackMoveTarget = event.target.id;
+            },
+            { once: true, capture: true }
+          );
+          const r = video.getBoundingClientRect();
+          return { x: r.left + r.width * 0.4, y: r.top + r.height * 0.55 };
+        });
+        const session = await page.createCDPSession();
+        let ended = false;
+        try {
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [{ ...point, id: 1 }],
+          });
+          await page.evaluate((kind) => {
+            if (kind === 'second-media') {
+              document.querySelector('.player').append(document.createElement('video'));
+            } else {
+              const dialog = document.createElement('div');
+              dialog.setAttribute('role', 'dialog');
+              dialog.style.cssText = 'position:fixed;inset:0;z-index:2147483647';
+              document.body.append(dialog);
+            }
+          }, changed);
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: point.x + 30, y: point.y, id: 1 }],
+          });
+          await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          ended = true;
+          assert.true(
+            await page.evaluate(
+              () =>
+                !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+                Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2 &&
+                window.__fallbackMoveTarget === 'site-picture-overlay'
+            ),
+            'Changed scope must reject seeking despite the retained pointer target'
+          );
+        } finally {
+          if (!ended) {
+            await session.send('Input.dispatchTouchEvent', {
+              type: 'touchCancel',
+              touchPoints: [],
+            });
+          }
+          await session.detach();
+        }
+      });
+    }
     await check(
       'video-surface touch policy follows connected media between tree roots',
       async () => {
@@ -948,41 +1068,48 @@ export default async function runIOSPlayer({
         }
       }
     );
-    await check('video-surface vertical movement preserves real page scrolling', async () => {
-      await navigate('&takeover&scroll=page');
-      await page.evaluate(() => {
-        window.__ownedOriginal.pause();
-        window.__ownedOriginal.currentTime = 20;
-      });
-      const rect = await page.$eval('video', (video) => {
-        const r = video.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height * 0.7 };
-      });
-      const session = await page.createCDPSession();
-      try {
-        await session.send('Input.dispatchTouchEvent', {
-          type: 'touchStart',
-          touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
-        });
-        for (let d = 30; d <= 150; d += 30) {
-          await session.send('Input.dispatchTouchEvent', {
-            type: 'touchMove',
-            touchPoints: [{ x: rect.x, y: rect.y - d, id: 1 }],
+    for (const overlay of [false, true]) {
+      await check(
+        `video-surface vertical movement preserves real page scrolling${overlay ? ' through unknown overlays' : ''}`,
+        async () => {
+          await navigate(
+            overlay ? '&reveal-overlay&plain-overlay&scroll=page' : '&takeover&scroll=page'
+          );
+          await page.evaluate(() => {
+            window.__ownedOriginal.pause();
+            window.__ownedOriginal.currentTime = 20;
           });
+          const rect = await page.$eval('video', (video) => {
+            const r = video.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height * 0.7 };
+          });
+          const session = await page.createCDPSession();
+          try {
+            await session.send('Input.dispatchTouchEvent', {
+              type: 'touchStart',
+              touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
+            });
+            for (let d = 30; d <= 150; d += 30) {
+              await session.send('Input.dispatchTouchEvent', {
+                type: 'touchMove',
+                touchPoints: [{ x: rect.x, y: rect.y - d, id: 1 }],
+              });
+            }
+            await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            await page.waitForFunction(() => scrollY > 10);
+            assert.true(
+              await page.evaluate(
+                () =>
+                  !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+                  Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2
+              )
+            );
+          } finally {
+            await session.detach();
+          }
         }
-        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        await page.waitForFunction(() => scrollY > 10);
-        assert.true(
-          await page.evaluate(
-            () =>
-              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
-              Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2
-          )
-        );
-      } finally {
-        await session.detach();
-      }
-    });
+      );
+    }
     await check(
       'page-load and synthetic fullscreen calls cannot open a player or move the page',
       async () => {

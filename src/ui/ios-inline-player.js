@@ -577,7 +577,7 @@ class IOSInlinePlayer {
 
   installSurfacePolicy() {
     const root = this.video.getRootNode();
-    if (this.surfacePolicy?.root === root) {
+    if (this.surfacePolicy?.root === root && this.surfacePolicy.parent === this.video.parentNode) {
       return;
     }
     this.releaseSurfacePolicy();
@@ -590,16 +590,18 @@ class IOSInlinePlayer {
     // A scoped rule also covers media in open shadow roots without taking over
     // inline styles that the owned fullscreen presentation must independently restore.
     style.textContent = `video[${attribute}="${token}"] { touch-action: pan-y pinch-zoom !important; }`;
-    this.surfacePolicy = { root, attribute, original, token, style };
+    this.surfacePolicy = { root, parent: this.video.parentNode, attribute, original, token, style };
     try {
       this.video.setAttribute(attribute, token);
       (root.nodeType === 9 ? root.head || root.documentElement : root).append(style);
+      this.refreshSurfaceContainer();
     } catch {
       this.releaseSurfacePolicy();
     }
   }
 
   releaseSurfacePolicy() {
+    this.releaseSurfaceContainer();
     const policy = this.surfacePolicy;
     this.surfacePolicy = null;
     if (!policy) {
@@ -623,6 +625,157 @@ class IOSInlinePlayer {
     }
   }
 
+  /** Generic gesture scope only; unknown site chrome is never hidden. */
+  findSurfaceContainer() {
+    try {
+      const rect = this.video.getBoundingClientRect();
+      if (!(rect.width > 0 && rect.height > 0)) {
+        return null;
+      }
+      let candidate = null;
+      let node = this.video.parentElement;
+      // Stop at the picture boundary, rather than claiming a feed or page.
+      for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+        if (node.matches('body,html')) {
+          break;
+        }
+        const boundary = node.matches('dialog,[role="dialog"],[aria-modal="true"]');
+        const bounds = node.getBoundingClientRect();
+        // Tracking/display:contents wrappers can have no box while their video
+        // and a sibling overlay share the next picture-sized ancestor.
+        if (bounds.width === 0 || bounds.height === 0) {
+          const css = this.view.getComputedStyle(node);
+          if (
+            !boundary &&
+            (css.display === 'contents' ||
+              (css.overflowX === 'visible' && css.overflowY === 'visible'))
+          ) {
+            continue;
+          }
+          break;
+        }
+        if (
+          !['left', 'top', 'right', 'bottom'].every(
+            (edge) => Math.abs(bounds[edge] - rect[edge]) <= 2
+          )
+        ) {
+          break;
+        }
+        candidate = node;
+        if (boundary) {
+          break;
+        }
+      }
+      const media = candidate?.querySelectorAll('video,audio,iframe');
+      return media?.length === 1 && media[0] === this.video ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+
+  refreshSurfaceContainer() {
+    const candidate = this.available() ? this.findSurfaceContainer() : null;
+    const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+    // A site's theater may put its input layer outside the recognized player.
+    const node = candidate && !known?.contains(candidate) ? candidate : null;
+    if (node === this.surfaceContainer?.node) {
+      return;
+    }
+    this.releaseSurfaceContainer();
+    if (!node || !this.surfacePolicy) {
+      return;
+    }
+    const attribute = 'data-vsc-inline-scrub-surface';
+    const original = node.getAttribute(attribute);
+    const token = this.surfacePolicy.token;
+    const style = this.video.ownerDocument.createElement('style');
+    this.surfaceContainer = { node, attribute, original, token, style };
+    try {
+      node.setAttribute(attribute, token);
+      style.textContent = `[${attribute}="${token}"] { touch-action: pan-y pinch-zoom !important; }`;
+      this.surfacePolicy.style.after(style);
+      this.surfaceContainer.release = this.observeSurface(node);
+      this.surfaceContainer.releaseInteraction = IOSInlinePlayer.observeInteractions(
+        node,
+        (event) => {
+          const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+          if (!event.composedPath().includes(known)) {
+            this.surfaceInteraction(event);
+          }
+        }
+      );
+    } catch {
+      this.releaseSurfaceContainer();
+    }
+  }
+
+  releaseSurfaceContainer() {
+    const scope = this.surfaceContainer;
+    this.surfaceContainer = null;
+    if (!scope) {
+      return;
+    }
+    try {
+      scope.release?.();
+    } catch {
+      // A patched listener API must not retain styles or marker ownership.
+    }
+    try {
+      scope.releaseInteraction?.();
+    } catch {
+      // Release the remaining ownership even if one listener API was patched.
+    }
+    try {
+      if (scope.node.getAttribute(scope.attribute) === scope.token) {
+        if (scope.original === null) {
+          scope.node.removeAttribute(scope.attribute);
+        } else {
+          scope.node.setAttribute(scope.attribute, scope.original);
+        }
+      }
+    } catch {
+      // Preserve later site writes and continue independent cleanup.
+    }
+    try {
+      scope.style.remove();
+    } catch {
+      /* Continue media cleanup if the page replaced a DOM API. */
+    }
+  }
+
+  canStartSurfaceScrub(scope, start) {
+    if (!this.available() || this.surfaceContainer !== scope || !scope.node.isConnected) {
+      return false;
+    }
+    const media = scope.node.querySelectorAll('video,audio,iframe');
+    if (media.length !== 1 || media[0] !== this.video) {
+      return false;
+    }
+    // Implicit capture can keep targeting an old overlay after a modal/control
+    // covers it. Hit-test the original point once, before committing the scrub.
+    let hit = this.video.ownerDocument.elementFromPoint(start.x, start.y);
+    for (let depth = 0; hit?.shadowRoot && depth < 8; depth++) {
+      const inner = hit.shadowRoot.elementFromPoint?.(start.x, start.y);
+      if (!inner || inner === hit) {
+        break;
+      }
+      hit = inner;
+    }
+    const path = [];
+    for (
+      let node = hit;
+      node && path.length < 32;
+      node = node.assignedSlot || node.parentNode || node.host
+    ) {
+      path.push(node);
+    }
+    return this.isPictureInteraction({
+      composedPath: () => path,
+      clientX: start.x,
+      clientY: start.y,
+    });
+  }
+
   observeSurface(target) {
     const removers = [];
     for (const [type, method] of [
@@ -638,12 +791,23 @@ class IOSInlinePlayer {
           if (!this.available() || path.includes(this.host) || path.includes(this.video)) {
             return;
           }
+          const scope = this.surfaceContainer?.node === target ? this.surfaceContainer : null;
+          if (scope && path.includes(this.video.vsc?.iosPlayer?.siteControls?.container)) {
+            return;
+          }
           if (
             type === 'touchmove' ||
             this.gestures.points.has(event.pointerId) ||
             this.isPictureInteraction(event)
           ) {
-            this.gestures[method](event);
+            this.gestures[method](
+              event,
+              method === 'down' && scope
+                ? {
+                    canStartScrub: (start) => this.canStartSurfaceScrub(scope, start),
+                  }
+                : undefined
+            );
           }
         } catch {
           // A recognized player can be replaced during the same touch sequence.
@@ -749,9 +913,27 @@ class IOSInlinePlayer {
       if (path.includes(this.video)) {
         return true;
       }
-      const container = this.video.vsc?.iosPlayer?.siteControls?.container;
+      const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+      const knownContainer = path.includes(known) ? known : null;
+      const container = knownContainer || this.surfaceContainer?.node;
       if (!container || !path.includes(container)) {
         return false;
+      }
+      if (!knownContainer) {
+        // Revalidate on input: feeds can recycle wrappers before reconciliation.
+        const media = container.querySelectorAll('video,audio,iframe');
+        if (
+          media.length !== 1 ||
+          media[0] !== this.video ||
+          path.some(
+            (node) =>
+              node.matches?.('[inert]') ||
+              (node.matches?.('dialog,[role="dialog"],[aria-modal="true"]') &&
+                !node.contains(this.video))
+          )
+        ) {
+          return false;
+        }
       }
       const point = event.touches?.[0] || event.changedTouches?.[0] || event;
       const rect = this.video.getBoundingClientRect();
@@ -763,14 +945,21 @@ class IOSInlinePlayer {
       )) {
         return false;
       }
-      const control = event.target.closest?.('button,a,input,select,textarea,[role="button"]');
+      const containerIndex = path.indexOf(container);
+      const control = path.find(
+        (node, index) =>
+          node.matches?.(
+            'button,a,input,select,textarea,label,summary,[role="button"],[role="slider"],[role="link"],[contenteditable]:not([contenteditable="false"])'
+          ) ||
+          (index < containerIndex && node.matches?.('[tabindex]'))
+      );
       if (!control) {
         return true;
       }
       // A full-picture button is a cover surface; retain independent site controls.
       const cover = control.getBoundingClientRect();
       return (
-        control.localName === 'button' &&
+        (control.localName === 'button' || control.getAttribute('role') === 'button') &&
         container.contains(control) &&
         cover.left <= rect.left + 1 &&
         cover.top <= rect.top + 1 &&

@@ -1,10 +1,22 @@
 # StayFast Video — iOS TestFlight
 
-Release packet updated October 25, 2026. Target: iPhone and iPad on iOS/iPadOS
+Release packet updated October 26, 2026. Target: iPhone and iPad on iOS/iPadOS
 18.4+. Archive/export, Apple upload/processing and tester availability are
 separate verification steps.
 
-## Current release preparation — October 25, 2026
+## Current release preparation — October 26, 2026
+
+**0.11.6 (23)** is the overlay-gesture candidate. Horizontal picture scrubbing
+extends through unambiguous site overlays and expanded site viewers while
+preserving independent controls, vertical swipes and pinch. Picture taps dismiss
+the speed menu; focusable player/dialog roots retain their gestures. Fallback
+ownership and the current hit target are checked again before a drag commits.
+Archive/export, Apple processing, release notes and Personal Auto availability
+must be recorded under `build/safari/testflight/0.11.6-build23/` before claiming
+distribution. Live authenticated X and physical-device checks remain separate
+from controlled browser and native simulator acceptance.
+
+## Previous release preparation
 
 **0.11.6 (22)** is the next candidate. Primary inline and fullscreen controls use
 borderless icons while retaining accessible labels and 44px touch targets. Speed

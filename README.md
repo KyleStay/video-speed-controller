@@ -185,6 +185,9 @@ hiding. Dismissing a menu starts a fresh interval. Small-player fallback buttons
 stay available. Swipe horizontally across the picture to scrub; move your finger
 up or down from where it started for finer precision. Vertical swipes still scroll
 inline pages.
+Dragging also works through ordinary site overlays in an unambiguous single-video
+area, while links and separate site controls retain their actions. If a site's
+overlay cannot be identified safely, open StayFast's Full screen player to scrub.
 Controls stay at least 44px; small or cropped players progressively
 reduce the transport controls. When the actual clipped video is smaller than
 52px on either axis, the surface hides and native/site controls return. An active
