@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { startFixtureServer } from './fixture-server.js';
 import { assert, launchChromeWithExtension, monitorPageErrors } from './e2e-utils.js';
 
-async function touch(page, resolveTarget, argument) {
+async function touch(page, resolveTarget, argument, point = { x: 0.5, y: 0.5 }) {
   const handle = await page.evaluateHandle(resolveTarget, argument);
   try {
     const bounds = await handle.asElement()?.boundingBox();
@@ -12,19 +12,26 @@ async function touch(page, resolveTarget, argument) {
       bounds && bounds.width >= 44 && bounds.height >= 44,
       'A visible 44px target is required'
     );
-    const hit = await handle.evaluate((node) => {
+    const hit = await handle.evaluate((node, point) => {
       const r = node.getBoundingClientRect();
       const root = node.getRootNode();
-      const x = r.x + r.width / 2,
-        y = r.y + r.height / 2;
+      const x = r.x + r.width * point.x,
+        y = r.y + r.height * point.y;
       const outer = node.ownerDocument.elementFromPoint(x, y);
-      return (
-        root.elementFromPoint(x, y) === node &&
-        (root === node.ownerDocument ? outer === node : outer === root.host)
-      );
-    });
-    assert.true(hit, 'The target must receive input rather than a covering element');
-    await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      const inner = root.elementFromPoint(x, y);
+      return {
+        receives:
+          inner === node && (root === node.ownerDocument ? outer === node : outer === root.host),
+        inner: `${inner?.tagName}.${inner?.className}`,
+        outer: `${outer?.tagName}.${outer?.className}`,
+        point: { x, y },
+      };
+    }, point);
+    assert.true(hit.receives, `The target must receive input: ${JSON.stringify(hit)}`);
+    await page.touchscreen.tap(
+      bounds.x + bounds.width * point.x,
+      bounds.y + bounds.height * point.y
+    );
   } finally {
     await handle.dispose();
   }
@@ -103,11 +110,16 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
         row.status = 'passed';
         console.log(`   ✅ Custom feed ${variant}: ${name}`);
       } catch (error) {
+        await mkdir(resolve('test-results/custom-feed'), { recursive: true });
+        await page
+          .screenshot({ path: resolve('test-results/custom-feed/failure.png') })
+          .catch(() => {});
         row.status = 'failed';
         row.error = error.stack || error.message;
         row.observed = await page
           .evaluate(() => ({
             state: window.__customFeedState(),
+            idle: document.querySelector('video')?.vsc?.controlsManager?.inlinePlayer?.idle,
             body: document.querySelector('#fixture-status').textContent,
             mirror: document
               .querySelector('video')
@@ -197,25 +209,49 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
       );
       await check(
         variant,
-        'timeline clears metadata while its independent link remains clickable',
+        'timeline stays at the video bottom while the metadata link remains clickable',
         async () => {
           await page.waitForFunction(() => {
             const v = document.querySelector('video');
-            return (
-              v.vsc.controlsManager.inlinePlayer.refs.timeline.getBoundingClientRect().bottom <
-              document.querySelector('#creator-link').getBoundingClientRect().top
-            );
+            const rail = v.vsc.controlsManager.inlinePlayer.refs.timeline.getBoundingClientRect();
+            const bottom = Math.min(v.getBoundingClientRect().bottom, window.innerHeight);
+            return Math.abs(rail.bottom - (bottom - 4)) < 1;
           });
           await touch(
             page,
-            () => document.querySelector('video').vsc.controlsManager.inlinePlayer.refs.timeline
+            () => document.querySelector('video').vsc.controlsManager.inlinePlayer.refs.timeline,
+            undefined,
+            { x: 0.5, y: 0.95 }
           );
           await page.waitForFunction(
             () => Math.abs(document.querySelector('video').currentTime - 30) < 0.5
           );
+          const range = await page.evaluateHandle(
+            () => document.querySelector('video').vsc.controlsManager.inlinePlayer.refs.timeline
+          );
+          const beforeKey = (await state(page)).time;
+          try {
+            await range.asElement().focus();
+            await page.keyboard.press('ArrowRight');
+          } finally {
+            await range.dispose();
+          }
+          await page.waitForFunction(
+            (before) => document.querySelector('video').currentTime > before + 0.05,
+            {},
+            beforeKey
+          );
+          const beforeLink = (await state(page)).time;
           await page.click('#creator-link');
           assert.equal((await state(page)).trace.linkClicks, 1);
-          assert.true((await state(page)).paused && !(await state(page)).owned);
+          const afterLink = await state(page);
+          assert.true(
+            afterLink.paused && !afterLink.owned && Math.abs(afterLink.time - beforeLink) < 0.05
+          );
+          await mkdir(resolve('test-results/custom-feed'), { recursive: true });
+          await page.screenshot({
+            path: resolve(`test-results/custom-feed/bottom-${variant.replaceAll(' ', '-')}.png`),
+          });
         }
       );
       await check(

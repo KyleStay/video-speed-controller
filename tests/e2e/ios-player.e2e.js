@@ -1435,51 +1435,66 @@ export default async function runIOSPlayer({
       });
       await painted(page);
     };
-    await check('inline seeking avoids local metadata without taking over its link', async () => {
-      await navigate(
-        '&standard-fullscreen&precision&feed-overlay&reveal-overlay&plain-overlay&lower-metadata'
-      );
-      await page.evaluate(() => {
-        window.__ownedOriginal.pause();
-        window.__ownedOriginal.currentTime = 20;
-      });
-      await painted(page);
-      const geometry = await page.evaluate(() => {
-        const video = window.__ownedOriginal;
-        const range = video.vsc.controlsManager.inlinePlayer.refs.timeline;
-        return {
-          rail: range.getBoundingClientRect().toJSON(),
-          metadata: document.querySelector('#player-metadata').getBoundingClientRect().toJSON(),
-        };
-      });
-      assert.true(
-        geometry.rail.height >= 44 && geometry.rail.bottom <= geometry.metadata.top - 3,
-        JSON.stringify(geometry)
-      );
-      const before = await scrollPosition(page);
-      await tapAt(page, geometry.rail.x + geometry.rail.width / 4, geometry.rail.y + 22);
-      await assertInlineProgress(page, 15);
-      const time = await page.evaluate(() => window.__ownedOriginal.currentTime);
-      await tapAt(
-        page,
-        geometry.metadata.x + geometry.metadata.width / 2,
-        geometry.metadata.y + 20
-      );
-      assert.equal(
-        await page.evaluate(() => window.__metadataClicks),
-        1,
-        'Metadata link keeps its click'
-      );
-      assert.true(
-        await page.evaluate(
-          (time) =>
-            Math.abs(window.__ownedOriginal.currentTime - time) < 0.1 &&
-            !window.__ownedOriginal.vsc.iosPlayer.active,
-          time
-        )
-      );
-      await assertScrollPosition(page, before, 'Metadata and seek remain local');
-    });
+    await check(
+      'inline seeking stays at the bottom without taking over metadata links',
+      async () => {
+        await navigate(
+          '&standard-fullscreen&precision&feed-overlay&reveal-overlay&plain-overlay&lower-metadata'
+        );
+        await page.evaluate(() => {
+          window.__ownedOriginal.pause();
+          window.__ownedOriginal.currentTime = 20;
+        });
+        await painted(page);
+        const geometry = await page.evaluate(() => {
+          const video = window.__ownedOriginal;
+          const range = video.vsc.controlsManager.inlinePlayer.refs.timeline;
+          return {
+            rail: range.getBoundingClientRect().toJSON(),
+            bottom: Math.min(video.getBoundingClientRect().bottom, innerHeight),
+            metadata: document.querySelector('#player-metadata').getBoundingClientRect().toJSON(),
+          };
+        });
+        assert.true(
+          geometry.rail.height >= 44 && Math.abs(geometry.rail.bottom - (geometry.bottom - 4)) < 1,
+          JSON.stringify(geometry)
+        );
+        const before = await scrollPosition(page);
+        const point = { x: geometry.rail.x + geometry.rail.width / 4, y: geometry.rail.bottom - 2 };
+        assert.true(
+          await page.evaluate(({ x, y }) => {
+            const range = window.__ownedOriginal.vsc.controlsManager.inlinePlayer.refs.timeline;
+            const root = range.getRootNode();
+            return (
+              root.elementFromPoint(x, y) === range && document.elementFromPoint(x, y) === root.host
+            );
+          }, point),
+          'Exposed bottom seek target receives the input'
+        );
+        await tapAt(page, point.x, point.y);
+        await assertInlineProgress(page, 15);
+        const time = await page.evaluate(() => window.__ownedOriginal.currentTime);
+        await tapAt(
+          page,
+          geometry.metadata.x + geometry.metadata.width / 2,
+          geometry.metadata.y + 20
+        );
+        assert.equal(
+          await page.evaluate(() => window.__metadataClicks),
+          1,
+          'Metadata link keeps its click'
+        );
+        assert.true(
+          await page.evaluate(
+            (time) =>
+              Math.abs(window.__ownedOriginal.currentTime - time) < 0.1 &&
+              !window.__ownedOriginal.vsc.iosPlayer.active,
+            time
+          )
+        );
+        await assertScrollPosition(page, before, 'Metadata and seek remain local');
+      }
+    );
     await check(
       'default inline timeline follows the clipped bottom through resize and unequal scaling',
       async () => {

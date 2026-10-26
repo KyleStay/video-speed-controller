@@ -213,7 +213,7 @@ describe('compact iOS inline controls', () => {
       expect(occlusion).toHaveBeenCalledTimes(2);
     });
 
-    it('moves the rail above local metadata while leaving picture overlays and modals alone', () => {
+    it('keeps the rail at the video bottom when local metadata overlaps it', () => {
       const scope = document.createElement('section');
       const picture = document.createElement('div');
       const metadata = document.createElement('a');
@@ -229,7 +229,7 @@ describe('compact iOS inline controls', () => {
       Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: hitTest });
       try {
         observer.callback();
-        expect(railRect().bottom).toBe(406);
+        expect(railRect().bottom).toBe(456);
         expect(railRect().bottom - railRect().top).toBe(44);
         expect(metadata.style.cssText).toBe('');
         hitTest.mockImplementation(() => [picture, video]);
@@ -248,7 +248,7 @@ describe('compact iOS inline controls', () => {
       }
     });
 
-    it('retains the bottom rail if local metadata leaves no lane below the top strip', () => {
+    it('keeps the bottom rail on small media with overlapping metadata', () => {
       media = { left: 20, top: 0, width: 300, height: 144, right: 320, bottom: 144 };
       const scope = document.createElement('section');
       const metadata = document.createElement('a');

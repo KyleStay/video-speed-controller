@@ -19,7 +19,8 @@ viewer, repeated owned fullscreen returns, frame controls, Fit/Fill, Lock/Unlock
 caption selection, PiP restriction gating, and replacement/recycled next clips.
 Results are saved under `test-results/custom-feed/results.json`. Each control must
 retain a 44px target and receive the real input. Media identity and feed geometry
-must survive presentation changes.
+must survive presentation changes. The timeline stays at the visible video bottom,
+including beside overlapping metadata, while independent site links retain their input.
 
 For manual browser or native Safari checks, start the shared local server:
 
