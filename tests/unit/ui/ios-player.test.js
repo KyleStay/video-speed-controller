@@ -119,10 +119,12 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(refs.duration.firstChild).toBe(durationText);
 
     video.play();
-    expect(refs.play.textContent).toBe('Pause');
+    expect(refs.play.dataset.vscIcon).toBe('pause');
+    expect(refs.play.getAttribute('aria-label')).toBe('Pause video');
     video.muted = true;
     video.dispatchEvent(new Event('volumechange'));
-    expect(refs.mute.textContent).toBe('Unmute');
+    expect(refs.mute.dataset.vscIcon).toBe('muted');
+    expect(refs.mute.getAttribute('aria-label')).toBe('Unmute video');
     video.playbackRate = 16;
     video.dispatchEvent(new Event('ratechange'));
     expect(refs.speed.value).toBe('16');
@@ -2972,7 +2974,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     const source = video.src;
     player.attach();
     player.open();
-    expect(player.ui.refs.play.textContent).toBe('Replay');
+    expect(player.ui.refs.play.dataset.vscIcon).toBe('replay');
     expect(player.ui.refs.play.getAttribute('aria-label')).toBe('Replay video');
     player.ui.refs.play.click();
 

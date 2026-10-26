@@ -706,6 +706,75 @@ export default async function runIOSPlayer({
       });
     };
     await navigate();
+    await check('borderless playback icons retain accessible names and touch targets', async () => {
+      await navigate('&takeover&standard-fullscreen');
+      await page.evaluate(() => window.__ownedOriginal.pause());
+      for (const presentation of ['inline', 'fullscreen']) {
+        if (presentation === 'fullscreen') {
+          await tapInline(page, '.inline-fullscreen');
+          await page.waitForFunction(() => window.__ownedOriginal.vsc.iosPlayer.active);
+        }
+        const controls = await page.evaluate((mode) => {
+          const video = window.__ownedOriginal;
+          const owner = video.vsc.iosPlayer;
+          const inline = video.vsc.controlsManager.inlinePlayer;
+          const buttons =
+            mode === 'fullscreen'
+              ? [
+                  'done',
+                  'lock',
+                  'fullscreen',
+                  'back',
+                  'play',
+                  'forward',
+                  'preferred',
+                  'fit',
+                  'mute',
+                  'more',
+                ].map((ref) => owner.ui.refs[ref])
+              : [
+                  inline.refs.play,
+                  inline.refs.rewind,
+                  inline.refs.forward,
+                  inline.refs.mute,
+                  inline.shadow.querySelector('.inline-fullscreen'),
+                ];
+          return buttons
+            .filter((node) => node && node.getClientRects().length)
+            .map((node) => {
+              const style = getComputedStyle(node);
+              const rect = node.getBoundingClientRect();
+              return {
+                label: node.getAttribute('aria-label'),
+                icon: node.querySelector('svg[aria-hidden="true"]') !== null,
+                background: style.backgroundColor,
+                border:
+                  style.borderTopWidth === '0px' || style.borderTopColor === 'rgba(0, 0, 0, 0)',
+                width: rect.width,
+                height: rect.height,
+              };
+            });
+        }, presentation);
+        assert.true(controls.length >= 3, `${presentation} controls must be visible`);
+        assert.true(
+          controls.every(
+            (control) =>
+              control.label &&
+              control.icon &&
+              control.background === 'rgba(0, 0, 0, 0)' &&
+              control.border &&
+              control.width >= 44 &&
+              control.height >= 44
+          ),
+          JSON.stringify(controls)
+        );
+        await page.screenshot({
+          path: resolve(`tests/e2e/screenshots/ios-icons-${presentation}.png`),
+        });
+      }
+      await tapPlayer(page, 'done');
+      await navigate();
+    });
     for (const presentation of ['inline', 'overlay', 'fullscreen']) {
       await check(`video-surface precision scrubbing in ${presentation}`, async () => {
         await navigate(
@@ -860,7 +929,7 @@ export default async function runIOSPlayer({
             let parent = document.body;
             if (name !== 'document') {
               const host = document.createElement('section');
-              host.id = `surface-${  name}`;
+              host.id = `surface-${name}`;
               host.style.cssText = 'width:360px;height:220px;';
               document.body.prepend(host);
               parent = host.attachShadow({ mode: 'open' });

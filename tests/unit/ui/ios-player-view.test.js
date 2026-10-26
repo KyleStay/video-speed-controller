@@ -19,11 +19,13 @@ describe('owned iOS player view', () => {
     parsedStyle.remove();
   });
 
-  function styleFor(selector) {
+  function styleFor(selector, property) {
     const rule = Array.from(parsedStyle.sheet.cssRules)
       .reverse()
-      .find((entry) =>
-        entry.selectorText?.split(',').some((candidate) => candidate.trim() === selector)
+      .find(
+        (entry) =>
+          entry.selectorText?.split(',').some((candidate) => candidate.trim() === selector) &&
+          (!property || entry.style.getPropertyValue(property))
       );
     expect(rule, `Missing view style: ${selector}`).toBeTruthy();
     return rule.style;
@@ -49,12 +51,43 @@ describe('owned iOS player view', () => {
     expect(unlock.hidden).toBe(true);
     expect(unlock.parentElement).toBe(view.screen);
     expect(unlock.closest('.hud')).toBeNull();
-    const style = styleFor('.unlock');
+    const style = styleFor('.unlock', 'position');
     expect(style.getPropertyValue('position')).toBe('absolute');
     expect(style.getPropertyValue('min-width')).toBe('44px');
     expect(style.getPropertyValue('min-height')).toBe('44px');
     expect(style.getPropertyValue('top')).toContain('env(safe-area-inset-top)');
     expect(style.getPropertyValue('right')).toContain('env(safe-area-inset-right)');
+  });
+
+  it('uses decorative icons with accessible names and numeric speed controls', () => {
+    for (const ref of [
+      'done',
+      'lock',
+      'unlock',
+      'fullscreen',
+      'back',
+      'play',
+      'forward',
+      'preferred',
+      'fit',
+      'mute',
+      'more',
+    ]) {
+      const button = view.refs[ref];
+      expect(button.getAttribute('aria-label')).toBeTruthy();
+      const icon = button.querySelector('svg');
+      expect(icon?.getAttribute('aria-hidden')).toBe('true');
+      expect(icon?.getAttribute('focusable')).toBe('false');
+      expect(button.childNodes).toHaveLength(1);
+    }
+    expect(view.refs.normal.textContent).toBe('1×');
+    expect(view.refs.native.textContent).toBe('Apple player');
+    expect(styleFor('.transport button', 'background').getPropertyValue('background')).toBe(
+      'transparent'
+    );
+    const icon = view.refs.play.firstChild;
+    window.VSC.ShadowDOMManager.setControlIcon(view.refs.play, 'play');
+    expect(view.refs.play.firstChild).toBe(icon);
   });
 
   it('makes lock override focus-based HUD reveal while preserving the standalone unlock', () => {

@@ -342,8 +342,8 @@ class IOSPlayerFullscreen {
       const button = this.ui.refs.fullscreen;
       const owned = this.owns();
       button.hidden = !owned && !this.available();
-      button.textContent = owned ? 'Exit full screen' : 'Full screen';
-      button.setAttribute('aria-label', button.textContent);
+      window.VSC.ShadowDOMManager.setControlIcon(button, owned ? 'contract' : 'expand');
+      button.setAttribute('aria-label', owned ? 'Exit full screen' : 'Full screen');
       button.setAttribute('aria-pressed', String(owned));
     } catch {
       // Optional chrome must not prevent media cleanup or fullscreen settlement.

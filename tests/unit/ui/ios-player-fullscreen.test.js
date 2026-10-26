@@ -94,7 +94,8 @@ describe('owned DOM fullscreen', () => {
       expect(request.mock.contexts[0]).toBe(screen);
       await flush();
       expect(state.restore).toHaveBeenCalledOnce();
-      expect(ui.refs.fullscreen.textContent).toBe('Exit full screen');
+      expect(ui.refs.fullscreen.dataset.vscIcon).toBe('contract');
+      expect(ui.refs.fullscreen.getAttribute('aria-label')).toBe('Exit full screen');
       expect(ui.refs.fullscreen.getAttribute('aria-pressed')).toBe('true');
       expect(video.parentNode).toBe(screen);
       expect(video.playbackRate).toBe(1.5);
@@ -107,7 +108,8 @@ describe('owned DOM fullscreen', () => {
       expect(state.cancel).toHaveBeenCalledOnce();
       expect(owner.active).toBe(true);
       expect(ui.host.isConnected).toBe(true);
-      expect(ui.refs.fullscreen.textContent).toBe('Full screen');
+      expect(ui.refs.fullscreen.dataset.vscIcon).toBe('expand');
+      expect(ui.refs.fullscreen.getAttribute('aria-label')).toBe('Full screen');
     }
   );
 
@@ -164,7 +166,8 @@ describe('owned DOM fullscreen', () => {
     const { helper, ui, screen, exit } = setup();
     property(ui.shadow, 'fullscreenElement', screen);
     helper.updateButton();
-    expect(ui.refs.fullscreen.textContent).toBe('Exit full screen');
+    expect(ui.refs.fullscreen.dataset.vscIcon).toBe('contract');
+    expect(ui.refs.fullscreen.getAttribute('aria-label')).toBe('Exit full screen');
     const unrelated = document.createElement('section');
     document.body.append(unrelated);
     document.fullscreenElement = unrelated;
@@ -182,7 +185,8 @@ describe('owned DOM fullscreen', () => {
     document.dispatchEvent(new Event('fullscreenchange'));
     expect(owner.active).toBe(true);
     expect(ui.host.isConnected).toBe(true);
-    expect(ui.refs.fullscreen.textContent).toBe('Full screen');
+    expect(ui.refs.fullscreen.dataset.vscIcon).toBe('expand');
+    expect(ui.refs.fullscreen.getAttribute('aria-label')).toBe('Full screen');
     expect(owner.position).toHaveBeenCalledOnce();
     window.dispatchEvent(new Event('resize'));
     expect(owner.position).toHaveBeenCalledTimes(2);

@@ -13,6 +13,12 @@ edge. Its visible track is 3px with a 12px thumb; the slider retains a 44px touc
 region and distance-based precision scrubbing. Progress follows both playback and
 the pending scrub preview, including nonzero live seek bounds.
 
+Primary inline and fullscreen actions use borderless icons with accessible names
+and at least 44px touch targets. Speed and time stay numeric; additional options
+retain descriptive labels. The star sets preferred speed, the padlock locks
+controls, the ellipsis opens More, and the close (×) icon returns to the page.
+Icon shadows preserve contrast over the picture.
+
 ## Inline timeline and precision gestures
 
 The inline seek rail is independently positioned at the clipped video's bottom,
@@ -498,7 +504,7 @@ evidence below does not verify this change.
   overflowing a speed pill. The popover uses compact, non-stretching rows and
   can collapse to one column with wrapped labels.
 - The viewing surface provides play/pause/replay, ±10-second seek, a timeline,
-  speed selection, absolute **1×**/**Pref**, Fit/Fill, and mute. **More** reveals
+  speed selection, absolute **1×**/preferred speed (star), Fit/Fill, and mute. **More** reveals
   available caption/audio-language choices, supported system controls, and
   **Use site player**. Escape closes More before dismissing the player. It keeps
   the original media element and sources, including an existing streaming session. Known
@@ -526,7 +532,7 @@ evidence below does not verify this change.
   iPhone system/hardware volume remains available. PiP/AirPlay controls require
   the corresponding system capability and honor disabled-presentation flags,
   including changes made after the player opens.
-- **Done** returns the video to the page while keeping the inline StayFast
+- The close (×) icon returns the video to the page while keeping the inline StayFast
   controls. Tap **Custom Player** to reopen. **Use site player** restores the
   site's attributes and native API methods.
   If a site moves the playing video itself, StayFast returns presentation control

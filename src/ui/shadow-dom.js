@@ -5,6 +5,33 @@
 window.VSC = window.VSC || {};
 
 class ShadowDOMManager {
+  static controlIcons = {
+    play: '<path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/>',
+    pause: '<path d="M7 5h3v14H7zm7 0h3v14h-3z" fill="currentColor" stroke="none"/>',
+    replay: '<path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/>',
+    back: '<path d="M8 3 4 7l4 4M4 7h8a8 8 0 0 1 8 8"/><text x="11" y="21" stroke="none" fill="currentColor" font-size="11" font-family="system-ui" text-anchor="middle">10</text>',
+    forward:
+      '<path d="m16 3 4 4-4 4m4-4h-8a8 8 0 0 0-8 8"/><text x="13" y="21" stroke="none" fill="currentColor" font-size="11" font-family="system-ui" text-anchor="middle">10</text>',
+    sound: '<path d="M11 4 6 8H3v8h3l5 4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+    muted: '<path d="M11 4 6 8H3v8h3l5 4Zm5 5 5 6m0-6-5 6"/>',
+    close: '<path d="m6 6 12 12M6 18 18 6"/>',
+    lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+    unlock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0"/>',
+    expand: '<path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/>',
+    contract: '<path d="M3 9h6V3m12 6h-6V3M9 21v-6H3m12 6v-6h6"/>',
+    preferred: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  };
+
+  /** Static artwork only; keep the button's accessible name on its owner. */
+  static setControlIcon(button, name) {
+    if (button.dataset.vscIcon === name) {
+      return;
+    }
+    button.innerHTML = `<svg class="vsc-control-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${this.controlIcons[name]}</svg>`;
+    button.dataset.vscIcon = name;
+  }
+
   /**
    * Create shadow DOM for video controller
    * @param {HTMLElement} wrapper - Wrapper element
@@ -307,9 +334,10 @@ class ShadowDOMManager {
         overflow: hidden;
         line-height: 1;
         font-size: var(--vsc-inline-font-size, 13px) !important;
-        border: 1px solid #94cbdd33;
+        border: 0;
         border-radius: 10px;
-        background: rgba(5, 24, 39, 0.76);
+        background: transparent;
+        text-shadow: 0 1px 3px #000, 0 0 8px #000;
       }
 
       :host([data-vsc-ios-inline]) .draggable::after {
@@ -331,9 +359,9 @@ class ShadowDOMManager {
         min-height: 44px;
         align-items: center;
         justify-content: center;
-        border: 1px solid #94cbdd33;
+        border: 0;
         border-radius: 10px;
-        background: rgba(5, 24, 39, 0.76);
+        background: transparent;
         font-size: 18px;
       }
 
@@ -401,13 +429,29 @@ class ShadowDOMManager {
         justify-content: center;
         margin: 0;
         padding: calc(4px / var(--vsc-inline-scale-y, 1)) calc(4px / var(--vsc-inline-scale-x, 1));
-        border: 1px solid #94cbdd33;
+        border: 0;
         border-radius: 8px;
-        background: rgba(5, 24, 39, 0.86);
+        background: transparent;
         color: #fff;
         font-size: calc(13px / var(--vsc-inline-scale-y, 1)) !important;
         line-height: 1;
         touch-action: manipulation;
+      }
+      .vsc-control-icon {
+        display: block;
+        width: 24px;
+        height: 24px;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px #000) drop-shadow(0 0 4px #0009);
+      }
+      :host([data-vsc-inline-owned]) .vsc-control-icon {
+        width: calc(24px / var(--vsc-inline-scale-x, 1));
+        height: calc(24px / var(--vsc-inline-scale-y, 1));
+      }
+      :host([data-vsc-ios-inline]) .inline-fullscreen:active,
+      :host([data-vsc-inline-owned]) button.inline-owned-control:active {
+        background: transparent;
+        color: #67e8f9;
       }
       :host([data-vsc-ios-inline][data-vsc-inline-owned]) .draggable {
         display: inline-flex;
@@ -551,7 +595,7 @@ class ShadowDOMManager {
     fullscreen.dataset.action = 'ownedFullscreen';
     fullscreen.setAttribute('aria-label', 'Open video fullscreen');
     fullscreen.setAttribute('title', 'Open video fullscreen');
-    fullscreen.textContent = '⛶';
+    this.setControlIcon(fullscreen, 'expand');
     controller.appendChild(fullscreen);
 
     // Create controls span
