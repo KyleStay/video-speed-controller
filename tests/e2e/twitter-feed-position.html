@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Controlled feed position regression</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px system-ui;
+        background: #eef4f8;
+      }
+      article {
+        padding: 12px;
+        border-bottom: 1px solid #99a;
+      }
+      p {
+        margin: 8px 0;
+      }
+      .embed {
+        padding: 8px;
+        overflow: hidden;
+        background: #111;
+      }
+      video {
+        display: block;
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        margin: var(--media-margin, 0px) 0;
+      }
+      #next-post {
+        min-height: 80px;
+      }
+      body.nested {
+        padding-top: 700px;
+        padding-bottom: 180px;
+      }
+      .nested #feed {
+        height: 640px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="feed" aria-label="Controlled feed">
+      <article id="current-post" data-post-id="123">
+        <p>Post 123</p>
+        <div class="embed">
+          <video id="feed-video" controls muted loop preload="auto" src="/__feed.webm"></video>
+        </div>
+        <p>End of post 123</p>
+      </article>
+      <article id="next-post" data-post-id="124">Post 124</article>
+    </main>
+    <script>
+      const query = new URLSearchParams(location.search);
+      document.body.classList.toggle('nested', query.has('nested'));
+      document.body.style.setProperty('--media-margin', query.has('margin') ? '30px' : '0px');
+      const current = document.querySelector('#current-post');
+      for (let index = 0; index < 16; index++) {
+        const post = document.createElement('article');
+        const text = document.createElement('p');
+        text.textContent =
+          `Earlier post ${index}. ` + 'Natural feed content. '.repeat(4 + (index % 5));
+        post.append(text);
+        current.before(post);
+      }
+      window.__feedVideo = document.querySelector('#feed-video');
+      window.__feedPosition = () => {
+        const feed = document.querySelector('#feed');
+        const tweet = document.querySelector('#current-post');
+        const rect = tweet.getBoundingClientRect();
+        return {
+          post: tweet.dataset.postId,
+          nestedFeed: query.has('nested'),
+          page: scrollY,
+          nested: feed.scrollTop,
+          maxPage: document.scrollingElement.scrollHeight - innerHeight,
+          maxNested: feed.scrollHeight - feed.clientHeight,
+          top: rect.top,
+          height: rect.height,
+          nextTop: document.querySelector('#next-post').getBoundingClientRect().top,
+          active: !!window.__feedVideo.vsc?.iosPlayer?.active,
+          sameVideo: document.querySelector('#feed-video') === window.__feedVideo,
+        };
+      };
+      if (query.has('native')) {
+        const panel = document.createElement('div');
+        panel.style.cssText = 'position:fixed;top:0;left:0;z-index:999999;background:white';
+        panel.innerHTML =
+          '<button style="min-height:44px">Prepare feed baseline</button><div role="status"></div><textarea aria-label="Feed position trace" readonly style="height:44px;width:200px"></textarea>';
+        document.body.append(panel);
+        const trace = [];
+        let entry = 0,
+          errors = 0;
+        const sample = (phase) => {
+          trace.push({ entry, phase, ...window.__feedPosition() });
+          panel.querySelector('textarea').value = JSON.stringify(trace);
+          panel.querySelector('[role="status"]').textContent =
+            `Feed position: ready: ${window.__feedVideo.readyState}; controller: ${!!window.__feedVideo.vsc}; entry: ${entry}; active: ${!!window.__feedVideo.vsc?.iosPlayer?.active}; errors: ${errors}`;
+        };
+        const settledSample = (phase) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => sample(phase)));
+        window.addEventListener('error', () => {
+          errors++;
+          sample('error');
+        });
+        window.__feedVideo.addEventListener('loadeddata', () => sample('loaded'));
+        panel.querySelector('button').onclick = async () => {
+          try {
+            await window.__feedVideo.play();
+            window.__feedVideo.pause();
+          } catch {
+            errors++;
+          }
+          if (query.has('nested'))
+            document.querySelector('#feed').scrollTop =
+              document.querySelector('#feed').scrollHeight;
+          window.scrollTo(0, query.has('nested') ? 650 : document.scrollingElement.scrollHeight);
+          settledSample('prepared');
+        };
+        document.addEventListener(
+          'click',
+          (event) => {
+            const path = event.composedPath();
+            if (path.some((node) => node.classList?.contains('inline-fullscreen'))) {
+              entry++;
+              sample('before');
+              settledSample('open');
+            } else if (path.includes(window.__feedVideo.vsc?.iosPlayer?.ui?.refs.done)) {
+              settledSample('closed');
+            }
+          },
+          true
+        );
+      }
+    </script>
+  </body>
+</html>

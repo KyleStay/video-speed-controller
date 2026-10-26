@@ -20,6 +20,7 @@ import runTwitterVisual from './twitter-visual.e2e.js';
 import runVideoDiagnostics from './video-diagnostics.e2e.js';
 import runTwitterPristine from './twitter-pristine.e2e.js';
 import runTwitterModernPlayer from './twitter-modern-player.e2e.js';
+import runFeedPosition from './twitter-feed-position.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
@@ -40,6 +41,7 @@ const suites = {
   'video-diagnostics': runVideoDiagnostics,
   'twitter-pristine': runTwitterPristine,
   'twitter-modern': runTwitterModernPlayer,
+  'twitter-feed-position': runFeedPosition,
 };
 const externalSuites = {
   fixtures: ['tests/e2e/run-browser-fixtures.js', 'all'],

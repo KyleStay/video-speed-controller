@@ -11,6 +11,7 @@ targets:
       - SafariQATests.swift
       - OwnedPlayerQATests.swift
       - ScrollQATests.swift
+      - FeedPositionQATests.swift
       - InlinePlaybackQATests.swift
       - FeedPlaybackQATests.swift
       - LayoutFeedQATests.swift

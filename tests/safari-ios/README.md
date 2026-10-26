@@ -130,6 +130,27 @@ Qorvex 0.2.14 agent port was occupied by another simulator. It does not change
 global Qorvex configuration, interact with another simulator, activate the macOS
 Simulator window, or use desktop mouse/keyboard input.
 
+## Feed-position regression without a physical device
+
+`FeedPositionQATests/testNearEndFeedPosition` uses the same natural-flow fixture
+as the built Chrome `twitter-feed-position` suite. Open
+`/feed-position.html?native&margin` and then `?native&margin&nested` in separate
+runs. Require decoded/readied media, page or nested position at a nonzero scroll
+maximum, two genuine Full screen → Close transitions, the same post/video and
+unchanged post/neighbor geometry and offsets within two CSS pixels. Retain the
+JSON trace and screenshots from each result bundle. A fixed-height article or a
+long empty tail would hide the original margin/clamping regression.
+
+The native harness includes a documented coordinate fallback only when WebKit's
+accessibility rectangle for the inline fullscreen button incorrectly extends
+far above the visible button in a nested scroller; the visible 44px target is at
+that rectangle's bottom. This is background device-level XCTest input, without
+macOS desktop clicks. It must still produce the observed before/open/closed
+trace and pass all geometry assertions. A successful tap alone is insufficient.
+
+These are controlled Safari simulator checks; live Twitter acceptance remains
+separate. Include `FeedPositionQATests.swift` when copying the QA sources below.
+
 ## X playback above 2× — current regression fixture
 
 `TwitterPlaybackQATests` uses `/twitter-playback.html` with the public X clip
@@ -182,7 +203,7 @@ xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.mobilesafari
 xcrun simctl terminate "$STAYFAST_SIMULATOR_UDID" com.apple.Preferences
 xcrun simctl install "$STAYFAST_SIMULATOR_UDID" "build/safari/ios-simulator/Build/Products/Release-iphonesimulator/StayFast Video.app"
 mkdir -p build/safari-ios-qa test-results/safari-ios
-cp tests/safari-ios/project.yml tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift tests/safari-ios/TwitterPlaybackQATests.swift tests/safari-ios/HLSPlayerQATests.swift build/safari-ios-qa/
+cp tests/safari-ios/project.yml tests/safari-ios/SafariQATests.swift tests/safari-ios/OwnedPlayerQATests.swift tests/safari-ios/ScrollQATests.swift tests/safari-ios/FeedPositionQATests.swift tests/safari-ios/InlinePlaybackQATests.swift tests/safari-ios/FeedPlaybackQATests.swift tests/safari-ios/LayoutFeedQATests.swift tests/safari-ios/DiagnosticCaptureQATests.swift tests/safari-ios/TwitterPlaybackQATests.swift tests/safari-ios/HLSPlayerQATests.swift build/safari-ios-qa/
 xcodegen generate --spec build/safari-ios-qa/project.yml
 ```
 

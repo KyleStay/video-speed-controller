@@ -117,6 +117,7 @@ class IOSPlayer {
         }
       });
     }
+    let documentFullscreen = false;
     const sourceReset = () => {
       // A verified rendition change retains this exact clip and presentation.
       // Site replacements still invalidate every old-resource resume/scroll flag.
@@ -126,6 +127,7 @@ class IOSPlayer {
       // Feeds reuse media nodes. Presentation and scroll restoration belong to
       // the old resource, never to the next item loaded into the same element.
       this.nativeGeneration++;
+      documentFullscreen = false;
       this.resumeAfterPip = false;
       this.resumeOnShow = false;
       this.nativeScroll?.cancel();
@@ -143,7 +145,8 @@ class IOSPlayer {
     };
     this.listen(this.video, 'emptied', sourceReset);
     this.listen(this.video, 'loadstart', sourceReset);
-    const nativeBegan = () => {
+    const nativeBegan = (documentSession = false) => {
+      documentFullscreen = documentSession;
       this.nativeGeneration++;
       // Safari may already have moved the page when this event arrives. Only
       // enterNativeFullscreen can capture a reliable pre-entry scroll snapshot.
@@ -155,19 +158,25 @@ class IOSPlayer {
       this.scrollRestore?.cancel();
     };
     const nativeEnded = () => {
+      documentFullscreen = false;
       this.nativeSession = false;
       this.nativeGeneration++;
       this.controller.repairDOMPlacement?.();
       this.restoreNativeScroll();
       this.prepareMedia();
     };
-    this.listen(this.video, 'webkitbeginfullscreen', nativeBegan);
+    this.listen(this.video, 'webkitbeginfullscreen', () => nativeBegan());
     this.listen(this.video, 'webkitendfullscreen', nativeEnded);
     this.listen(this.doc, 'fullscreenchange', () => {
       if (this.doc.fullscreenElement === this.video) {
-        nativeBegan();
-      } else if (this.nativeSession && !this.doc.fullscreenElement) {
-        nativeEnded();
+        nativeBegan(true);
+      } else if (documentFullscreen && !this.doc.fullscreenElement) {
+        // An older owned-container exit may arrive after Apple-player entry.
+        // Only a document fullscreen session for this video can end here.
+        documentFullscreen = false;
+        if (this.nativeSession) {
+          nativeEnded();
+        }
       }
     });
     const presentationChanged = () => {
@@ -719,6 +728,15 @@ class IOSPlayer {
     this.anchor = this.doc.createComment('StayFast player origin');
     this.placeholder = this.doc.createElement('span');
     this.placeholder.style.cssText = `display:block;width:${Math.max(0, rect.width)}px;max-width:100%;height:${Math.max(0, rect.height)}px;pointer-events:none;`;
+    // Margins contribute to the feed's scroll range too. Losing them can clamp
+    // a page/nested scroller at its end before the entry snapshot can restore it.
+    const portalStyle = this.view.getComputedStyle(this.portalNode);
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      this.placeholder.style.setProperty(
+        `margin-${side}`,
+        portalStyle.getPropertyValue(`margin-${side}`)
+      );
+    }
     this.originParent.insertBefore(this.anchor, this.portalNode);
     this.originParent.insertBefore(this.placeholder, this.portalNode);
     this.originalSlot = this.portalNode.getAttribute('slot');
