@@ -313,6 +313,88 @@ describe('iOS player ownership, playback, and restoration', () => {
       expect(player.nativeScroll).toBeNull();
     });
 
+    it('retains Apple scroll ownership when an older owned-container fullscreen exit arrives', () => {
+      const { player, video } = makeController();
+      const scroll = scrollingWindow();
+      video.webkitEnterFullscreen = vi.fn(() => {
+        scroll.move(0, 0);
+        video.dispatchEvent(new Event('webkitbeginfullscreen'));
+      });
+      player.attach();
+      expect(player.open()).toBe(true);
+      expect(player.enterNativeFullscreen()).toBe(true);
+      const snapshot = player.nativeScroll;
+      expect(snapshot).toBeTruthy();
+      // Closing the old owned DOM fullscreen can settle after native entry.
+      document.dispatchEvent(new Event('fullscreenchange'));
+      expect(player.nativeSession).toBe(true);
+      expect(player.nativeScroll).toBe(snapshot);
+      expect(scroll.read()).toEqual([0, 0]);
+      video.dispatchEvent(new Event('webkitendfullscreen'));
+      expect(player.nativeSession).toBe(false);
+      expect(player.nativeScroll).toBeNull();
+      expect(scroll.read()).toEqual([25, 650]);
+    });
+
+    it.each(['emptied', 'loadstart'])(
+      'does not apply an old document fullscreen exit to a new source after %s',
+      (event) => {
+        const { player, video } = makeController();
+        const scroll = scrollingWindow();
+        video.webkitEnterFullscreen = vi.fn(() =>
+          video.dispatchEvent(new Event('webkitbeginfullscreen'))
+        );
+        player.attach();
+        let fullscreen = video;
+        Object.defineProperty(document, 'fullscreenElement', {
+          configurable: true,
+          get: () => fullscreen,
+        });
+        try {
+          document.dispatchEvent(new Event('fullscreenchange'));
+          video.dispatchEvent(new Event(event));
+          scroll.move(25, 750);
+          expect(player.enterNativeFullscreen()).toBe(true);
+          const snapshot = player.nativeScroll;
+          scroll.move(0, 0);
+          fullscreen = null;
+          document.dispatchEvent(new Event('fullscreenchange'));
+          expect(player.nativeSession).toBe(true);
+          expect(player.nativeScroll).toBe(snapshot);
+          expect(scroll.read()).toEqual([0, 0]);
+          video.dispatchEvent(new Event('webkitendfullscreen'));
+          expect(scroll.read()).toEqual([25, 750]);
+          expect(player.nativeScroll).toBeNull();
+        } finally {
+          delete document.fullscreenElement;
+        }
+      }
+    );
+
+    it('still restores a native video session entered through document fullscreen events', () => {
+      const { player, video } = makeController();
+      const scroll = scrollingWindow();
+      video.webkitEnterFullscreen = vi.fn();
+      player.attach();
+      expect(player.enterNativeFullscreen()).toBe(true);
+      let fullscreen = video;
+      Object.defineProperty(document, 'fullscreenElement', {
+        configurable: true,
+        get: () => fullscreen,
+      });
+      try {
+        document.dispatchEvent(new Event('fullscreenchange'));
+        scroll.move(0, 0);
+        fullscreen = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        expect(player.nativeSession).toBe(false);
+        expect(player.nativeScroll).toBeNull();
+        expect(scroll.read()).toEqual([25, 650]);
+      } finally {
+        delete document.fullscreenElement;
+      }
+    });
+
     it('does not invent a scroll snapshot from an unsolicited native begin after Safari has jumped', () => {
       const { player, video } = makeController();
       const scroll = scrollingWindow();

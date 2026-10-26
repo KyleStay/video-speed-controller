@@ -6,6 +6,20 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+**0.11.6 (26)** is the feed-position candidate for SF-TW-4. The owned fullscreen
+placeholder retains the original media's margins, preserving the scroll range
+near the end of a page or nested feed. A delayed exit from an older owned
+fullscreen container cannot end a newer Apple-player session or consume its
+scroll snapshot, including after a feed reuses the video source. Device-free
+browser and native Safari simulator regression coverage is documented in
+[Safari acceptance](safari.md#open-twitter-regressions). This verifies controlled
+layout/event failures; authenticated live Twitter acceptance remains separate.
+Record reviewed source, archive/export, upload, notes and Personal Auto
+availability under `build/safari/testflight/0.11.6-build26/` before claiming
+distribution.
+
+## Previous Twitter regression candidate
+
 **0.11.6 (25)** is the Twitter regression candidate. It prefers the current
 player's explicitly supplied 720p rendition over its 1080p download, restores
 picture seeking through recognized focusable X surfaces inside navigable tweets,

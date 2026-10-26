@@ -26,16 +26,16 @@ Keep the original report separate from a passing controlled fixture. A fix must
 retain repeatable regression coverage and record the exact browser, device,
 source build and observed result before its status becomes verified.
 
-| ID      | Reported behavior                                                                                                         | Required acceptance                                                                                                                                                                                                                                                                                                                      | Status                                                                                                                                                                               |
-| ------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| SF-TW-1 | Picture freezes or stutters at any speed above 2× in iOS Safari Twitter videos.                                           | Check 2×, 2.1× and 4× on an affected post, decoded frame cadence and media-time progress, audible output, same-clip rendition selection, scroll/pause retention and the next feed clip. A numeric playback rate or one 720p fixture alone is insufficient.                                                                               | Candidate fix selects the same player's supplied 720p variants before its 1080p download. Native 2.1×/4× fixture passes; live affected-post/device acceptance remains open.          |
-| SF-TW-2 | Picture-swipe seeking regressed for videos embedded in tweets in the normal feed, after overlay/viewer support was added. | A navigable tweet wrapper and focusable X picture trigger must allow a genuine horizontal seek. Retain vertical page scrolling, pinch, small buttons/links, normal playback and the existing generic overlay/expanded-viewer cases.                                                                                                      | Candidate fix reuses exact X picture recognition. Controlled browser horizontal seek passes with a navigable tweet wrapper and focusable trigger; live feed acceptance remains open. |
-| SF-TW-3 | Twitter's mute action is difficult to reach.                                                                              | A 300px embedded player must expose a visible mute/unmute action with a measured 44px target, without seeking, opening fullscreen or changing playback. Verify responsive boundaries and keep independent site controls usable.                                                                                                          | Candidate fix retains mute at 240px width/96px height. Controlled 300px mute/unmute taps pass with 44px targets; live acceptance remains open.                                       |
-| SF-TW-4 | Opening a video fullscreen must not lose the user's place in the normal Twitter feed.                                     | Enter fullscreen from a partially visible embedded video well down the feed, then return using StayFast Close and any available browser exit. Keep the same tweet and its visible offset on entry and return, including repeated transitions and rotation. Check page and nested scrolling; preserve deliberate navigation or scrolling. | Open. Existing page/nested-scroll and controlled X fixture checks do not establish normal-feed acceptance.                                                                           |
+| ID      | Reported behavior                                                                                                         | Required acceptance                                                                                                                                                                                                                                                                                                                      | Status                                                                                                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SF-TW-1 | Picture freezes or stutters at any speed above 2× in iOS Safari Twitter videos.                                           | Check 2×, 2.1× and 4× on an affected post, decoded frame cadence and media-time progress, audible output, same-clip rendition selection, scroll/pause retention and the next feed clip. A numeric playback rate or one 720p fixture alone is insufficient.                                                                               | Candidate fix selects the same player's supplied 720p variants before its 1080p download. Native 2.1×/4× fixture passes; live affected-post/device acceptance remains open.                         |
+| SF-TW-2 | Picture-swipe seeking regressed for videos embedded in tweets in the normal feed, after overlay/viewer support was added. | A navigable tweet wrapper and focusable X picture trigger must allow a genuine horizontal seek. Retain vertical page scrolling, pinch, small buttons/links, normal playback and the existing generic overlay/expanded-viewer cases.                                                                                                      | Candidate fix reuses exact X picture recognition. Controlled browser horizontal seek passes with a navigable tweet wrapper and focusable trigger; live feed acceptance remains open.                |
+| SF-TW-3 | Twitter's mute action is difficult to reach.                                                                              | A 300px embedded player must expose a visible mute/unmute action with a measured 44px target, without seeking, opening fullscreen or changing playback. Verify responsive boundaries and keep independent site controls usable.                                                                                                          | Candidate fix retains mute at 240px width/96px height. Controlled 300px mute/unmute taps pass with 44px targets; live acceptance remains open.                                                      |
+| SF-TW-4 | Opening a video fullscreen must not lose the user's place in the normal Twitter feed.                                     | Enter fullscreen from a partially visible embedded video well down the feed, then return using StayFast Close and any available browser exit. Keep the same tweet and its visible offset on entry and return, including repeated transitions and rotation. Check page and nested scrolling; preserve deliberate navigation or scrolling. | Candidate fixes preserve placeholder margins and isolate document-video fullscreen exits. Natural-flow page/nested browser and iOS simulator checks pass; live normal-feed acceptance remains open. |
 
 The resolver and inline-player unit suites cover the candidate changes for
-SF-TW-1 through SF-TW-3. SF-TW-4 still needs a normal-feed reproducer and regression
-coverage. Native fixture and browser evidence belongs with the corresponding
+SF-TW-1 through SF-TW-3. SF-TW-4 has device-free layout and native-event regression
+coverage described below. Native fixture and browser evidence belongs with the corresponding
 test run; a prepared or uploaded build does not close the original live-site
 report.
 
@@ -52,9 +52,33 @@ not prove the same place in a dynamically laid-out feed. The owned player retain
 a placeholder and bounded scroll snapshots; closing currently refreshes offsets
 to preserve newer page/site movement. Investigate presentation-induced layout or
 scroll changes separately from deliberate movement before changing that policy.
-Live input and fullscreen acceptance currently require access to the affected
-feed on an unlocked device; a passing synthetic fixture is supporting coverage,
-not closure of either report.
+Device-free SF-TW-4 verification now uses a natural-flow feed near its page or
+nested scroll-range end. The original placeholder omitted media margins: a 30px
+margin on each vertical side shortened the feed by 60px, clamped scrolling and
+left the tweet displaced after return. The placeholder now retains all four
+margins. Native fullscreen events also distinguish an observed document-video
+session from an older owned-container exit, resetting that distinction when a
+feed reuses the video source. This prevents a delayed container exit from
+consuming a newer Apple-player scroll snapshot.
+
+In an owned source copy, build with `npm run build:release` and run
+`node tests/e2e/run-isolated.js twitter-feed-position`. The built extension
+checks tweet identity, viewport position, neighboring-post geometry and page/
+nested offsets at the scroll-range end, twice per case and through a
+portrait–landscape–portrait cycle. Zero-margin controls and 30px-margin
+regressions are both required. The old source fails both margin cases by 60px;
+the candidate passes all four. `FeedPositionQATests/testNearEndFeedPosition`
+uses the same fixture geometry in native iOS Safari with an MP4; it requires
+ready media, a nonzero range and a genuine near-end entry boundary. Page and
+nested runs pass on the iPhone 17 Pro/iOS 26.2 simulator. Source-reset and
+delayed-exit event ordering are covered by ownership unit tests.
+
+These controlled checks establish repeatable regressions without physical
+hardware. The authenticated live Twitter feed and other site-induced layout/
+virtualization changes remain separate acceptance checks; neither this fixture
+nor a TestFlight upload closes that original report. Evidence is retained under
+`test-results/twitter-feed-position/`, with the simulator result bundles in the
+owned QA copy recorded there.
 
 ## Inline timeline and precision gestures
 
