@@ -60,6 +60,56 @@ describe('same-item progressive media source resolution', () => {
     vi.restoreAllMocks();
   });
 
+  function twitterState(hasCaptions = false) {
+    const hls = 'https://video.twimg.com/amplify_video/12345/pl/master.m3u8';
+    const mp4 = 'https://video.twimg.com/amplify_video/12345/vid/1280x720/clip.mp4';
+    video.src = state.currentSrc = hls;
+    scope.dataset.testid = 'videoComponent';
+    const track = {
+      id: 0,
+      contentType: 'media_entity',
+      durationMs: 20000,
+      hasCaptions: false,
+      mediaAvailability: { status: 'available' },
+      currentVariantIndex: 0,
+      variants: [
+        { src: hls, type: 'application/x-mpegURL' },
+        { src: mp4, type: 'video/mp4' },
+      ],
+    };
+    const playerState = {
+      source: { type: 'tweet', trackId: 0 },
+      currentTrackId: 0,
+      hasCaptions,
+      isPreview: false,
+      tracks: [track],
+    };
+    Object.defineProperty(scope, '__reactProps$fixture', {
+      configurable: true,
+      value: { children: [null, { props: { playerState } }] },
+    });
+    return { hls, mp4, playerState };
+  }
+  it('uses the current X player state and does not bypass its caption veto with HTML', () => {
+    const { hls, mp4, playerState } = twitterState();
+    html([
+      { src: hls, type: 'application/x-mpegURL' },
+      { src: mp4, type: 'video/mp4' },
+    ]);
+    expect(find()?.progressiveUrl).toBe(mp4);
+    playerState.hasCaptions = true;
+    expect(find()).toBeNull();
+  });
+  it('retains publisher SDK vetoes when the same video has X player-state alternatives', () => {
+    const { hls, mp4 } = twitterState();
+    const player = videoJS([
+      { src: hls, type: 'application/x-mpegURL' },
+      { src: mp4, type: 'video/mp4' },
+    ]);
+    player.ads = { isInAdMode: () => true };
+    expect(find()).toBeNull();
+  });
+
   it('resolves declared HTML alternatives without loading, playing or changing media', () => {
     html();
     video.removeAttribute('src');

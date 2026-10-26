@@ -149,6 +149,15 @@ window.VSC = window.VSC || {};
           return null;
         }
         const view = doc.defaultView;
+        const twitterPlayer =
+          current.hostname === 'video.twimg.com'
+            ? window.VSC.TwitterMediaSource?.findPlayerStateCandidate?.(video, originParent)
+            : undefined;
+        // A recognized X SDK's protected/changed item cannot fall back to stale
+        // React metadata or HTML alternatives. Publisher vetoes below still win.
+        if (twitterPlayer === null) {
+          return null;
+        }
         let publisherCandidate;
         const seen = new Set();
         // Whole-player portals retain metadata beside the video; video-only
@@ -240,6 +249,9 @@ window.VSC = window.VSC || {};
           }
         }
         if (current.hostname === 'video.twimg.com') {
+          if (twitterPlayer) {
+            return twitterPlayer;
+          }
           const twitter = window.VSC.TwitterMediaSource?.findCandidate(video, originParent);
           if (twitter) {
             return twitter;

@@ -6,6 +6,19 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+The next candidate repairs MP4 selection for X's current selected-track metadata,
+including its observed HLS transport marker and the expanded viewer's absent
+availability field. Physical iPhone testing selects the original live clip's
+supplied MP4 at 2.1×/4× in the normal feed and 2.1× in the viewer. Separate
+microphone-off recordings reproduce native HLS 4× audio loss while MP4 4× stays
+continuous; [the research note](research/ios-fast-playback.md) records scope and
+limits. Captions, protected/live media and alternate tracks retain their original
+streams. Record final reviewed source, local CI, resource/signing verification,
+Apple upload/processing and existing Personal Auto availability before claiming
+this candidate is distributed.
+
+## Previous release — bottom progress bar
+
 **0.11.6 (29)** keeps the inline progress bar at the clipped video's bottom edge.
 Site metadata no longer shifts it upward. Record reviewed source, local verification,
 archive/export, upload, notes and Personal Auto availability under

@@ -185,6 +185,16 @@ presented frames, correct media-time progress and no page/media errors. Do not
 replace the download URL with 720p in the fixture: that would bypass the resolver
 regression. These controlled checks do not close the affected-post/device report.
 
+For the authenticated current-track schema, use `?player-state` with those same
+native tests; add `&viewer-state` for the expanded viewer's omitted availability
+field. These fixtures retain the SDK's base HLS variant and append the observed
+`variant_version=1` only to the native source. They supply numeric track ID zero,
+separate current-track selection, explicit caption state and bounded rendition
+lists. Unit cases reject changed track/variant/query intent, declared unknown
+availability, captions, DRM/ad/live metadata and getters without falling back to
+older source metadata. Native live-post and independent audio evidence is recorded
+in [the research note](../../docs/research/ios-fast-playback.md).
+
 `HLSPlayerQATests/testPlayerRenditionSwitch` uses `/hls-players.html?provider=html`,
 `provider=videojs` or `provider=jwplayer`. The latter fixtures load real public
 publisher SDKs. Brightcove uses its published video and source metadata; JW
