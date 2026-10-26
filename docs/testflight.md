@@ -6,6 +6,19 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+**0.11.6 (25)** is the Twitter regression candidate. It prefers the current
+player's explicitly supplied 720p rendition over its 1080p download, restores
+picture seeking through recognized focusable X surfaces inside navigable tweets,
+and retains the 44px mute action on 240px-and-wider inline players. The existing
+generic overlay/viewer gestures remain covered. SF-TW-1, SF-TW-2 and SF-TW-3 are
+tracked in [Safari's open regression table](safari.md#open-twitter-regressions).
+Controlled native 2.1×/4× and browser feed/mute checks pass; the original affected
+live-post/device stutter remains open. Do not call that report resolved from
+these fixture results. Record reviewed source, archive/export, upload, notes and
+Personal Auto availability under `build/safari/testflight/0.11.6-build25/`.
+
+## Previous release preparation
+
 **0.11.6 (24)** is the startup-rendition candidate. Metadata initialization
 rechecks an eligible same-clip MP4 when an earlier speed command already set the
 numeric rate, so a loading native-HLS video can still select its supplied

@@ -183,7 +183,11 @@
       ])
         v.addEventListener(type, () => {
           if (type === 'error') errors.push('Media error ' + v.error?.code);
-          history.push({ type, mp4: v.currentSrc === progressiveUrl, rate: v.playbackRate });
+          history.push({
+            type,
+            mp4: v.currentSrc === v.dataset.progressiveUrl,
+            rate: v.playbackRate,
+          });
           if (history.length > 32) history.shift();
         });
       v.src = HLS;
