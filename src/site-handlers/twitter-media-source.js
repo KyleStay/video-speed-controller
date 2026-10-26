@@ -115,7 +115,208 @@ window.VSC = window.VSC || {};
     return Array.isArray(value) ? value : null;
   }
 
+  function currentPlayerHlsMatches(declaredUrl, originalUrl) {
+    if (!asset(declaredUrl, 'hls')) {
+      return false;
+    }
+    if (declaredUrl === originalUrl) {
+      return true;
+    }
+    // Remove only the observed literal appended marker. Comparing the rest of
+    // the URL verbatim preserves query encoding, ordering and empty segments.
+    const marker = declaredUrl.includes('?') ? '&variant_version=1' : '?variant_version=1';
+    return (
+      !new URL(declaredUrl).searchParams.has('variant_version') &&
+      originalUrl.endsWith(marker) &&
+      originalUrl.slice(0, -marker.length) === declaredUrl
+    );
+  }
+
+  // undefined: this SDK is absent; null: its current source must retain HLS.
+  // Read the observed videoComponent slot directly instead of expanding the
+  // generic React search into SDK objects, other playlist items or functions.
+  function playerStateCandidate(video, originParent) {
+    try {
+      const originalUrl = video?.currentSrc || video?.src;
+      const original = asset(originalUrl, 'hls');
+      if (!original || !video.isConnected) {
+        return undefined;
+      }
+      if (
+        video.localName !== 'video' ||
+        video.srcObject ||
+        video.mediaKeys ||
+        video.webkitKeys ||
+        video.duration === Infinity ||
+        video.audioTracks?.length > 1 ||
+        video.videoTracks?.length > 1
+      ) {
+        return null;
+      }
+      if (video.hasAttribute('src') && video.src !== originalUrl) {
+        return null;
+      }
+      const player = video.vsc?.iosPlayer;
+      if (
+        originParent &&
+        (!player?.active ||
+          player.video !== video ||
+          player.originParent !== originParent ||
+          !originParent.isConnected ||
+          originParent.ownerDocument !== video.ownerDocument ||
+          player.anchor?.parentNode !== originParent)
+      ) {
+        return null;
+      }
+      const seen = new Set();
+      for (const root of [video.parentElement, originParent]) {
+        let node = root;
+        for (let hops = 0; node && hops < 12; hops++, node = node.parentElement) {
+          if (seen.has(node)) {
+            continue;
+          }
+          seen.add(node);
+          if (node.getAttribute('data-testid') !== 'videoComponent') {
+            continue;
+          }
+          const keys = Object.getOwnPropertyNames(node);
+          if (keys.length > 64) {
+            continue;
+          }
+          for (const key of keys) {
+            if (!key.startsWith('__reactProps$')) {
+              continue;
+            }
+            const children = ownValue(ownValue(node, key), 'children');
+            if (!Array.isArray(children) || ownValue(children, 'length') > 8) {
+              continue;
+            }
+            const props = ownValue(ownValue(children, '1'), 'props');
+            if (!Object.getOwnPropertyDescriptor(props || {}, 'playerState')) {
+              continue;
+            }
+            const state = ownValue(props, 'playerState');
+            const source = ownValue(state, 'source');
+            const tracks = ownValue(state, 'tracks');
+            const id = ownValue(state, 'currentTrackId');
+            const validId =
+              (typeof id === 'string' && id.length > 0 && id.length <= 256) ||
+              (Number.isSafeInteger(id) && id >= 0);
+            if (
+              !validId ||
+              ownValue(source, 'type') !== 'tweet' ||
+              ownValue(source, 'trackId') !== id ||
+              !Array.isArray(tracks) ||
+              ownValue(tracks, 'length') > 8 ||
+              ownValue(state, 'hasCaptions') !== false
+            ) {
+              return null;
+            }
+            let selected;
+            for (let index = 0; index < ownValue(tracks, 'length'); index++) {
+              const track = ownValue(tracks, String(index));
+              if (ownValue(track, 'id') !== id) {
+                continue;
+              }
+              if (selected) {
+                return null;
+              }
+              selected = track;
+            }
+            if (
+              !selected ||
+              ownValue(selected, 'contentType') !== 'media_entity' ||
+              ownValue(selected, 'hasCaptions') !== false ||
+              !Number.isFinite(ownValue(selected, 'durationMs')) ||
+              ownValue(selected, 'durationMs') <= 0
+            ) {
+              return null;
+            }
+            // X's expanded viewer omits availability on its current clear track.
+            // An explicit declaration still vetoes unknown/unavailable states;
+            // never evaluate an accessor to find out which state it represents.
+            const availability = Object.getOwnPropertyDescriptor(selected, 'mediaAvailability');
+            if (
+              availability &&
+              (availability.get ||
+                availability.set ||
+                (availability.value !== undefined &&
+                  ownValue(availability.value, 'status') !== 'available'))
+            ) {
+              return null;
+            }
+            const protectedKeys = [
+              'drm',
+              'key_systems',
+              'keySystems',
+              'licenseUrl',
+              'license_url',
+              'ssai',
+              'live',
+              'vmapUrl',
+              'generateDrmTokenCallback',
+            ];
+            for (const key of protectedKeys) {
+              const descriptor = Object.getOwnPropertyDescriptor(selected, key);
+              if (descriptor && (descriptor.get || descriptor.set || descriptor.value)) {
+                return null;
+              }
+            }
+            const variants = ownValue(selected, 'variants');
+            if (!Array.isArray(variants) || ownValue(variants, 'length') > 8) {
+              return null;
+            }
+            for (let index = 0; index < ownValue(variants, 'length'); index++) {
+              const variant = ownValue(variants, String(index));
+              if (!variant || typeof variant !== 'object') {
+                continue;
+              }
+              for (const key of protectedKeys) {
+                const descriptor = Object.getOwnPropertyDescriptor(variant, key);
+                if (descriptor && (descriptor.get || descriptor.set || descriptor.value)) {
+                  return null;
+                }
+              }
+            }
+            const indexDescriptor = Object.getOwnPropertyDescriptor(
+              selected,
+              'currentVariantIndex'
+            );
+            let declaredOriginalUrl = originalUrl;
+            if (indexDescriptor) {
+              const index = indexDescriptor.value;
+              const declared = ownValue(ownValue(variants, String(index)), 'src');
+              if (
+                !Number.isSafeInteger(index) ||
+                index < 0 ||
+                index >= ownValue(variants, 'length') ||
+                !currentPlayerHlsMatches(declared, originalUrl)
+              ) {
+                return null;
+              }
+              declaredOriginalUrl = declared;
+            }
+            const visited = new Set();
+            const visit = (value) => {
+              if (!value || typeof value !== 'object' || visited.has(value) || visited.size >= 8) {
+                return false;
+              }
+              visited.add(value);
+              return true;
+            };
+            const progressiveUrl = variantCandidate(variants, declaredOriginalUrl, original, visit);
+            return progressiveUrl ? { originalUrl, progressiveUrl, mediaId: original.id } : null;
+          }
+        }
+      }
+    } catch {
+      return null;
+    }
+    return undefined;
+  }
+
   window.VSC.TwitterMediaSource = {
+    findPlayerStateCandidate: playerStateCandidate,
     findCandidate(video, originParent) {
       try {
         if (
@@ -146,6 +347,11 @@ window.VSC = window.VSC || {};
           )
         ) {
           return null;
+        }
+
+        const currentPlayer = playerStateCandidate(video, originParent);
+        if (currentPlayer !== undefined) {
+          return currentPlayer;
         }
 
         const visited = new Set();

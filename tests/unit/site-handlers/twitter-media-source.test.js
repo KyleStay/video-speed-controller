@@ -97,6 +97,184 @@ describe('TwitterMediaSource', () => {
     expect(find()?.progressiveUrl).toBe(variants[3].url);
   });
 
+  function playerState(overrides = {}, trackOverrides = {}) {
+    parent.dataset.testid = 'videoComponent';
+    const variants = publicVariants().map(({ url, content_type, ...rest }) => ({
+      ...rest,
+      src: url === publicHls ? originalUrl : url,
+      type: content_type,
+    }));
+    const track = {
+      id: 0,
+      contentType: 'media_entity',
+      durationMs: 20000,
+      hasCaptions: false,
+      mediaAvailability: { status: 'available' },
+      currentVariantIndex: 0,
+      variants,
+      ...trackOverrides,
+    };
+    const state = {
+      source: { type: 'tweet', id: 'unrelated-post-id', index: 0, trackId: 0 },
+      currentTrackId: 0,
+      hasCaptions: false,
+      isPreview: true,
+      adLoaded: true,
+      tracks: [track],
+      ...overrides,
+    };
+    metadata({ children: [{ props: { ref: null } }, { props: { playerState: state } }] });
+    return { state, track, variants };
+  }
+
+  it('reads the authenticated player’s selected track without calling its API', () => {
+    const { variants } = playerState();
+    const load = vi.spyOn(video, 'load');
+    const play = vi.spyOn(video, 'play');
+    expect(find()?.progressiveUrl).toBe(variants[3].src);
+    expect(load).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    expect(video.src).toBe(originalUrl);
+  });
+
+  it('accepts the expanded viewer’s absent availability declaration', () => {
+    const { track, variants } = playerState({}, { mediaAvailability: undefined });
+    expect(find()?.progressiveUrl).toBe(variants[3].src);
+    delete track.mediaAvailability;
+    expect(find()?.progressiveUrl).toBe(variants[3].src);
+  });
+  it.each([null, {}, { status: undefined }, { status: 'unknown' }, { status: 'unavailable' }])(
+    'retains HLS for an explicit ambiguous or unavailable SDK declaration: %j',
+    (mediaAvailability) => {
+      playerState({}, { mediaAvailability });
+      expect(find()).toBeNull();
+    }
+  );
+  it('does not read an availability accessor', () => {
+    const { track } = playerState();
+    const getter = vi.fn(() => ({ status: 'available' }));
+    Object.defineProperty(track, 'mediaAvailability', { get: getter });
+    expect(find()).toBeNull();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('matches only the observed SDK transport-version suffix and retains the actual source', () => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { variants } = playerState();
+    expect(find()).toEqual({
+      originalUrl: actual,
+      progressiveUrl: variants[3].src,
+      mediaId: '2041611432752742400',
+    });
+    expect(video.src).toBe(actual);
+  });
+  it.each([
+    '&variant_version=2',
+    '&variant_version=1&variant_version=1',
+    '&variant_version=1&audio=alternate',
+    '&variant_version=1&signature=other',
+  ])('rejects unrecognized SDK URL differences: %s', (suffix) => {
+    const actual = originalUrl + suffix;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    playerState();
+    expect(find()).toBeNull();
+  });
+  it.each([
+    ['?tag=%32%31', '?tag=21&variant_version=1'],
+    ['?tag=21', '?tag=%32%31&variant_version=1'],
+    ['?tag=a+b', '?tag=a%20b&variant_version=1'],
+    ['?tag=a%20b', '?tag=a+b&variant_version=1'],
+    ['?tag=21&&v=c67', '?tag=21&v=c67&variant_version=1'],
+    ['?tag=21&v=c67', '?tag=21&variant_version=1&v=c67'],
+    ['?tag=21', '?tag=21&variant_version=%31'],
+    ['?tag=21', '?variant_version=1&tag=21'],
+  ])('rejects query rewrites beyond the appended marker: %s → %s', (declared, active) => {
+    const base = originalUrl.split('?')[0];
+    const actual = base + active;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { variants } = playerState();
+    variants[0].src = base + declared;
+    expect(find()).toBeNull();
+  });
+  it('retains matching raw query encoding and empty segments', () => {
+    const declared = `${originalUrl.split('?')[0]}?tag=%32%31&&v=c67`;
+    const actual = `${declared}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { variants } = playerState();
+    variants[0].src = declared;
+    expect(find()?.progressiveUrl).toBe(variants[3].src);
+  });
+
+  it('does not normalize SDK version suffixes without an explicit current variant', () => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { track } = playerState();
+    delete track.currentVariantIndex;
+    expect(find()).toBeNull();
+  });
+
+  it('does not scan another playlist item for a missing selected rendition', () => {
+    const { state, track, variants } = playerState({}, { variants: [] });
+    state.tracks.push({ ...track, id: 1, variants });
+    expect(find()).toBeNull();
+    track.variants = [{ type: 'application/x-mpegURL', src: publicHls }, ...variants.slice(1)];
+    expect(find()).toBeNull();
+  });
+
+  it.each([
+    ['selected track changed', { currentTrackId: 1 }, {}],
+    ['source track changed', { source: { type: 'tweet', trackId: 1 } }, {}],
+    ['advertisement source', { source: { type: 'ad', trackId: 0 } }, {}],
+    ['SDK captions', { hasCaptions: true }, {}],
+    ['item captions', {}, { hasCaptions: true }],
+    ['unknown captions', {}, { hasCaptions: undefined }],
+    ['DRM declaration', {}, { keySystems: { protected: true } }],
+    ['ad item', {}, { vmapUrl: 'https://example.com/ad' }],
+    ['DRM callback', {}, { generateDrmTokenCallback() {} }],
+    ['live duration', {}, { durationMs: Infinity }],
+    ['unavailable item', {}, { mediaAvailability: { status: 'unavailable' } }],
+    ['format intent changed', {}, { currentVariantIndex: 1 }],
+  ])('retains HLS for %s', (_name, state, track) => {
+    playerState(state, track);
+    expect(find()).toBeNull();
+  });
+
+  it('requires one selected ID and bounded tracks/variants', () => {
+    const { state, track } = playerState();
+    state.tracks.push({ ...track });
+    expect(find()).toBeNull();
+    state.tracks = Array(9).fill(track);
+    expect(find()).toBeNull();
+    state.tracks = [track];
+    track.variants.push(...Array(5).fill(null));
+    expect(find()).toBeNull();
+  });
+
+  it('never invokes SDK getters or inherited selected metadata', () => {
+    const { state, track } = playerState();
+    const getter = vi.fn(() => {
+      throw Error('SDK getter');
+    });
+    Object.defineProperty(state, 'tracks', { get: getter });
+    expect(find()).toBeNull();
+    expect(getter).not.toHaveBeenCalled();
+    const next = playerState();
+    next.state.tracks = [Object.assign(Object.create(track), { id: 0 })];
+    expect(find()).toBeNull();
+  });
+
+  it('does not bypass an SDK veto through a legacy pair on the same player', () => {
+    const { state } = playerState({ hasCaptions: true });
+    metadata({ children: [{ props: pair() }, { props: { playerState: state } }] });
+    expect(find()).toBeNull();
+  });
+
   it('requires an exact active HLS match inside the accessory array', () => {
     metadata({
       props: {

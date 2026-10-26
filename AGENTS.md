@@ -132,8 +132,11 @@ with direct `chrome.*` access.
   - `safari-hls-playback.js` — bounded, same-video HLS→MP4 transitions for
     iOS native-HLS playback above 2×. `progressive-media-source.js` resolves same-item
     HTML alternatives and recognized Video.js/Brightcove/JW Player metadata;
-    `twitter-media-source.js` resolves X’s nearby React props. All require an
-    exact active HLS match and an explicitly supplied MP4.
+    `twitter-media-source.js` resolves X’s nearby React props and current SDK track.
+    All require an exact active HLS match and an explicitly supplied MP4; the
+    current X SDK alone permits its observed appended `variant_version=1` marker
+    when its selected HLS variant otherwise matches exactly. SDK caption/protection
+    vetoes cannot fall back to older metadata or HTML alternatives.
     No fetches, new permissions, polling, or source URL construction.
 - `observers/`
   - `media-observer.js` — light/comprehensive media scanning (incl. shadow DOM,

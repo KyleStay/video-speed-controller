@@ -75,6 +75,8 @@
     const MP4_720 =
       'https://video.twimg.com/amplify_video/2041611432752742400/vid/avc1/1280x720/aTg4GLUneEKKiMmS.mp4?tag=21';
     const accessoryVariants = new URLSearchParams(location.search).has('accessory-variants');
+    const playerStateVariants = new URLSearchParams(location.search).has('player-state');
+    const viewerState = new URLSearchParams(location.search).has('viewer-state');
     const state = document.querySelector('#state'),
       errors = [],
       history = [];
@@ -136,41 +138,75 @@
     function makeVideo(progressiveUrl = MP4) {
       const parent = document.createElement('div');
       parent.className = 'player';
+      if (playerStateVariants) parent.dataset.testid = 'videoComponent';
       const v = document.createElement('video');
       v.dataset.twitterFixture = 'true';
-      v.dataset.progressiveUrl = accessoryVariants ? MP4_720 : progressiveUrl;
+      v.dataset.progressiveUrl =
+        accessoryVariants || playerStateVariants ? MP4_720 : progressiveUrl;
       v.muted = true;
       v.playsInline = true;
       v.controls = true;
       v.preload = 'auto';
-      parent.__reactProps$fixture = accessoryVariants
+      parent.__reactProps$fixture = playerStateVariants
         ? {
             children: [
-              null,
-              null,
-              null,
+              { props: { ref: null } },
               {
                 props: {
-                  downloadUrl: MP4,
-                  timeRemainingAccessory: {
-                    props: {
-                      media: {
-                        video_info: {
-                          variants: [
-                            { content_type: 'application/x-mpegURL', url: HLS },
-                            { content_type: 'video/mp4', url: MP4_720 },
-                            { content_type: 'video/mp4', url: MP4 },
-                          ],
-                        },
+                  playerState: {
+                    source: { type: 'tweet', id: 'fixture-post', index: 0, trackId: 0 },
+                    currentTrackId: 0,
+                    hasCaptions: false,
+                    isPreview: !viewerState,
+                    adLoaded: true,
+                    tracks: [
+                      {
+                        id: 0,
+                        contentType: 'media_entity',
+                        durationMs: 103636,
+                        mediaAvailability: viewerState ? undefined : { status: 'available' },
+                        hasCaptions: false,
+                        currentVariantIndex: 0,
+                        variants: [
+                          { type: 'application/x-mpegURL', src: HLS },
+                          { type: 'video/mp4', src: MP4_720 },
+                          { type: 'video/mp4', src: MP4 },
+                        ],
                       },
-                    },
+                    ],
                   },
-                  poppedOutSource: { playerProps: { src: HLS, downloadUrl: MP4 } },
                 },
               },
             ],
           }
-        : { children: { props: { src: HLS, downloadUrl: progressiveUrl } } };
+        : accessoryVariants
+          ? {
+              children: [
+                null,
+                null,
+                null,
+                {
+                  props: {
+                    downloadUrl: MP4,
+                    timeRemainingAccessory: {
+                      props: {
+                        media: {
+                          video_info: {
+                            variants: [
+                              { content_type: 'application/x-mpegURL', url: HLS },
+                              { content_type: 'video/mp4', url: MP4_720 },
+                              { content_type: 'video/mp4', url: MP4 },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                    poppedOutSource: { playerProps: { src: HLS, downloadUrl: MP4 } },
+                  },
+                },
+              ],
+            }
+          : { children: { props: { src: HLS, downloadUrl: progressiveUrl } } };
       parent.append(v);
       document.querySelector('#players').append(parent);
       for (const type of [
@@ -190,7 +226,7 @@
           });
           if (history.length > 32) history.shift();
         });
-      v.src = HLS;
+      v.src = playerStateVariants ? `${HLS}&variant_version=1` : HLS;
       return v;
     }
     async function frame(v) {
