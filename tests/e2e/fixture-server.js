@@ -107,10 +107,13 @@ const mobileHtml = `<!doctype html>
         open.addEventListener('click', () => {
           const dialog = document.createElement('div');
           dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+          dialog.tabIndex = -1;
           dialog.style.cssText = 'position:fixed;inset:0;overflow-y:auto;background:#f3f7fa;z-index:10';
           const picture = document.createElement('div');
           picture.className = 'site-viewer-picture'; picture.style.position = 'relative';
+          picture.tabIndex = 0;
           const cover = document.createElement('div');
+          cover.id = 'site-picture-overlay';
           cover.setAttribute('aria-label', 'Video picture'); cover.setAttribute('role', 'button');
           cover.style.cssText = 'position:absolute;inset:0';
           for (const type of ['pointerdown', 'pointermove', 'touchstart', 'click']) {
@@ -124,6 +127,7 @@ const mobileHtml = `<!doctype html>
       if (new URLSearchParams(location.search).has('reveal-overlay')) {
         const plain = new URLSearchParams(location.search).has('plain-overlay');
         const overlay = document.createElement(plain ? 'div' : 'button');
+        overlay.id = 'site-picture-overlay';
         if (!plain) overlay.type = 'button';
         overlay.setAttribute('aria-label', 'Video picture');
         overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;';

@@ -209,6 +209,13 @@ class IOSPlayerGestures {
       this.owner.active &&
       this.owner.session === start.session &&
       this.owner.ui?.stage === this.stage;
+    try {
+      if (!current() || (start.canStartScrub && !start.canStartScrub(start))) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
     if (!current() || !scrubber?.matchesSource(start.source) || !current()) {
       return false;
     }
@@ -220,7 +227,7 @@ class IOSPlayerGestures {
     return true;
   }
 
-  down(event) {
+  down(event, { canStartScrub } = {}) {
     if (this.validTouch(event)) {
       this.lastTouchAt = this.now();
     }
@@ -257,6 +264,7 @@ class IOSPlayerGestures {
             y: event.clientY,
             session: this.owner.session,
             source: scrubber.captureSource(),
+            canStartScrub,
           }
         : null;
       this.suppressClick = false;

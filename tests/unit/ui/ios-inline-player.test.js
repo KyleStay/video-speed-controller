@@ -487,7 +487,7 @@ describe('owned iOS inline transport', () => {
   });
 
   describe('unknown picture overlays', () => {
-    let container, cover;
+    let container, cover, pointDescriptor;
     const pointer = (type, x = 140, y = 170, target = cover, id = 7) => {
       const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
       Object.assign(event, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y });
@@ -502,6 +502,11 @@ describe('owned iOS inline transport', () => {
       cover.getBoundingClientRect = () => media;
       document.body.append(container);
       container.append(video, cover);
+      pointDescriptor = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: vi.fn(() => cover),
+      });
       cover.addEventListener('pointermove', (event) => event.stopImmediatePropagation());
       player.setOwned(true);
     });
@@ -509,6 +514,11 @@ describe('owned iOS inline transport', () => {
     afterEach(() => {
       document.body.append(video);
       container.remove();
+      if (pointDescriptor) {
+        Object.defineProperty(document, 'elementFromPoint', pointDescriptor);
+      } else {
+        delete document.elementFromPoint;
+      }
     });
 
     it('captures horizontal intent through an unknown overlay without hiding it', () => {
@@ -521,6 +531,140 @@ describe('owned iOS inline transport', () => {
       expect(video.currentTime).toBe(24);
       expect(cover.style.cssText).toBe('');
       expect(container.hasAttribute('data-vsc-ios-site-controls')).toBe(false);
+    });
+
+    it('dismisses an open speed menu with a picture tap and releases interaction observers', () => {
+      manager.setTouchExpanded(shadow, true);
+      pointer('pointerdown');
+      pointer('pointerup');
+      cover.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          composed: true,
+          detail: 1,
+          clientX: 140,
+          clientY: 170,
+        })
+      );
+      expect(host.classList.contains('vsc-touch-open')).toBe(false);
+      expect(player.idle).toBe(false);
+      const clicked = vi.spyOn(player, 'pictureClicked');
+      player.setOwned(false);
+      cover.click();
+      expect(clicked).not.toHaveBeenCalled();
+    });
+
+    it.each(['video', 'audio', 'iframe'])(
+      'rejects a new %s inserted after pointerdown before commitment',
+      (tag) => {
+        pointer('pointerdown');
+        container.append(document.createElement(tag));
+        pointer('pointermove', 180);
+        expect(player.scrubber.active).toBe(false);
+        expect(video.pause).not.toHaveBeenCalled();
+        expect(video.currentTime).toBe(12);
+      }
+    );
+
+    it('rejects a newly covering dialog despite implicit capture retaining the old target', () => {
+      pointer('pointerdown');
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      document.body.append(dialog);
+      document.elementFromPoint.mockReturnValue(dialog);
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      dialog.remove();
+    });
+
+    it('rejects an independent control appearing at the original touch point', () => {
+      pointer('pointerdown');
+      const button = document.createElement('button');
+      button.getBoundingClientRect = () => ({ left: 120, top: 150, right: 164, bottom: 194 });
+      cover.append(button);
+      document.elementFromPoint.mockReturnValue(button);
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it('checks the original hit once and lets a committed precision drag leave the picture', () => {
+      pointer('pointerdown');
+      pointer('pointermove', 440);
+      expect(player.scrubber.active).toBe(true);
+      expect(document.elementFromPoint).toHaveBeenCalledExactlyOnceWith(140, 170);
+      document.elementFromPoint.mockReturnValue(document.body);
+      pointer('pointermove', 450, 10, window);
+      expect(player.scrubber.active).toBe(true);
+      expect(document.elementFromPoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves the current hit through an open shadow root at commitment', () => {
+      const shell = document.createElement('div');
+      document.body.append(shell);
+      const root = shell.attachShadow({ mode: 'open' });
+      root.append(container);
+      root.elementFromPoint = vi.fn(() => cover);
+      document.elementFromPoint.mockReturnValue(shell);
+      player.installSurfacePolicy();
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(true);
+      expect(root.elementFromPoint).toHaveBeenCalledExactlyOnceWith(140, 170);
+      document.body.append(container);
+      shell.remove();
+    });
+
+    it('rejects a throwing commitment hit test without consuming the movement', () => {
+      pointer('pointerdown');
+      document.elementFromPoint.mockImplementation(() => {
+        throw new Error('site replacement');
+      });
+      expect(pointer('pointermove', 180).defaultPrevented).toBe(false);
+      expect(player.scrubber.active).toBe(false);
+    });
+
+    it('rechecks source identity after the commitment hit test', () => {
+      pointer('pointerdown');
+      document.elementFromPoint.mockImplementation(() => {
+        video.src = 'https://example.test/replaced.mp4';
+        return cover;
+      });
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it('rejects a replaced scope before commitment without cancelling direct video scrubs', () => {
+      pointer('pointerdown');
+      player.releaseSurfaceContainer();
+      player.refreshSurfaceContainer();
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+      pointer('pointerup');
+      pointer('pointerdown', 140, 170, video);
+      container.append(document.createElement('video'));
+      pointer('pointermove', 180, 170, video);
+      expect(player.scrubber.active).toBe(true);
+    });
+
+    it('retains recognized picture gestures in a focusable player and enclosing dialog', () => {
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.tabIndex = -1;
+      container.tabIndex = 0;
+      document.body.append(dialog);
+      dialog.append(container);
+      video.vsc.iosPlayer.siteControls = { container };
+      player.refreshSurfaceContainer();
+      const release = player.observeSurface(container);
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(true);
+      release();
+      document.body.append(container);
+      dialog.remove();
     });
 
     it('leaves vertical intent and two-finger browser gestures alone', () => {
@@ -650,6 +794,8 @@ describe('owned iOS inline transport', () => {
       const dialog = document.createElement('div');
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
+      dialog.tabIndex = -1;
+      container.tabIndex = 0;
       document.body.append(dialog);
       dialog.append(container);
       player.installSurfacePolicy();
@@ -661,6 +807,18 @@ describe('owned iOS inline transport', () => {
       expect(video.currentTime).toBe(24);
       document.body.append(container);
       dialog.remove();
+    });
+
+    it('preserves a navigation link wrapping the picture scope', () => {
+      const link = document.createElement('a');
+      link.href = '#post';
+      document.body.append(link);
+      link.append(container);
+      pointer('pointerdown');
+      pointer('pointermove', 180);
+      expect(player.scrubber.active).toBe(false);
+      document.body.append(container);
+      link.remove();
     });
   });
 

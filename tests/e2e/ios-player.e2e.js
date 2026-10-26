@@ -939,6 +939,106 @@ export default async function runIOSPlayer({
         }
       });
     }
+    for (const theater of [false, true]) {
+      await check(
+        `video-surface fallback picture tap dismisses its menu${theater ? ' in a site viewer' : ''}`,
+        async () => {
+          await navigate(theater ? '&takeover&theater-overlay' : '&reveal-overlay&plain-overlay');
+          if (theater) {
+            await page.locator('#open-site-viewer').click();
+            await page.waitForFunction(
+              () =>
+                window.__ownedOriginal.vsc.controlsManager.inlinePlayer.surfaceContainer?.node
+                  .className === 'site-viewer-picture'
+            );
+          }
+          await page.evaluate(() => window.__ownedOriginal.pause());
+          await tapInline(page, '.draggable');
+          await page.waitForFunction(() =>
+            window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open')
+          );
+          const point = await page.evaluate(() => {
+            const r = window.__ownedOriginal.getBoundingClientRect();
+            for (const x of [0.1, 0.5, 0.9]) {
+              for (const y of [0.3, 0.5, 0.7]) {
+                const point = { x: r.left + r.width * x, y: r.top + r.height * y };
+                if (document.elementFromPoint(point.x, point.y)?.id === 'site-picture-overlay') {
+                  return point;
+                }
+              }
+            }
+            return null;
+          });
+          assert.exists(point, 'An exposed picture point must remain available beside the menu');
+          await tapAt(page, point.x, point.y);
+          await page.waitForFunction(
+            () =>
+              !window.__ownedOriginal.vsc.div.classList.contains('vsc-touch-open') &&
+              !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.idle
+          );
+        }
+      );
+    }
+    for (const changed of ['second-media', 'covering-dialog']) {
+      await check(`video-surface fallback rejects ${changed} before drag commitment`, async () => {
+        await navigate('&reveal-overlay&plain-overlay');
+        const point = await page.evaluate(() => {
+          const video = window.__ownedOriginal;
+          video.pause();
+          video.currentTime = 20;
+          document.addEventListener(
+            'pointermove',
+            (event) => {
+              window.__fallbackMoveTarget = event.target.id;
+            },
+            { once: true, capture: true }
+          );
+          const r = video.getBoundingClientRect();
+          return { x: r.left + r.width * 0.4, y: r.top + r.height * 0.55 };
+        });
+        const session = await page.createCDPSession();
+        let ended = false;
+        try {
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [{ ...point, id: 1 }],
+          });
+          await page.evaluate((kind) => {
+            if (kind === 'second-media') {
+              document.querySelector('.player').append(document.createElement('video'));
+            } else {
+              const dialog = document.createElement('div');
+              dialog.setAttribute('role', 'dialog');
+              dialog.style.cssText = 'position:fixed;inset:0;z-index:2147483647';
+              document.body.append(dialog);
+            }
+          }, changed);
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: point.x + 30, y: point.y, id: 1 }],
+          });
+          await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          ended = true;
+          assert.true(
+            await page.evaluate(
+              () =>
+                !window.__ownedOriginal.vsc.controlsManager.inlinePlayer.scrubber.active &&
+                Math.abs(window.__ownedOriginal.currentTime - 20) < 0.2 &&
+                window.__fallbackMoveTarget === 'site-picture-overlay'
+            ),
+            'Changed scope must reject seeking despite the retained pointer target'
+          );
+        } finally {
+          if (!ended) {
+            await session.send('Input.dispatchTouchEvent', {
+              type: 'touchCancel',
+              touchPoints: [],
+            });
+          }
+          await session.detach();
+        }
+      });
+    }
     await check(
       'video-surface touch policy follows connected media between tree roots',
       async () => {

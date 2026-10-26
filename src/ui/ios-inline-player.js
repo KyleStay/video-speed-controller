@@ -695,6 +695,15 @@ class IOSInlinePlayer {
       style.textContent = `[${attribute}="${token}"] { touch-action: pan-y pinch-zoom !important; }`;
       this.surfacePolicy.style.after(style);
       this.surfaceContainer.release = this.observeSurface(node);
+      this.surfaceContainer.releaseInteraction = IOSInlinePlayer.observeInteractions(
+        node,
+        (event) => {
+          const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+          if (!event.composedPath().includes(known)) {
+            this.surfaceInteraction(event);
+          }
+        }
+      );
     } catch {
       this.releaseSurfaceContainer();
     }
@@ -710,6 +719,11 @@ class IOSInlinePlayer {
       scope.release?.();
     } catch {
       // A patched listener API must not retain styles or marker ownership.
+    }
+    try {
+      scope.releaseInteraction?.();
+    } catch {
+      // Release the remaining ownership even if one listener API was patched.
     }
     try {
       if (scope.node.getAttribute(scope.attribute) === scope.token) {
@@ -729,6 +743,39 @@ class IOSInlinePlayer {
     }
   }
 
+  canStartSurfaceScrub(scope, start) {
+    if (!this.available() || this.surfaceContainer !== scope || !scope.node.isConnected) {
+      return false;
+    }
+    const media = scope.node.querySelectorAll('video,audio,iframe');
+    if (media.length !== 1 || media[0] !== this.video) {
+      return false;
+    }
+    // Implicit capture can keep targeting an old overlay after a modal/control
+    // covers it. Hit-test the original point once, before committing the scrub.
+    let hit = this.video.ownerDocument.elementFromPoint(start.x, start.y);
+    for (let depth = 0; hit?.shadowRoot && depth < 8; depth++) {
+      const inner = hit.shadowRoot.elementFromPoint?.(start.x, start.y);
+      if (!inner || inner === hit) {
+        break;
+      }
+      hit = inner;
+    }
+    const path = [];
+    for (
+      let node = hit;
+      node && path.length < 32;
+      node = node.assignedSlot || node.parentNode || node.host
+    ) {
+      path.push(node);
+    }
+    return this.isPictureInteraction({
+      composedPath: () => path,
+      clientX: start.x,
+      clientY: start.y,
+    });
+  }
+
   observeSurface(target) {
     const removers = [];
     for (const [type, method] of [
@@ -744,12 +791,23 @@ class IOSInlinePlayer {
           if (!this.available() || path.includes(this.host) || path.includes(this.video)) {
             return;
           }
+          const scope = this.surfaceContainer?.node === target ? this.surfaceContainer : null;
+          if (scope && path.includes(this.video.vsc?.iosPlayer?.siteControls?.container)) {
+            return;
+          }
           if (
             type === 'touchmove' ||
             this.gestures.points.has(event.pointerId) ||
             this.isPictureInteraction(event)
           ) {
-            this.gestures[method](event);
+            this.gestures[method](
+              event,
+              method === 'down' && scope
+                ? {
+                    canStartScrub: (start) => this.canStartSurfaceScrub(scope, start),
+                  }
+                : undefined
+            );
           }
         } catch {
           // A recognized player can be replaced during the same touch sequence.
@@ -887,10 +945,13 @@ class IOSInlinePlayer {
       )) {
         return false;
       }
-      const control = path.find((node) =>
-        node.matches?.(
-          'button,a,input,select,textarea,label,summary,[role="button"],[role="slider"],[role="link"],[contenteditable]:not([contenteditable="false"]),[tabindex]'
-        )
+      const containerIndex = path.indexOf(container);
+      const control = path.find(
+        (node, index) =>
+          node.matches?.(
+            'button,a,input,select,textarea,label,summary,[role="button"],[role="slider"],[role="link"],[contenteditable]:not([contenteditable="false"])'
+          ) ||
+          (index < containerIndex && node.matches?.('[tabindex]'))
       );
       if (!control) {
         return true;

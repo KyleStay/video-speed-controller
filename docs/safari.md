@@ -65,6 +65,11 @@ extension-inaccessible frames and overlays outside that container remain outside
 the fallback. StayFast's **Full screen** player provides a separate scrub surface
 for those layouts. Local fixtures do not establish all-site or live X
 expanded-viewer acceptance.
+Fallback picture taps also dismiss an open speed menu and toggle the interface.
+Before a fallback drag commits, one hit test at the original touch point checks
+that the same single-video scope remains exposed; a new modal, control or second
+media element prevents the scrub. Once committed, precision movement may leave
+the picture. Focusable player and video-dialog roots retain picture gestures.
 
 Inline and owned fullscreen timelines share `IOSPlayerScrubber`. Hold the
 playhead, move upward into the video to select half, quarter or fine sensitivity,
