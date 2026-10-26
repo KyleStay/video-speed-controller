@@ -410,7 +410,9 @@ describe('IOSPlayerGestures', () => {
     const remove = vi.spyOn(stage, 'removeEventListener');
     gestures.cleanup();
     gestures.cleanup();
-    expect(remove).toHaveBeenCalledTimes(6);
+    expect(remove).toHaveBeenCalledTimes(8);
+    expect(remove).toHaveBeenCalledWith('touchend', gestures.onNativeEnd, true);
+    expect(remove).toHaveBeenCalledWith('touchcancel', gestures.onNativeEnd, true);
     expect(stage.releasePointerCapture).toHaveBeenCalledTimes(2);
     expect(gestures.active).toBe(false);
     expect(gestures.suppressClick).toBe(false);

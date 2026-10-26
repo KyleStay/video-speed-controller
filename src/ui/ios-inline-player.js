@@ -785,6 +785,8 @@ class IOSInlinePlayer {
       ['pointerup', 'end'],
       ['pointercancel', 'end'],
       ['touchmove', 'preventNativeScroll'],
+      ['touchend', 'endNativeTouch'],
+      ['touchcancel', 'endNativeTouch'],
     ]) {
       const onInput = (event) => {
         try {
@@ -797,7 +799,7 @@ class IOSInlinePlayer {
             return;
           }
           if (
-            type === 'touchmove' ||
+            type.startsWith('touch') ||
             this.gestures.points.has(event.pointerId) ||
             this.isPictureInteraction(event)
           ) {

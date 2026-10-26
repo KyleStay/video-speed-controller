@@ -90,6 +90,16 @@ const mobileHtml = `<!doctype html>
         inner.style.position = 'relative';
         shell.append(tracker); tracker.append(inner); inner.append(video);
       }
+      if (new URLSearchParams(location.search).has('lower-metadata')) {
+        const shell = document.querySelector('.player');
+        const layer = video.parentElement;
+        layer.style.cssText = 'position:relative;z-index:0';
+        const metadata = document.createElement('a');
+        metadata.id = 'player-metadata'; metadata.href = '#profile'; metadata.textContent = 'Creator profile';
+        metadata.style.cssText = 'position:absolute;left:16px;right:16px;bottom:12px;height:40px;z-index:2;background:white';
+        metadata.addEventListener('click', event => { event.preventDefault(); window.__metadataClicks = (window.__metadataClicks || 0) + 1; });
+        shell.append(metadata);
+      }
       const ownedDiagnostics = new URLSearchParams(location.search).has('owned');
       if (ownedDiagnostics) {
         window.__stayfastOwnedFixture = { video, source: video.src, parent: video.parentNode, nativeFullscreenCalls: 0 };
@@ -134,7 +144,7 @@ const mobileHtml = `<!doctype html>
         for (const type of ['pointerdown', 'touchstart', 'click']) {
           overlay.addEventListener(type, event => event.stopImmediatePropagation());
         }
-        (feedOverlay ? document.querySelector('.player') : video.parentElement).append(overlay);
+        (feedOverlay && !new URLSearchParams(location.search).has('lower-metadata') ? document.querySelector('.player') : video.parentElement).append(overlay);
       }
       const fullscreenNames = ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen', 'webkitEnterFullscreen', 'webkitEnterFullScreen', 'webkitSetPresentationMode'];
       window.__stayfastInitialFullscreen = new Map(fullscreenNames.map((name) => [name, {

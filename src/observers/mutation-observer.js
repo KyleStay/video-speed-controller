@@ -411,6 +411,19 @@ class VideoMutationObserver {
         this.onVideoRemoved(node);
       }
     }
+    if (
+      job.added &&
+      (this.attributeObservationEnabled || this.mediaObserver?.hasObservedMedia) &&
+      !node.closest?.('vsc-controller')
+    ) {
+      const handlers = window.VSC.siteHandlerManager;
+      if (handlers?.isPlaybackControl(node)) {
+        const video = handlers.findCustomPlayer(node);
+        if (video && !video.vsc && video.loop && video.muted && !video.controls) {
+          this.onVideoFound(video, video.parentNode);
+        }
+      }
+    }
     return Boolean(job.next);
   }
 

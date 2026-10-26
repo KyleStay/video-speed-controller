@@ -6,6 +6,20 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+**0.11.6 (27)** is the custom-player compatibility candidate. Muted looping
+clips with nearby playback controls retain StayFast transport, including when
+those controls arrive after the video. Picture swipes suppress the site's trailing
+tap action, preserving the starting playback state. Inline timelines avoid local
+metadata when a clear lane remains below the primary controls. Decorative loops,
+independent site controls and vertical scrolling retain their existing behavior.
+Neutral regression cases cover discovery, late controls, input cleanup and rail
+placement. Record reviewed source, local verification, archive/export, upload,
+notes and Personal Auto availability under
+`build/safari/testflight/0.11.6-build27/` before claiming distribution. Existing
+open Twitter acceptance reports remain tracked separately.
+
+## Previous feed-position candidate
+
 **0.11.6 (26)** is the feed-position candidate for SF-TW-4. The owned fullscreen
 placeholder retains the original media's margins, preserving the scroll range
 near the end of a page or nested feed. A delayed exit from an older owned

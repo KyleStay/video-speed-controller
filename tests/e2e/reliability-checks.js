@@ -116,7 +116,9 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
         document.body.append(video);
         const controller = new window.VSC.VideoController(video, null, config, actionHandler);
         videos.push(video);
-        if (!controller.initMetadataHandler) {throw new Error('metadata must be pending');}
+        if (!controller.initMetadataHandler) {
+          throw new Error('metadata must be pending');
+        }
         return video;
       };
       try {
@@ -144,6 +146,65 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
     assert.equal(result.externalRate, 2.25, 'metadata uses the current external preference');
     assert.equal(result.localRate, 2.5, 'metadata retains the media command');
   });
+
+  await runTest(
+    'Muted looping custom players retain controls while decorative loops stay excluded',
+    async () => {
+      await loadFixture();
+      await page.evaluate((source) => {
+        const custom = document.createElement('section');
+        custom.style.cssText = 'position:relative;width:640px';
+        custom.innerHTML = '<div><video id="custom-loop" loop muted playsinline></video></div>';
+        const decorative = document.createElement('section');
+        decorative.innerHTML = '<video id="decorative-loop" loop muted playsinline></video>';
+        for (const root of [custom, decorative]) {
+          const video = root.querySelector('video');
+          video.muted = true;
+          video.src = source;
+          document.querySelector('#fixture-root').append(root);
+        }
+      }, mediaUrl);
+      await page.waitForFunction(() => document.querySelector('#custom-loop')?.readyState >= 2);
+      assert.false(await page.evaluate(() => !!document.querySelector('#custom-loop').vsc));
+      await page.evaluate(() => {
+        const video = document.querySelector('#custom-loop');
+        video.parentElement.parentElement.insertAdjacentHTML(
+          'beforeend',
+          '<button id="custom-sound" aria-label="Sound Off">Sound</button>'
+        );
+        document.querySelector('#custom-sound').onclick = () => {
+          video.muted = !video.muted;
+        };
+      });
+      await page.waitForFunction(
+        () =>
+          document.querySelector('#custom-loop')?.vsc?.div.isConnected &&
+          document.querySelector('#decorative-loop')?.readyState >= 2
+      );
+      assert.false(
+        await page.evaluate(() => !!document.querySelector('#decorative-loop').vsc),
+        'Decorative loop must remain excluded'
+      );
+      await page.click('#custom-sound');
+      assert.false(
+        await page.evaluate(() => document.querySelector('#custom-loop').muted),
+        'Site audio control remains usable'
+      );
+      await page.click('#custom-sound');
+      const before = await page.evaluate(() => document.querySelector('#custom-loop').playbackRate);
+      await page.keyboard.press('d');
+      await page.waitForFunction(
+        (rate) => document.querySelector('#custom-loop').playbackRate > rate,
+        {},
+        before
+      );
+      assert.equal(
+        await page.evaluate(() => window.VSC.stateManager.getControlledElements().length),
+        1,
+        'Only the interactive player is controlled'
+      );
+    }
+  );
 
   await runTest('Scrolling an X feed attaches ready videos before idle work', async () => {
     // All requests are intercepted above; this fixture never contacts X.
