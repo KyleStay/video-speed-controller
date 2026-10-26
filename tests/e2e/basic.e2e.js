@@ -17,6 +17,7 @@ import {
   monitorPageErrors,
 } from './e2e-utils.js';
 import { runReliabilityChecks } from './reliability-checks.js';
+import { startFixtureServer } from './fixture-server.js';
 
 export default async function runBasicE2ETests({ launch = launchChromeWithExtension } = {}) {
   console.log('🎭 Running Basic E2E Tests...\n');
@@ -25,6 +26,7 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
   let passed = 0;
   let failed = 0;
   let pageErrors;
+  let fixtures;
 
   const runTest = async (testName, testFn) => {
     try {
@@ -185,13 +187,39 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
     } finally {
       await reliabilityPage.close();
     }
+    await runTest('Controller and shortcuts attach under enforced Trusted Types', async () => {
+      fixtures = await startFixtureServer({
+        htmlRoutes: {
+          '/trusted-types.html': `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'"><title>Trusted Types media</title><video muted preload="auto" src="/sample.webm"></video>`,
+        },
+      });
+      await page.goto(`${fixtures.baseUrl}/trusted-types.html`, { waitUntil: 'domcontentloaded' });
+      const enforced = await page.evaluate(() => {
+        try {
+          document.createElement('div').innerHTML = '<b>probe</b>';
+          return false;
+        } catch (error) {
+          return error.name === 'TypeError';
+        }
+      });
+      assert.true(enforced, 'The fixture must enforce Trusted Types');
+      assert.true(await waitForVideo(page, 'video', 10000), 'Media must become ready');
+      assert.true(await waitForController(page, 10000), 'Controller must attach');
+      const before = await getVideoSpeed(page);
+      await testKeyboardShortcut(page, 'KeyD');
+      assert.true((await getVideoSpeed(page)) > before, 'Speed shortcut must reach the media');
+    });
   } catch (error) {
     console.log(`   💥 Test setup failed: ${error.message}`);
     failed++;
   } finally {
     pageErrors?.dispose();
-    if (browser) {
-      await browser.close();
+    try {
+      if (browser) {
+        await browser.close();
+      }
+    } finally {
+      await fixtures?.stop();
     }
   }
 

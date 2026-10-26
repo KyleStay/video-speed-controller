@@ -6,29 +6,69 @@ window.VSC = window.VSC || {};
 
 class ShadowDOMManager {
   static controlIcons = {
-    play: '<path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/>',
-    pause: '<path d="M7 5h3v14H7zm7 0h3v14h-3z" fill="currentColor" stroke="none"/>',
-    replay: '<path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/>',
-    back: '<path d="M8 3 4 7l4 4M4 7h8a8 8 0 0 1 8 8"/><text x="11" y="21" stroke="none" fill="currentColor" font-size="11" font-family="system-ui" text-anchor="middle">10</text>',
-    forward:
-      '<path d="m16 3 4 4-4 4m4-4h-8a8 8 0 0 0-8 8"/><text x="13" y="21" stroke="none" fill="currentColor" font-size="11" font-family="system-ui" text-anchor="middle">10</text>',
-    sound: '<path d="M11 4 6 8H3v8h3l5 4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
-    muted: '<path d="M11 4 6 8H3v8h3l5 4Zm5 5 5 6m0-6-5 6"/>',
-    close: '<path d="m6 6 12 12M6 18 18 6"/>',
-    lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
-    unlock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0"/>',
-    expand: '<path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/>',
-    contract: '<path d="M3 9h6V3m12 6h-6V3M9 21v-6H3m12 6v-6h6"/>',
-    preferred: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
-    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    play: 'm8 5 11 7-11 7Z',
+    pause: 'M7 5h3v14H7zm7 0h3v14h-3z',
+    replay: 'M4 10a8 8 0 1 1 1 8M4 4v6h6',
+    back: 'M8 3 4 7l4 4M4 7h8a8 8 0 0 1 8 8',
+    forward: 'm16 3 4 4-4 4m4-4h-8a8 8 0 0 0-8 8',
+    sound: 'M11 4 6 8H3v8h3l5 4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14',
+    muted: 'M11 4 6 8H3v8h3l5 4Zm5 5 5 6m0-6-5 6',
+    close: 'm6 6 12 12M6 18 18 6',
+    lock: 'M7 10h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2ZM8 10V7a4 4 0 0 1 8 0v3',
+    unlock:
+      'M7 10h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2ZM8 10V7a4 4 0 0 1 8 0',
+    expand: 'M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6',
+    contract: 'M3 9h6V3m12 6h-6V3M9 21v-6H3m12 6v-6h6',
+    preferred: 'm12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z',
+    more: 'M5 12h.01M12 12h.01M19 12h.01',
   };
 
-  /** Static artwork only; keep the button's accessible name on its owner. */
+  /** Use DOM APIs so MAIN-world pages enforcing Trusted Types still attach. */
   static setControlIcon(button, name) {
     if (button.dataset.vscIcon === name) {
       return;
     }
-    button.innerHTML = `<svg class="vsc-control-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${this.controlIcons[name]}</svg>`;
+    const doc = button.ownerDocument;
+    const create = (tag, attributes) => {
+      const node = doc.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+      return node;
+    };
+    const svg = create('svg', {
+      class: 'vsc-control-icon',
+      viewBox: '0 0 24 24',
+      width: '24',
+      height: '24',
+      fill: 'none',
+      stroke: 'currentColor',
+      'stroke-width': name === 'more' ? '3' : '1.8',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+      focusable: 'false',
+    });
+    const solid = name === 'play' || name === 'pause';
+    svg.appendChild(
+      create('path', {
+        d: this.controlIcons[name],
+        fill: solid ? 'currentColor' : 'none',
+        stroke: solid ? 'none' : 'currentColor',
+      })
+    );
+    if (name === 'back' || name === 'forward') {
+      const text = create('text', {
+        x: name === 'back' ? '11' : '13',
+        y: '21',
+        stroke: 'none',
+        fill: 'currentColor',
+        'font-size': '11',
+        'font-family': 'system-ui',
+        'text-anchor': 'middle',
+      });
+      text.textContent = '10';
+      svg.appendChild(text);
+    }
+    button.replaceChildren(svg);
     button.dataset.vscIcon = name;
   }
 
