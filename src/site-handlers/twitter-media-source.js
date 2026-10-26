@@ -122,23 +122,14 @@ window.VSC = window.VSC || {};
     if (declaredUrl === originalUrl) {
       return true;
     }
-    const declared = new URL(declaredUrl);
-    const active = new URL(originalUrl);
-    // The authenticated player appends this observed transport version after
-    // selecting its SDK variant. All other URL components must still match.
-    if (
-      declared.origin !== active.origin ||
-      declared.pathname !== active.pathname ||
-      declared.searchParams.has('variant_version') ||
-      active.searchParams.getAll('variant_version').length !== 1 ||
-      active.searchParams.get('variant_version') !== '1'
-    ) {
-      return false;
-    }
-    const actualQuery = Array.from(active.searchParams).filter(
-      ([key]) => key !== 'variant_version'
+    // Remove only the observed literal appended marker. Comparing the rest of
+    // the URL verbatim preserves query encoding, ordering and empty segments.
+    const marker = declaredUrl.includes('?') ? '&variant_version=1' : '?variant_version=1';
+    return (
+      !new URL(declaredUrl).searchParams.has('variant_version') &&
+      originalUrl.endsWith(marker) &&
+      originalUrl.slice(0, -marker.length) === declaredUrl
     );
-    return JSON.stringify(actualQuery) === JSON.stringify(Array.from(declared.searchParams));
   }
 
   // undefined: this SDK is absent; null: its current source must retain HLS.

@@ -182,6 +182,34 @@ describe('TwitterMediaSource', () => {
     playerState();
     expect(find()).toBeNull();
   });
+  it.each([
+    ['?tag=%32%31', '?tag=21&variant_version=1'],
+    ['?tag=21', '?tag=%32%31&variant_version=1'],
+    ['?tag=a+b', '?tag=a%20b&variant_version=1'],
+    ['?tag=a%20b', '?tag=a+b&variant_version=1'],
+    ['?tag=21&&v=c67', '?tag=21&v=c67&variant_version=1'],
+    ['?tag=21&v=c67', '?tag=21&variant_version=1&v=c67'],
+    ['?tag=21', '?tag=21&variant_version=%31'],
+    ['?tag=21', '?variant_version=1&tag=21'],
+  ])('rejects query rewrites beyond the appended marker: %s → %s', (declared, active) => {
+    const base = originalUrl.split('?')[0];
+    const actual = base + active;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { variants } = playerState();
+    variants[0].src = base + declared;
+    expect(find()).toBeNull();
+  });
+  it('retains matching raw query encoding and empty segments', () => {
+    const declared = `${originalUrl.split('?')[0]}?tag=%32%31&&v=c67`;
+    const actual = `${declared}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { variants } = playerState();
+    variants[0].src = declared;
+    expect(find()?.progressiveUrl).toBe(variants[3].src);
+  });
+
   it('does not normalize SDK version suffixes without an explicit current variant', () => {
     const actual = `${originalUrl}&variant_version=1`;
     property(video, 'currentSrc', actual);
