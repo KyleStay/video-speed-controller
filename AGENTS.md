@@ -512,8 +512,10 @@ for command approval reuse. Run approved tools directly with the tool's `workdir
 set, and batch independent reads; avoid compound shell strings that turn each
 already-approved operation into a new approval identity. Use this repo's existing
 local CI, browser, Safari native, and TestFlight runners. Keep hosted CI inactive.
-Actual sandbox restrictions still apply; explain an unavoidable access gate once
-and continue independent work instead of asking Kyle to repeat the task scope.
+Use existing permissions and saved approvals. If an operation needs a new
+interactive approval, cancel or skip it and continue independent permitted work.
+Report required delivery steps left incomplete without asking Kyle to unblock
+them; keep sandbox restrictions and approval policy intact.
 
 ## Commands
 

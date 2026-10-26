@@ -190,7 +190,7 @@ export default async function runBasicE2ETests({ launch = launchChromeWithExtens
     await runTest('Controller and shortcuts attach under enforced Trusted Types', async () => {
       fixtures = await startFixtureServer({
         htmlRoutes: {
-          '/trusted-types.html': `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'"><title>Trusted Types media</title><video muted preload="auto" src="/sample.webm"></video>`,
+          '/trusted-types.html': '<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'; trusted-types \'none\'"><title>Trusted Types media</title><video muted preload="auto" src="/sample.webm"></video>',
         },
       });
       await page.goto(`${fixtures.baseUrl}/trusted-types.html`, { waitUntil: 'domcontentloaded' });

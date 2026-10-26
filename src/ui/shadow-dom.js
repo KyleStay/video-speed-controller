@@ -31,7 +31,7 @@ class ShadowDOMManager {
     const doc = button.ownerDocument;
     const create = (tag, attributes) => {
       const node = doc.createElementNS('http://www.w3.org/2000/svg', tag);
-      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+      for (const [key, value] of Object.entries(attributes)) {node.setAttribute(key, value);}
       return node;
     };
     const svg = create('svg', {
