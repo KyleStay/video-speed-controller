@@ -6,6 +6,19 @@ separate verification steps.
 
 ## Current release preparation — October 26, 2026
 
+**0.11.6 (24)** is the startup-rendition candidate. Metadata initialization
+rechecks an eligible same-clip MP4 when an earlier speed command already set the
+numeric rate, so a loading native-HLS video can still select its supplied
+progressive rendition above 2×. It includes the previously merged overlay gestures
+and icon controls. Record reviewed source, local checks, archive/export, upload,
+release notes and Personal Auto availability under
+`build/safari/testflight/0.11.6-build24/` before claiming distribution.
+The controlled native 720p startup case passed at 4×; physical-iPhone audio and
+live authenticated X remain unverified. A separate 1080p fixture selected MP4 but
+missed its cadence target, so this does not claim universal smoothness.
+
+## Previous release preparation
+
 **0.11.6 (23)** is the overlay-gesture candidate. Horizontal picture scrubbing
 extends through unambiguous site overlays and expanded site viewers while
 preserving independent controls, vertical swipes and pinch. Picture taps dismiss

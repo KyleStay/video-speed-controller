@@ -61,6 +61,7 @@
     <button id="paused" disabled>Set 4x paused</button>
     <button id="next" disabled>Add remembered-speed clip</button>
     <button id="replace" disabled>Replace active clip</button>
+    <button id="early" disabled>Set 4x while loading</button>
   </div>
   <p id="state" role="status">X playback: loading</p>
   <script>
@@ -97,7 +98,7 @@
         phase,
         controlled: !!video?.vsc,
         sameNode: video === original,
-        mp4: video?.currentSrc === MP4,
+        mp4: !!video?.currentSrc && video.currentSrc === video.dataset.progressiveUrl,
         rate: video?.playbackRate,
         paused: video?.paused,
         time: video?.currentTime,
@@ -127,16 +128,19 @@
         copy.textContent = text;
       }
     }
-    function makeVideo() {
+    function makeVideo(progressiveUrl = MP4) {
       const parent = document.createElement('div');
       parent.className = 'player';
       const v = document.createElement('video');
       v.dataset.twitterFixture = 'true';
+      v.dataset.progressiveUrl = progressiveUrl;
       v.muted = true;
       v.playsInline = true;
       v.controls = true;
       v.preload = 'auto';
-      parent.__reactProps$fixture = { children: { props: { src: HLS, downloadUrl: MP4 } } };
+      parent.__reactProps$fixture = {
+        children: { props: { src: HLS, downloadUrl: progressiveUrl } },
+      };
       parent.append(v);
       document.querySelector('#players').append(parent);
       for (const type of [
@@ -149,7 +153,7 @@
       ])
         v.addEventListener(type, () => {
           if (type === 'error') errors.push('Media error ' + v.error?.code);
-          history.push({ type, mp4: v.currentSrc === MP4, rate: v.playbackRate });
+          history.push({ type, mp4: v.currentSrc === progressiveUrl, rate: v.playbackRate });
           if (history.length > 32) history.shift();
         });
       v.src = HLS;
@@ -193,6 +197,7 @@
         video = original = makeVideo();
         phase = 'ready';
         document.querySelector('#prepare').disabled = false;
+        document.querySelector('#early').disabled = false;
         draw();
       } else if (performance.now() < deadline) requestAnimationFrame(ready);
       else {
@@ -271,6 +276,46 @@
     document.querySelector('#inline').onclick = () => change('inline');
     document.querySelector('#owned').onclick = () => change('owned');
     document.querySelector('#paused').onclick = () => change('paused');
+    document.querySelector('#early').onclick = () => {
+      video.pause();
+      const config = window.VSC_controller.config;
+      config.settings.lastSpeed = 2.5;
+      config.settings.siteDefaultSpeed = null;
+      // The site's same-asset 720p rendition isolates startup from the cost of
+      // decoding its 1080p download. Both URLs are supplied, never constructed.
+      video = original = makeVideo(
+        'https://video.twimg.com/amplify_video/2041611432752742400/vid/avc1/1280x720/aTg4GLUneEKKiMmS.mp4?tag=21'
+      );
+      video.scrollIntoView({ block: 'center' });
+      if (video.readyState !== 0) errors.push('Expected a pre-metadata command');
+      new window.VSC.VideoController(
+        video,
+        video.parentElement,
+        config,
+        window.VSC_controller.actionHandler
+      );
+      video.vsc.actionHandler.setSpeed(video, 4, 'user');
+      baseline = [scrollX, scrollY];
+      cadence = null;
+      phase = 'early-loading';
+      initialPlay = 'pending';
+      video.play().then(
+        () => {
+          initialPlay = 'resolved';
+          measure(video).catch((error) => {
+            errors.push(String(error));
+            draw();
+          });
+          draw();
+        },
+        (error) => {
+          initialPlay = 'rejected';
+          errors.push(String(error));
+          draw();
+        }
+      );
+      draw();
+    };
     document.querySelector('#next').onclick = () => {
       video.pause();
       video = original = makeVideo();

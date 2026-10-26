@@ -139,6 +139,10 @@ This is a native Safari fixture check, separate from live X or physical-device
 acceptance. It checks same-node HLS-to-MP4 switching, 4× decoded progress,
 paused playback, owned-player return, saved-speed next clips and stable scroll.
 Keep failed runs and inspect page/media errors alongside frame cadence.
+`testFastCommandBeforeMetadataSelectsRendition` issues 4× while the clip is still
+loading, then requires the supplied same-clip 720p MP4, preserved Play promise,
+4× decoded progress and no page/media errors. It covers a speed command that
+already matches `playbackRate` when metadata arrives.
 
 `HLSPlayerQATests/testPlayerRenditionSwitch` uses `/hls-players.html?provider=html`,
 `provider=videojs` or `provider=jwplayer`. The latter fixtures load real public
