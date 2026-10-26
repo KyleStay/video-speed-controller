@@ -47,6 +47,13 @@ import XCTest
         wait(safari, ["\"phase\":\"measured\""])
         assertPlayback(try report(safari), owned: false)
     }
+    func testFastCommandBeforeMetadataSelectsRendition() throws {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari"); safari.activate()
+        wait(safari, ["\"phase\":\"ready\""])
+        safari.buttons["Set 4x while loading"].tap()
+        wait(safari, ["\"phase\":\"measured\"", "\"initialPlay\":\"resolved\""])
+        assertPlayback(try report(safari), owned: false)
+    }
     func testOwnedRenditionChangeAndReturn() throws {
         let safari = prepare(); safari.buttons["Set 4x owned"].tap()
         wait(safari, ["\"phase\":\"measured\""])

@@ -91,6 +91,21 @@ describe('VideoController deferred speed initialization', () => {
     expect(config.save).not.toHaveBeenCalled();
   });
 
+  it.each([1, 2])(
+    'does no speed work after metadata when the accepted %s rate needs no switch',
+    (rate) => {
+      config.settings.lastSpeed = rate;
+      const { video } = attach(createMockVideo({ readyState: 0, playbackRate: rate }));
+      const adjust = vi.spyOn(action, 'adjustSpeed');
+
+      metadata(video);
+
+      expect(video.playbackRate).toBe(rate);
+      expect(adjust).not.toHaveBeenCalled();
+      expect(config.save).not.toHaveBeenCalled();
+    }
+  );
+
   it('preserves a newer session command even without a preference revision change', () => {
     config.settings.rememberSpeed = false;
     const { video } = attach();
@@ -104,6 +119,42 @@ describe('VideoController deferred speed initialization', () => {
     expect(config.settings.lastSpeed).toBe(2.5);
     expect(config.save).not.toHaveBeenCalled();
   });
+
+  it.each(['before attachment', 'while loading'])(
+    'selects the supplied MP4 when a fast rate was accepted %s',
+    async (timing) => {
+      const hls = 'https://video.twimg.com/ext_tw_video/123/pu/pl/original.m3u8';
+      const mp4 = 'https://video.twimg.com/ext_tw_video/123/pu/vid/avc1/720x1280/original.mp4';
+      config.settings.lastSpeed = 4;
+      const target = timing === 'before attachment' ? 4 : 2.5;
+      const video = createMockVideo({
+        readyState: 0,
+        currentSrc: hls,
+        playbackRate: timing === 'before attachment' ? target : 1,
+      });
+      video.src = hls;
+      dom.container.__reactProps$hls = { children: { props: { src: hls, downloadUrl: mp4 } } };
+      // Only the platform is substituted; use the real source resolver and transition.
+      vi.spyOn(window.VSC.SafariHLSPlayback, 'matches').mockReturnValue(true);
+      const load = vi.spyOn(video, 'load').mockImplementation(() => {});
+      attach(video);
+
+      if (timing === 'while loading') {
+        action.adjustSpeed(video, target);
+      }
+      expect(video.playbackRate).toBe(target);
+      expect(load).not.toHaveBeenCalled();
+      vi.mocked(config.save).mockClear();
+
+      metadata(video);
+
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+      expect(video.src).toBe(mp4);
+      expect(video.playbackRate).toBe(target);
+      expect(config.settings.lastSpeed).toBe(target);
+      expect(config.save).not.toHaveBeenCalled();
+    }
+  );
 
   it('retains the unchanged null preference and site baseline without persisting init', () => {
     config.settings.lastSpeed = null;

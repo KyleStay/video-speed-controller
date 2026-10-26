@@ -394,6 +394,9 @@ The coordinator performs one synchronous source/load/start-time/rate transition.
 It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
 selection first joins an already-requested Play promise, then checks the still-current
 source and intent in the next task before starting that synchronous transition.
+Metadata initialization also rechecks rendition eligibility when an earlier speed
+command already set the requested numeric rate. Matching `playbackRate` alone
+must not strand a loading native-HLS clip on its original stream above 2×.
 Paused media is never started by this automatic path. Pending selection is bounded
 to ten seconds and cancels on input, source/poster changes, hidden/navigation
 state or disposal. Expected source

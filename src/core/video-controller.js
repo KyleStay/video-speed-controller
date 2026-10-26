@@ -274,7 +274,8 @@ class VideoController {
 
     if (
       !this.actionHandler ||
-      (targetSpeed === this.video.playbackRate &&
+      (this.video.readyState >= 1 &&
+        targetSpeed === this.video.playbackRate &&
         !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init'))
     ) {
       return;
@@ -298,7 +299,12 @@ class VideoController {
           (local.lifecycleSpeedRevision ?? 0) === (this.config.speedPreferenceRevision ?? 0)
             ? local.lifecycleSpeed
             : this.getTargetSpeed();
-        if (currentTargetSpeed !== this.video.playbackRate) {
+        // A pre-metadata rate command can already match numerically while HLS
+        // still needs its supplied progressive rendition for fast playback.
+        if (
+          currentTargetSpeed !== this.video.playbackRate ||
+          window.VSC.SafariHLSPlayback?.canSwitch?.(this, currentTargetSpeed, 'init')
+        ) {
           this.actionHandler.adjustSpeed(this.video, currentTargetSpeed, { source: 'init' });
         }
       };
