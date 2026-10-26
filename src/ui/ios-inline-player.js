@@ -393,9 +393,10 @@ class IOSInlinePlayer {
     }
     this.set(this.refs.play, 'hidden', false);
     const secondary = width >= 320 && height >= 96;
-    for (const name of ['rewind', 'forward', 'mute']) {
+    for (const name of ['rewind', 'forward']) {
       this.set(this.refs[name], 'hidden', !secondary);
     }
+    this.set(this.refs.mute, 'hidden', width < 240 || height < 96);
     this.set(this.refs.timelineGroup, 'hidden', width < 240 || height < 144 || !bounds);
   }
 
@@ -944,6 +945,10 @@ class IOSInlinePlayer {
         point.clientY <= rect.bottom
       )) {
         return false;
+      }
+      const xSurface = knownContainer && window.VSC.IOSSiteControls.xSurfaceControl(path[0], point);
+      if (xSurface?.node === knownContainer && xSurface.video === this.video) {
+        return true;
       }
       const containerIndex = path.indexOf(container);
       const control = path.find(

@@ -247,26 +247,32 @@ describe('owned iOS inline transport', () => {
   });
 
   it.each([
-    [80, 200, 'minimal', false, false],
-    [120, 68, 'compact', false, false],
-    [200, 120, 'standard', false, false],
-    [300, 200, 'standard', false, true],
-    [360, 200, 'standard', true, true],
-  ])('progressively fits owned targets to %s×%s', (width, height, mode, secondary, timeline) => {
-    position(width, height);
-    player.setOwned(true);
-    expect(host.getAttribute('data-vsc-inline-layout')).toBe(mode);
-    expect(player.refs.play.hidden).toBe(false);
-    expect(player.refs.mute.hidden).toBe(!secondary);
-    expect(player.refs.rewind.hidden).toBe(!secondary);
-    expect(player.refs.timelineGroup.hidden).toBe(!timeline);
-    expect(parseFloat(player.root.style.getPropertyValue('--vsc-inline-owned-width'))).toBe(
-      width - 8
-    );
-    const css = shadow.querySelector('style').textContent;
-    expect(css).toContain('min-height: 44px');
-    expect(css).toContain("[data-vsc-inline-layout='minimal']");
-  });
+    [80, 200, 'minimal', false, false, false],
+    [120, 68, 'compact', false, false, false],
+    [200, 120, 'standard', false, false, false],
+    [239, 144, 'standard', false, false, false],
+    [240, 95, 'compact', false, false, false],
+    [240, 96, 'standard', false, false, true],
+    [300, 200, 'standard', false, true, true],
+    [360, 200, 'standard', true, true, true],
+  ])(
+    'progressively fits owned targets to %s×%s',
+    (width, height, mode, secondary, timeline, mute) => {
+      position(width, height);
+      player.setOwned(true);
+      expect(host.getAttribute('data-vsc-inline-layout')).toBe(mode);
+      expect(player.refs.play.hidden).toBe(false);
+      expect(player.refs.mute.hidden).toBe(!mute);
+      expect(player.refs.rewind.hidden).toBe(!secondary);
+      expect(player.refs.timelineGroup.hidden).toBe(!timeline);
+      expect(parseFloat(player.root.style.getPropertyValue('--vsc-inline-owned-width'))).toBe(
+        width - 8
+      );
+      const css = shadow.querySelector('style').textContent;
+      expect(css).toContain('min-height: 44px');
+      expect(css).toContain("[data-vsc-inline-layout='minimal']");
+    }
+  );
 
   it('uses clipping and occlusion before readiness returns without a separate geometry scan', () => {
     player.setOwned(true);
@@ -484,6 +490,53 @@ describe('owned iOS inline transport', () => {
     container.appendChild(video); // Keep normal fixture teardown ownership.
     document.body.append(video);
     container.remove();
+  });
+
+  it('scrubs a focusable X picture inside a navigable tweet without claiming mute or vertical input', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const post = document.createElement('article');
+    post.setAttribute('role', 'link');
+    post.tabIndex = 0;
+    const container = document.createElement('div');
+    const trigger = document.createElement('div');
+    trigger.setAttribute('data-slot', 'xds-context-menu-trigger');
+    trigger.tabIndex = 0;
+    const cover = document.createElement('button');
+    cover.setAttribute('aria-label', 'Play');
+    const controls = document.createElement('div');
+    controls.className = 'group/controls';
+    const mute = document.createElement('button');
+    mute.setAttribute('aria-label', 'Mute');
+    controls.append(mute);
+    trigger.append(cover, controls);
+    container.append(video, trigger);
+    post.append(container);
+    document.body.append(post);
+    video.vsc.iosPlayer.siteControls = { container };
+    player.setOwned(true);
+    const release = player.observeSurface(container);
+    const pointer = (type, x, y, target = trigger) => {
+      const event = new Event(type, { bubbles: true, composed: true, cancelable: true });
+      Object.assign(event, { pointerId: 7, pointerType: 'touch', clientX: x, clientY: y });
+      target.dispatchEvent(event);
+      return event;
+    };
+    pointer('pointerdown', 140, 170);
+    expect(pointer('pointermove', 140, 210).defaultPrevented).toBe(false);
+    pointer('pointerup', 140, 210);
+    expect(video.currentTime).toBe(12);
+    pointer('pointerdown', 140, 170, mute);
+    pointer('pointermove', 180, 170, mute);
+    pointer('pointerup', 180, 170, mute);
+    expect(video.currentTime).toBe(12);
+    pointer('pointerdown', 140, 170);
+    pointer('pointermove', 180, 170);
+    expect(player.scrubber.active).toBe(true);
+    pointer('pointerup', 180, 170);
+    expect(video.currentTime).toBe(24);
+    release();
+    document.body.append(video);
+    post.remove();
   });
 
   describe('unknown picture overlays', () => {

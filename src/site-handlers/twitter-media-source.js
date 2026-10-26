@@ -103,6 +103,18 @@ window.VSC = window.VSC || {};
     return hasOriginal ? best?.url : null;
   }
 
+  function playerAccessoryVariants(value) {
+    // X keeps playback renditions beside its download link in this fixed path.
+    // Read only data descriptors; do not expand the general React traversal.
+    for (const key of ['timeRemainingAccessory', 'props', 'media', 'video_info', 'variants']) {
+      value = ownValue(value, key);
+      if (!value || typeof value !== 'object') {
+        return null;
+      }
+    }
+    return Array.isArray(value) ? value : null;
+  }
+
   window.VSC.TwitterMediaSource = {
     findCandidate(video, originParent) {
       try {
@@ -192,6 +204,13 @@ window.VSC = window.VSC || {};
                     return { originalUrl, progressiveUrl, mediaId: original.id };
                   }
                   continue;
+                }
+                const accessory = playerAccessoryVariants(value);
+                if (accessory && visit(accessory)) {
+                  const progressiveUrl = variantCandidate(accessory, originalUrl, original, visit);
+                  if (progressiveUrl) {
+                    return { originalUrl, progressiveUrl, mediaId: original.id };
+                  }
                 }
                 if (ownValue(value, 'src') === originalUrl) {
                   const progressiveUrl = ownValue(value, 'downloadUrl');

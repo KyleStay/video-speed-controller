@@ -29,10 +29,10 @@ import XCTest
         wait(safari, ["\"phase\":\"prepared\"", "\"controlled\":true", "\"errors\":[]"])
         return safari
     }
-    private func assertPlayback(_ data: [String: Any], owned: Bool) {
+    private func assertPlayback(_ data: [String: Any], owned: Bool, rate: Double = 4) {
         XCTAssertEqual(data["sameNode"] as? Bool, true)
         XCTAssertEqual(data["mp4"] as? Bool, true)
-        XCTAssertEqual(data["rate"] as? Double, 4)
+        XCTAssertEqual(data["rate"] as? Double, rate)
         XCTAssertEqual(data["paused"] as? Bool, false)
         XCTAssertEqual(data["active"] as? Bool, owned)
         XCTAssertEqual(data["native"] as? Bool, false)
@@ -40,12 +40,17 @@ import XCTest
         XCTAssertEqual((data["errors"] as? [Any])?.count, 0)
         let cadence = data["cadence"] as! [String: Double]
         XCTAssertGreaterThanOrEqual(cadence["hz"]!, 24)
-        XCTAssertEqual(cadence["progress"]!, 4, accuracy: 0.2)
+        XCTAssertEqual(cadence["progress"]!, rate, accuracy: 0.2)
     }
     func testInlineRenditionChange() throws {
         let safari = prepare(); safari.buttons["Set 4x inline"].tap()
         wait(safari, ["\"phase\":\"measured\""])
         assertPlayback(try report(safari), owned: false)
+    }
+    func testJustAboveTwoSelectsPlayerRendition() throws {
+        let safari = prepare(); safari.buttons["Set 2.1x inline"].tap()
+        wait(safari, ["\"phase\":\"measured\""])
+        assertPlayback(try report(safari), owned: false, rate: 2.1)
     }
     func testFastCommandBeforeMetadataSelectsRendition() throws {
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari"); safari.activate()

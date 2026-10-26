@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Controlled modern X player</title>
     <style>
       body {
@@ -172,7 +173,7 @@
   <body>
     <h1>Controlled modern X player</h1>
     <div class="lead" aria-hidden="true"></div>
-    <article>
+    <article role="link" tabindex="0" data-href="/creator/status/123">
       <a id="post-permalink" href="/creator/status/123">Post 123</a>
       <div id="modern-player" class="group relative isolate aspect-video overflow-hidden">
         <video
@@ -183,7 +184,7 @@
           preload="auto"
           src="/__stayfast_modern.webm"
         ></video>
-        <div data-slot="xds-context-menu-trigger">
+        <div data-slot="xds-context-menu-trigger" tabindex="0">
           <button id="picture-cover" aria-label="Play"></button>
           <div class="group/controls site-controls">
             <button id="site-play" data-slot="xds-button" aria-label="Play">
