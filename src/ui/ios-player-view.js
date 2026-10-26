@@ -164,9 +164,23 @@
             padding: 12px;
             font-size: 18px;
             font-weight: 650;
-            background: #141414b3;
           }
-          .transport .play { min-width: 80px; min-height: 80px; background: #ffffffed; color: #111; }
+          .transport .play { min-width: 80px; min-height: 80px; }
+          header button, .transport button, .options > button, .unlock {
+            border-color: transparent;
+            background: transparent;
+            color: #fff;
+            text-shadow: 0 1px 3px #000;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+          }
+          .vsc-control-icon { display: block; width: 24px; height: 24px; pointer-events: none; filter: drop-shadow(0 1px 2px #000); }
+          .transport .vsc-control-icon { width: 36px; height: 36px; }
+          .transport .play .vsc-control-icon { width: 48px; height: 48px; }
+          header button:active, .transport button:active, .options > button:active, .unlock:active,
+          .options > button[aria-pressed='true'] { background: transparent; color: #67e8f9; }
           footer { position: relative; min-width: 0; display: grid; gap: 8px; }
           .timeline { display: flex; align-items: center; gap: 10px; min-width: 0; }
           .time { min-width: 3.5ch; color: #fffd; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -211,6 +225,7 @@
             background-position: right 14px center, right 9px center;
             background-size: 5px 5px; background-repeat: no-repeat;
           }
+          .options > .speed { border-color: transparent; background-color: transparent; }
           .extra-options {
             position: absolute; z-index: 3;
             left: 0; right: 0;
@@ -329,6 +344,21 @@
       this.refs = {};
       for (const element of this.shadow.querySelectorAll('[data-ref]')) {
         this.refs[element.dataset.ref] = element;
+      }
+      for (const [ref, icon] of Object.entries({
+        done: 'close',
+        lock: 'lock',
+        unlock: 'unlock',
+        fullscreen: 'expand',
+        back: 'back',
+        play: 'play',
+        forward: 'forward',
+        preferred: 'preferred',
+        fit: 'expand',
+        mute: 'sound',
+        more: 'more',
+      })) {
+        window.VSC.ShadowDOMManager.setControlIcon(this.refs[ref], icon);
       }
     }
 

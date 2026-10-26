@@ -151,9 +151,12 @@ describe('owned iOS inline transport', () => {
     const src = video.src;
     player.setOwned(true);
     expect(player.refs.play.getAttribute('aria-label')).toBe('Play video');
+    expect(player.refs.play.dataset.vscIcon).toBe('play');
+    expect(player.refs.play.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
     player.refs.play.click();
     expect(video.play).toHaveBeenCalledOnce();
     expect(player.refs.play.getAttribute('aria-label')).toBe('Pause video');
+    expect(player.refs.play.dataset.vscIcon).toBe('pause');
     player.refs.play.click();
     expect(video.pause).toHaveBeenCalledOnce();
     expect(player.refs.play.getAttribute('aria-label')).toBe('Play video');

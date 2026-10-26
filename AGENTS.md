@@ -498,6 +498,25 @@ with direct `chrome.*` access.
 - **Formatting**: Prettier + ESLint are enforced via Husky pre-commit and CI;
   run `npm run lint` / `npm run format`.
 
+## Authorized landing and TestFlight work
+
+When Kyle requests landing and a TestFlight update, carry both outcomes through
+the installed `land-all-branches` and `testflight-release` workflows without
+separate confirmation for recovery snapshots, reviews, routine repairs, PRs,
+compliant merges, verified branch/worktree cleanup, archive/export, upload,
+release notes, and the existing tester group's rollout. Preserve their review,
+recovery, required-check, and upload-idempotency gates.
+
+Use the [Complete Authorized Work skill](/Users/kyle/.codex/skills/complete-authorized-work/SKILL.md)
+for command approval reuse. Run approved tools directly with the tool's `workdir`
+set, and batch independent reads; avoid compound shell strings that turn each
+already-approved operation into a new approval identity. Use this repo's existing
+local CI, browser, Safari native, and TestFlight runners. Keep hosted CI inactive.
+Use existing permissions and saved approvals. If an operation needs a new
+interactive approval, cancel or skip it and continue independent permitted work.
+Report required delivery steps left incomplete without asking Kyle to unblock
+them; keep sandbox restrictions and approval policy intact.
+
 ## Commands
 
 ```sh

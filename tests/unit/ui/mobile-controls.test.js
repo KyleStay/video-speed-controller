@@ -46,6 +46,23 @@ describe('Mobile controller interactions and lifecycle', () => {
     expect(actionHandler.runAction).not.toHaveBeenCalled();
   });
 
+  it('constructs controller icons without HTML parsing sinks', () => {
+    const guardedHost = document.createElement('vsc-controller');
+    const sink = vi.spyOn(Element.prototype, 'innerHTML', 'set').mockImplementation(() => {
+      throw new TypeError('TrustedHTML required');
+    });
+    try {
+      const root = window.VSC.ShadowDOMManager.createShadowDOM(guardedHost);
+      const icon = root.querySelector('.inline-fullscreen svg');
+      expect(icon.namespaceURI).toBe('http://www.w3.org/2000/svg');
+      expect(icon.getAttribute('aria-hidden')).toBe('true');
+      expect(icon.querySelector('path').namespaceURI).toBe(icon.namespaceURI);
+      expect(sink).not.toHaveBeenCalled();
+    } finally {
+      sink.mockRestore();
+    }
+  });
+
   it('routes an absolute preset from the button even when a child is tapped', () => {
     const button = shadow.querySelector('[data-action="setSpeed"][data-value="1.5"]');
     const child = document.createElement('span');

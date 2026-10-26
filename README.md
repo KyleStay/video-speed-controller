@@ -40,7 +40,8 @@ advertising, analytics, or StayTech backend.
   modified precision (`×1/2`, `×1/4`, `×1/10`) stay visible while dragging;
   normal scrubbing has no rate label. The inline timeline
   sits at the video’s bottom, independently of the speed controls.
-  The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
+  Inline and fullscreen controls use borderless icons with accessible labels and
+  full-size touch targets; speed and time remain visible. The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
   site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
   preserving your position and play/pause state. Supported metadata includes
   X/Twitter, HTML source alternatives, Video.js/Brightcove and JW Player. Labeled or populated caption
@@ -193,7 +194,7 @@ for clipping and nearby page chrome where space permits. Verification limits
 and current site issues are recorded in the
 [Safari guide](docs/safari.md).
 
-The custom player includes **1×** and **Pref** quick actions alongside speed selection,
+The custom player includes **1×** and a star for preferred speed alongside speed selection,
 play/pause, ten-second skips, scrubbing, and mute. While dragging the timeline,
 move your finger farther above or below it for half, quarter, or tenth-speed
 precision. Double-tap the left or right edge to skip back or forward ten seconds;
@@ -205,7 +206,7 @@ hides the controls and blocks playback gestures/keys; **Unlock** restores them.
 **More** contains available captions/audio languages, **Apple player**, system controls, and
 **Use site player**. Tap the duration to show remaining time. Live streams offer
 **Go live** when a seek window exists.
-**Done** returns to the page; **Use site player** hands that video back to its
+The close (×) icon returns to the page; **Use site player** hands that video back to its
 original controls. StayFast's player fills the webpage viewport, with optional
 container fullscreen where supported. Apple player uses Apple's controls;
 StayFast cannot change that interface or add buttons inside it or Picture in Picture.

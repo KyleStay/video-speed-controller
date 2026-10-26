@@ -1485,7 +1485,7 @@ class IOSPlayer {
       owned.value = this.video.style.getPropertyValue('object-fit');
     }
     const fill = mode === 'cover';
-    this.ui.refs.fit.textContent = fill ? 'Fit' : 'Fill';
+    window.VSC.ShadowDOMManager.setControlIcon(this.ui.refs.fit, fill ? 'contract' : 'expand');
     this.ui.refs.fit.setAttribute('aria-pressed', String(fill));
     this.ui.refs.fit.setAttribute(
       'aria-label',
@@ -1563,17 +1563,16 @@ class IOSPlayer {
     if (refs.current.style.minWidth !== timeWidth) {
       refs.current.style.minWidth = timeWidth;
     }
-    setControlProperty(
+    window.VSC.ShadowDOMManager.setControlIcon(
       refs.play,
-      'textContent',
-      this.video.ended ? 'Replay' : this.video.paused ? 'Play' : 'Pause'
+      this.video.ended ? 'replay' : this.video.paused ? 'play' : 'pause'
     );
     setControlAttribute(
       refs.play,
       'aria-label',
       this.video.ended ? 'Replay video' : this.video.paused ? 'Play video' : 'Pause video'
     );
-    setControlProperty(refs.mute, 'textContent', this.video.muted ? 'Unmute' : 'Mute');
+    window.VSC.ShadowDOMManager.setControlIcon(refs.mute, this.video.muted ? 'muted' : 'sound');
     setControlAttribute(refs.mute, 'aria-label', this.video.muted ? 'Unmute video' : 'Mute video');
     const selectedTime = this.scrubber?.active
       ? this.scrubber.formatTime(position)

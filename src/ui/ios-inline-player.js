@@ -65,13 +65,13 @@ class IOSInlinePlayer {
     this.seekCancelled = false;
     this.refs = {};
     const doc = this.host.ownerDocument;
-    const button = (name, label, text, action) => {
+    const button = (name, label, icon, action) => {
       const node = doc.createElement('button');
       node.type = 'button';
       node.className = `inline-owned-control inline-${name}`;
       node.dataset.inlineAction = name;
       node.setAttribute('aria-label', label);
-      node.textContent = text;
+      window.VSC.ShadowDOMManager.setControlIcon(node, icon);
       node.hidden = true;
       // Keep primary targets in a stable order across responsive layout changes.
       this.root.insertBefore(
@@ -98,10 +98,10 @@ class IOSInlinePlayer {
         true
       );
     };
-    button('rewind', 'Rewind 10 seconds', '−10', () => this.seekBy(-10));
-    button('play', 'Play video', '▶', () => this.playPause());
-    button('forward', 'Forward 10 seconds', '+10', () => this.seekBy(10));
-    button('mute', 'Mute video', 'Mute', () => {
+    button('rewind', 'Rewind 10 seconds', 'back', () => this.seekBy(-10));
+    button('play', 'Play video', 'play', () => this.playPause());
+    button('forward', 'Forward 10 seconds', 'forward', () => this.seekBy(10));
+    button('mute', 'Mute video', 'sound', () => {
       this.video.muted = !this.video.muted;
       this.update();
     });
@@ -524,7 +524,10 @@ class IOSInlinePlayer {
         : this.video.paused
           ? 'Play video'
           : 'Pause video';
-      this.set(this.refs.play, 'textContent', this.video.ended || this.video.paused ? '▶' : 'Ⅱ');
+      window.VSC.ShadowDOMManager.setControlIcon(
+        this.refs.play,
+        this.video.ended ? 'replay' : this.video.paused ? 'play' : 'pause'
+      );
       if (this.refs.play.getAttribute('aria-label') !== label) {
         this.refs.play.setAttribute('aria-label', label);
       }
@@ -532,7 +535,10 @@ class IOSInlinePlayer {
       if (this.refs.mute.getAttribute('aria-label') !== mute) {
         this.refs.mute.setAttribute('aria-label', mute);
       }
-      this.set(this.refs.mute, 'textContent', this.video.muted ? 'Sound' : 'Mute');
+      window.VSC.ShadowDOMManager.setControlIcon(
+        this.refs.mute,
+        this.video.muted ? 'muted' : 'sound'
+      );
       const bounds = this.bounds();
       this.set(this.refs.timeline, 'disabled', !bounds);
       this.set(this.refs.rewind, 'disabled', !bounds);

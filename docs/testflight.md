@@ -6,7 +6,22 @@ separate verification steps.
 
 ## Current release preparation — October 25, 2026
 
-**0.11.6 (19)** is the next candidate. Inline controls and the timeline reveal
+**0.11.6 (22)** is the next candidate. Primary inline and fullscreen controls use
+borderless icons while retaining accessible labels and 44px touch targets. Speed
+and time remain numeric; the star selects preferred speed, the padlock locks
+controls, the ellipsis opens More, and the close icon returns to the page.
+It also includes picture-swipe precision scrubbing from build 21. Archive/export,
+upload and tester availability must be recorded under
+`build/safari/testflight/0.11.6-build22/` before claiming distribution.
+Physical-device and live Safari site checks remain separate acceptance checks.
+
+**0.11.6 (21)** is confirmed Testing in Personal Auto for both existing testers;
+its local rollout record is
+`build/safari/testflight/0.11.6-build21/rollout-verification.json`.
+
+## Earlier release preparation
+
+**0.11.6 (19)** was the candidate for the following changes. Inline controls and the timeline reveal
 together on picture/control input, keyboard focus and pointer movement, including
 recognized single-video site overlays. Playing controls use a four-second idle
 delay; paused media and active scrubbing retain the timeline. The top transport
@@ -18,8 +33,6 @@ Record the merged source, checks, archive/export, upload receipt, processing and
 Personal Auto tester availability under `build/safari/testflight/0.11.6-build19/`.
 Preparation alone does not establish upload or Testing. Physical-device and live
 Safari site checks remain separate from simulator and controlled-fixture proof.
-
-## Earlier release preparation
 
 **0.11.4 (18)** is the next candidate. Delayed media initialization now reads
 current speed preferences when metadata arrives and preserves a newer command
