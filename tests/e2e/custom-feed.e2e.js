@@ -226,9 +226,23 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
           await page.waitForFunction(
             () => Math.abs(document.querySelector('video').currentTime - 30) < 0.5
           );
+          const range = await page.evaluateHandle(
+            () => document.querySelector('video').vsc.controlsManager.inlinePlayer.refs.timeline
+          );
+          try {
+            await range.asElement().focus();
+            await page.keyboard.press('ArrowRight');
+          } finally {
+            await range.dispose();
+          }
+          await page.waitForFunction(() => document.querySelector('video').currentTime > 30.05);
+          const beforeLink = (await state(page)).time;
           await page.click('#creator-link');
           assert.equal((await state(page)).trace.linkClicks, 1);
-          assert.true((await state(page)).paused && !(await state(page)).owned);
+          const afterLink = await state(page);
+          assert.true(
+            afterLink.paused && !afterLink.owned && Math.abs(afterLink.time - beforeLink) < 0.05
+          );
           await mkdir(resolve('test-results/custom-feed'), { recursive: true });
           await page.screenshot({
             path: resolve(`test-results/custom-feed/bottom-${variant.replaceAll(' ', '-')}.png`),

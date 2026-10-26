@@ -88,6 +88,8 @@ remains compact at the top; the controller does not grow into a video-sized
 hit box. Existing placement events update rail coordinates after occlusion and
 ancestor scaling, without writing scroll or polling.
 Site metadata and controls do not move the rail upward.
+Unknown site controls can overlap it and retain their input priority; uncovered
+rail input, keyboard seeking and picture swipes remain available.
 The top transport retains its vertical position relative to the video as the page
 scrolls. When its anchor passes the viewport edge or under a header, that strip
 hides instead of sliding down over the picture; the bottom rail remains independent.
