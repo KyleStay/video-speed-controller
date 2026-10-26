@@ -219,7 +219,7 @@
           }
         }
         const state = window.__customFeedState();
-        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; duration ${state.duration.toFixed(2)}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
+        const text = `Clip ${state.clip}; rate ${state.rate}; paused ${state.paused}; time ${state.time.toFixed(2)}; owned ${state.owned}; viewer ${state.siteViewer}; feed ${state.feedY.toFixed(2)}; top ${state.mediaTop.toFixed(2)}; duration ${state.duration.toFixed(2)}; source ${state.sameSource}; metadata ${state.ready >= 1}; ready ${state.ready}; loaded ${state.ready >= 2}; controllers ${state.controllers}; attached ${state.attached}; connected ${state.connected}; errors ${state.errors.length + (state.mediaError ? 1 : 0)}`;
         const status = document.querySelector('#fixture-status');
         if (status.textContent !== text) status.textContent = text;
         for (const [container, id, prefix] of [
@@ -242,7 +242,8 @@
       };
       const prepare = (media) => {
         media.muted = true;
-        media.src = `${mediaPath}?clip=${clip}`;
+        originalSource = new URL(`${mediaPath}?clip=${clip}`, location.href).href;
+        media.src = originalSource;
         for (const type of [
           'loadedmetadata',
           'loadeddata',
@@ -270,13 +271,7 @@
         }
       };
       prepare(video);
-      video.addEventListener(
-        'loadedmetadata',
-        () => {
-          originalSource = video.currentSrc;
-        },
-        { once: true }
-      );
+
       // Deliberately unsophisticated site tap handling exercises trailing-touch
       // isolation after a committed horizontal drag. It never owns vertical moves.
       let start = null;
@@ -350,16 +345,9 @@
           video.replaceWith(next);
           video = next;
         }
-        originalSource = '';
         prepare(video);
         originalVideo = video;
-        video.addEventListener(
-          'loadedmetadata',
-          () => {
-            originalSource = video.currentSrc;
-          },
-          { once: true }
-        );
+
         update();
       };
       document.addEventListener('pointerup', scheduleUpdate, true);

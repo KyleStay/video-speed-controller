@@ -53,8 +53,10 @@ import XCTest
         if delayed.exists && delayed.isHittable { delayed.tap() }
         let play = safari.buttons["Play video"]
         XCTAssertTrue(play.waitForExistence(timeout: 20)); target(play)
-        wait(safari, ["Clip 1;", "paused true", "loaded true", "controllers 1;", "attached true", "connected true", "errors 0"])
-        play.tap(); wait(safari, ["paused false"])
+        wait(safari, ["Clip 1;", "paused true", "metadata true", "source true", "controllers 1;", "attached true", "connected true", "errors 0"])
+        let initialTime = time(safari)
+        play.tap(); wait(safari, ["paused false", "loaded true"])
+        requireTime(safari, "first clip plays") { $0 > initialTime + 0.1 }
         safari.buttons["Pause video"].tap(); wait(safari, ["paused true"])
         let mute = safari.buttons["Unmute video"]; target(mute); mute.tap()
         XCTAssertTrue(safari.buttons["Mute video"].waitForExistence(timeout: 5))
@@ -113,10 +115,10 @@ import XCTest
         safari.buttons["Close site viewer"].tap()
         XCTAssertEqual(fullscreen.frame.minY, feedY, accuracy: 2)
         safari.buttons["Next clip"].tap()
-        wait(safari, ["Clip 2;", "paused true", "loaded true", "controllers 1;", "attached true", "connected true", "errors 0"])
+        wait(safari, ["Clip 2;", "paused true", "metadata true", "source true", "controllers 1;", "attached true", "connected true", "errors 0"])
         target(safari.buttons["Play video"])
         let clipStart = time(safari)
-        safari.buttons["Play video"].tap(); wait(safari, ["paused false"])
+        safari.buttons["Play video"].tap(); wait(safari, ["paused false", "loaded true"])
         requireTime(safari, "next clip plays") { $0 > clipStart + 0.1 }
         safari.buttons["Pause video"].tap(); wait(safari, ["paused true"])
         capture(safari, "custom-feed-next-clip")

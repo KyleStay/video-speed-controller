@@ -176,14 +176,22 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
             after.time > 20.5 && after.paused && !after.owned && after.trace.pictureTouches === 0,
             JSON.stringify(after)
           );
+          await page.evaluate(() => {
+            window.__mockScrollEnded = new Promise((resolve) =>
+              document.querySelector('#feed').addEventListener('scrollend', resolve, { once: true })
+            );
+          });
           await drag(page, { x: 110, y: 450 }, { x: 110, y: 280 });
           await page.waitForFunction(() => document.querySelector('#feed').scrollTop > 30);
           assert.true((await state(page)).paused, 'A vertical gesture cannot trigger site Play');
+          await page.evaluate(() => window.__mockScrollEnded);
           await page.evaluate(() => {
             document.querySelector('#feed').scrollTop = 0;
           });
           await page.waitForFunction(
-            () => document.querySelector('video').getBoundingClientRect().top > 0
+            () =>
+              document.querySelector('#feed').scrollTop === 0 &&
+              document.querySelector('video').getBoundingClientRect().top > 0
           );
         }
       );
