@@ -8,6 +8,7 @@ class MediaElementObserver {
   constructor(config, siteHandler) {
     this.config = config;
     this.siteHandler = siteHandler;
+    this.hasObservedMedia = false;
   }
 
   /**
@@ -52,6 +53,8 @@ class MediaElementObserver {
     const siteSpecificMedia = this.siteHandler.detectSpecialVideos(document);
     mediaElements.push(...siteSpecificMedia);
 
+    this.hasObservedMedia ||= mediaElements.length > 0;
+
     // Filter out ignored videos
     const filteredMedia = mediaElements.filter((media) => {
       return !this.siteHandler.shouldIgnoreVideo(media);
@@ -82,6 +85,8 @@ class MediaElementObserver {
       // Find site-specific media elements (usually lightweight)
       const siteSpecificMedia = this.siteHandler.detectSpecialVideos(document);
       mediaElements.push(...siteSpecificMedia);
+
+      this.hasObservedMedia ||= mediaElements.length > 0;
 
       // Filter out ignored videos
       const filteredMedia = mediaElements.filter((media) => {

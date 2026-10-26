@@ -213,6 +213,66 @@ describe('compact iOS inline controls', () => {
       expect(occlusion).toHaveBeenCalledTimes(2);
     });
 
+    it('moves the rail above local metadata while leaving picture overlays and modals alone', () => {
+      const scope = document.createElement('section');
+      const picture = document.createElement('div');
+      const metadata = document.createElement('a');
+      const modal = document.createElement('div');
+      metadata.href = '#profile';
+      modal.setAttribute('role', 'dialog');
+      document.body.append(scope, modal);
+      scope.append(video, picture, metadata);
+      manager.inlinePlayer.surfaceContainer = { node: scope };
+      picture.getBoundingClientRect = () => media;
+      metadata.getBoundingClientRect = () => ({ left: 30, right: 710, top: 410, bottom: 450 });
+      const hitTest = vi.fn((x, y) => [y >= 410 && y <= 450 ? metadata : picture, video]);
+      Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: hitTest });
+      try {
+        observer.callback();
+        expect(railRect().bottom).toBe(406);
+        expect(railRect().bottom - railRect().top).toBe(44);
+        expect(metadata.style.cssText).toBe('');
+        hitTest.mockImplementation(() => [picture, video]);
+        observer.callback();
+        expect(railRect().bottom).toBe(456);
+        hitTest.mockImplementation(() => [modal, video]);
+        observer.callback();
+        expect(railRect().bottom).toBe(456);
+        expect(hitTest.mock.calls.length).toBeLessThan(50);
+      } finally {
+        document.body.append(video);
+        manager.inlinePlayer.surfaceContainer = null;
+        scope.remove();
+        modal.remove();
+        delete document.elementsFromPoint;
+      }
+    });
+
+    it('retains the bottom rail if local metadata leaves no lane below the top strip', () => {
+      media = { left: 20, top: 0, width: 300, height: 144, right: 320, bottom: 144 };
+      const scope = document.createElement('section');
+      const metadata = document.createElement('a');
+      metadata.href = '#profile';
+      metadata.getBoundingClientRect = () => ({ left: 30, right: 310, top: 60, bottom: 100 });
+      document.body.append(scope);
+      scope.append(video, metadata);
+      manager.inlinePlayer.surfaceContainer = { node: scope };
+      Object.defineProperty(document, 'elementsFromPoint', {
+        configurable: true,
+        value: (x, y) => [y >= 60 && y <= 100 ? metadata : video],
+      });
+      try {
+        observer.callback();
+        expect(railRect().bottom).toBe(140);
+        expect(railRect().top).toBeGreaterThan(controller.getBoundingClientRect().bottom);
+      } finally {
+        document.body.append(video);
+        manager.inlinePlayer.surfaceContainer = null;
+        scope.remove();
+        delete document.elementsFromPoint;
+      }
+    });
+
     it('hides the rail and hands actual tiny media back without leaving a video-sized hit box', () => {
       const availability = vi.fn();
       video.vsc.iosPlayer.setInlineAvailability = availability;

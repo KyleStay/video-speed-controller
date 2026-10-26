@@ -16,7 +16,16 @@ class IOSPlayerGestures {
     this.lastTouchAt = null;
     this.scrubStart = null;
     this.blocked = false;
+    this.surfaceTouchCommitted = false;
+    this.trailingTouchView = null;
+    this.trailingTouchTarget = null;
+    this.onOutsideTouchEnd = (event) => {
+      if (!event.touches?.length && !event.composedPath().includes(this.trailingTouchTarget)) {
+        this.clearTrailingTouch();
+      }
+    };
     this.onNativeMove = (event) => this.preventNativeScroll(event);
+    this.onNativeEnd = (event) => this.endNativeTouch(event);
     this.onDown = (event) => this.down(event);
     this.onMove = (event) => this.move(event);
     this.onEnd = (event) => this.end(event);
@@ -40,6 +49,8 @@ class IOSPlayerGestures {
     stage.addEventListener('pointercancel', this.onEnd, true);
     stage.addEventListener('lostpointercapture', this.onLost, true);
     stage.addEventListener('touchmove', this.onNativeMove, { capture: true, passive: false });
+    stage.addEventListener('touchend', this.onNativeEnd, { capture: true, passive: false });
+    stage.addEventListener('touchcancel', this.onNativeEnd, { capture: true, passive: false });
     return true;
   }
 
@@ -180,6 +191,26 @@ class IOSPlayerGestures {
     }
   }
 
+  endNativeTouch(event) {
+    if (!this.surfaceTouchCommitted) {
+      return;
+    }
+    // Pointer-up finishes seeking before the browser delivers touchend. A site
+    // tap recognizer must not reinterpret that committed drag as Play/Pause.
+    this.claim(event);
+    if (!event.touches?.length) {
+      this.clearTrailingTouch();
+    }
+  }
+
+  clearTrailingTouch() {
+    this.trailingTouchView?.removeEventListener('touchend', this.onOutsideTouchEnd, true);
+    this.trailingTouchView?.removeEventListener('touchcancel', this.onOutsideTouchEnd, true);
+    this.trailingTouchView = null;
+    this.trailingTouchTarget = null;
+    this.surfaceTouchCommitted = false;
+  }
+
   finishScrub() {
     this.points.clear();
     this.clearTapChain();
@@ -224,6 +255,15 @@ class IOSPlayerGestures {
       return false;
     }
     this.suppressClick = true;
+    this.surfaceTouchCommitted = true;
+    this.trailingTouchTarget = event.target;
+    this.trailingTouchView = this.owner.view;
+    for (const type of ['touchend', 'touchcancel']) {
+      this.trailingTouchView?.addEventListener(type, this.onOutsideTouchEnd, {
+        capture: true,
+        passive: true,
+      });
+    }
     return true;
   }
 
@@ -256,6 +296,9 @@ class IOSPlayerGestures {
       return;
     }
     if (this.points.size === 0) {
+      // A previous outside finger may have ended beyond this surface. A new
+      // pointer sequence cannot inherit its trailing touch-event suppression.
+      this.clearTrailingTouch();
       this.blocked = false;
       this.scrubStart = scrubber
         ? {
@@ -405,6 +448,8 @@ class IOSPlayerGestures {
       stage.removeEventListener('pointercancel', this.onEnd, true);
       stage.removeEventListener('lostpointercapture', this.onLost, true);
       stage.removeEventListener('touchmove', this.onNativeMove, true);
+      stage.removeEventListener('touchend', this.onNativeEnd, true);
+      stage.removeEventListener('touchcancel', this.onNativeEnd, true);
     }
     // Clear first: releasing capture can synchronously dispatch lostpointercapture.
     this.points.clear();
@@ -418,6 +463,7 @@ class IOSPlayerGestures {
     this.blocked = false;
     this.active = false;
     this.suppressClick = false;
+    this.clearTrailingTouch();
     this.initialDistance = 0;
     this.committed = false;
   }

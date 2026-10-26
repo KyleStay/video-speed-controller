@@ -72,6 +72,98 @@ describe('video-surface precision scrubbing', () => {
     vi.useRealTimers();
   });
 
+  it('does not let a trailing site touchend toggle playback after a committed picture scrub', () => {
+    paused = true;
+    const siteTap = vi.fn(() => {
+      paused = false;
+    });
+    host.addEventListener('touchend', siteTap);
+    event('pointerdown', 110, 320);
+    event('pointermove', 140, 320);
+    event('pointerup', 180, 320);
+    const end = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(end, { touches: [], changedTouches: [{ clientX: 180, clientY: 320 }] });
+    video.dispatchEvent(end);
+    expect(end.defaultPrevented).toBe(true);
+    expect(siteTap).not.toHaveBeenCalled();
+    expect(paused).toBe(true);
+    expect(gestures.surfaceTouchCommitted).toBe(false);
+    video.dispatchEvent(new Event('touchend', { bubbles: true }));
+    expect(siteTap).toHaveBeenCalledOnce();
+  });
+
+  it('leaves vertical intent touchend available to the site and releases the guard on cleanup', () => {
+    event('pointerdown', 110, 320);
+    event('pointermove', 112, 360);
+    event('pointerup', 112, 360);
+    const vertical = new Event('touchend', { bubbles: true, cancelable: true });
+    video.dispatchEvent(vertical);
+    expect(vertical.defaultPrevented).toBe(false);
+    event('pointerdown', 110, 320);
+    event('pointermove', 145, 320);
+    expect(gestures.surfaceTouchCommitted).toBe(true);
+    gestures.cleanup();
+    const cancelled = new Event('touchend', { bubbles: true, cancelable: true });
+    video.dispatchEvent(cancelled);
+    expect(cancelled.defaultPrevented).toBe(false);
+  });
+
+  it('retains trailing-touch protection until both fingers lift after scrub cancellation', () => {
+    event('pointerdown', 110, 320);
+    event('pointermove', 145, 320);
+    event('pointerdown', 200, 320, 8);
+    const partial = new Event('touchcancel', { bubbles: true, cancelable: true });
+    Object.assign(partial, { touches: [{ identifier: 8 }] });
+    video.dispatchEvent(partial);
+    expect(partial.defaultPrevented).toBe(true);
+    expect(gestures.surfaceTouchCommitted).toBe(true);
+    const last = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(last, { touches: [] });
+    video.dispatchEvent(last);
+    expect(last.defaultPrevented).toBe(true);
+    expect(gestures.surfaceTouchCommitted).toBe(false);
+  });
+
+  it('does not carry a trailing guard into a new pointer sequence after an outside finger ends', () => {
+    event('pointerdown', 110, 320);
+    event('pointermove', 145, 320);
+    event('pointerup', 145, 320);
+    const partial = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(partial, { touches: [{ identifier: 8 }] });
+    video.dispatchEvent(partial);
+    expect(partial.defaultPrevented).toBe(true);
+    event('pointerdown', 110, 320, 9);
+    event('pointerup', 110, 320, 9);
+    const next = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(next, { touches: [] });
+    video.dispatchEvent(next);
+    expect(next.defaultPrevented).toBe(false);
+  });
+
+  it('observes the final outside finger lift without consuming an independent control tap', () => {
+    event('pointerdown', 110, 320);
+    event('pointermove', 145, 320);
+    event('pointerup', 145, 320);
+    const partial = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(partial, { touches: [{ identifier: 8 }] });
+    video.dispatchEvent(partial);
+    const outside = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(outside, { touches: [] });
+    document.body.dispatchEvent(outside);
+    expect(outside.defaultPrevented).toBe(false);
+    expect(gestures.surfaceTouchCommitted).toBe(false);
+    const link = document.createElement('a');
+    link.href = '#profile';
+    stage.append(link);
+    const clicked = vi.fn();
+    host.addEventListener('touchend', clicked);
+    const next = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.assign(next, { touches: [] });
+    link.dispatchEvent(next);
+    expect(next.defaultPrevented).toBe(false);
+    expect(clicked).toHaveBeenCalledOnce();
+  });
+
   it('waits for horizontal intent, then seeks relative to the starting time and consumes release', () => {
     expect(event('pointerdown', 110, 320).defaultPrevented).toBe(false);
     event('pointermove', 117, 321);
