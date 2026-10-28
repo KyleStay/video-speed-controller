@@ -5,11 +5,19 @@
 window.VSC = window.VSC || {};
 
 class VideoMutationObserver {
-  constructor(config, onVideoFound, onVideoRemoved, mediaObserver, onDocumentReplaced) {
+  constructor(
+    config,
+    onVideoFound,
+    onVideoRemoved,
+    mediaObserver,
+    onDocumentReplaced,
+    gifObserver
+  ) {
     this.config = config;
     this.onVideoFound = onVideoFound;
     this.onVideoRemoved = onVideoRemoved;
     this.mediaObserver = mediaObserver;
+    this.gifObserver = gifObserver;
     this.onDocumentReplacedCallback = onDocumentReplaced || null;
     this.observer = null;
     this.observedDocument = null;
@@ -411,17 +419,11 @@ class VideoMutationObserver {
         this.onVideoRemoved(node);
       }
     }
-    if (
-      job.added &&
-      (this.attributeObservationEnabled || this.mediaObserver?.hasObservedMedia) &&
-      !node.closest?.('vsc-controller')
-    ) {
-      const handlers = window.VSC.siteHandlerManager;
-      if (handlers?.isPlaybackControl(node)) {
-        const video = handlers.findCustomPlayer(node);
-        if (video && !video.vsc && video.loop && video.muted && !video.controls) {
-          this.onVideoFound(video, video.parentNode);
-        }
+    if (node.nodeName === 'IMG') {
+      if (job.added) {
+        this.gifObserver?.consider(node);
+      } else {
+        this.gifObserver?.remove(node);
       }
     }
     return Boolean(job.next);
@@ -751,6 +753,7 @@ class VideoMutationObserver {
     });
 
     shadowObserver.observe(shadowRoot, this.buildObserverOptions());
+    this.gifObserver?.observeRoot(shadowRoot);
     this.listenForReadyMedia(shadowRoot);
     this.shadowObservers.set(shadowRoot, shadowObserver);
 
@@ -771,6 +774,7 @@ class VideoMutationObserver {
           // Discovery cleanup is independent of diagnostics.
         }
         shadowObserver.disconnect();
+        this.gifObserver?.unobserveRoot(shadowRoot);
         this.unlistenForReadyMedia(shadowRoot);
         this.shadowObservers.delete(shadowRoot);
         window.VSC.logger.debug('Pruned shadow observer for detached host');
@@ -831,6 +835,7 @@ class VideoMutationObserver {
     // Clean up shadow observers
     this.shadowObservers.forEach((shadowObserver, shadowRoot) => {
       shadowObserver.disconnect();
+      this.gifObserver?.unobserveRoot(shadowRoot);
       this.unlistenForReadyMedia(shadowRoot);
     });
     this.shadowObservers.clear();

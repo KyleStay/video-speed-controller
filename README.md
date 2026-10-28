@@ -12,7 +12,14 @@ advertising, analytics, or StayTech backend.
 ## Features
 
 - **Control across sites** — works with HTML5 video and audio, including media
-  inside supported embedded players and dynamic pages.
+  inside supported embedded players and dynamic pages. WebM and GIF-style
+  MP4/WebM loops receive controls even when muted and shown without a site's
+  playback controls.
+- **Animated GIF images** — GIF images with multiple frames get speed, Play/Pause,
+  seek and frame-step controls; still GIFs stay unchanged. The original image,
+  layout and links remain in place. GIF data must be readable by the page
+  (same origin, CORS-enabled, data or blob URLs) and permit blob images. GIFs over
+  the decoding limits keep their original browser rendering.
 - **Fine-grained speed** — choose configurable increments and custom rates from
   0.07× to 16× in Chrome, Firefox, and Safari. The source and device determine
   how smoothly a requested rate plays.

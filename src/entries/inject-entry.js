@@ -23,10 +23,13 @@ import '../core/settings.js';
 
 // State management - depends on utils and logger
 import '../core/state-manager.js';
+import '../core/gif-decoder.js';
+import '../core/gif-playback.js';
 
 // Observers - depends on utils and settings
 import '../observers/media-observer.js';
 import '../observers/mutation-observer.js';
+import '../observers/gif-observer.js';
 
 // Core functionality - depends on settings and observers
 import '../site-handlers/twitter-media-source.js';

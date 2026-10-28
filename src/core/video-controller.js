@@ -391,6 +391,7 @@ class VideoController {
       speed: speed,
       opacity: this.config.settings.controllerOpacity,
       buttonSize: this.config.settings.controllerButtonSize,
+      gif: Boolean(window.VSC.GifPlayback?.get(this.video)),
     });
 
     // Set up control events
@@ -716,6 +717,7 @@ class VideoController {
     // continuing an already-playing clip must not initialize another fallback.
     this.safariPlaybackPending?.cleanup();
     this.safariPlayback?.cleanup();
+    window.VSC.GifPlayback?.get(this.video)?.cleanup();
 
     // Remove reference from video element
     delete this.video.vsc;

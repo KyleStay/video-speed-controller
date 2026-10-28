@@ -10,7 +10,7 @@ class ControlsManager {
   static canStepFrame(video) {
     try {
       if (
-        video?.tagName !== 'VIDEO' ||
+        (video?.tagName !== 'VIDEO' && !window.VSC.GifPlayback?.get(video)) ||
         !video.isConnected ||
         !video.paused ||
         !Number.isFinite(video.currentTime)
@@ -756,6 +756,13 @@ class ControlsManager {
         if (button.disabled !== disabled) {
           button.disabled = disabled;
         }
+      }
+      const pause = shadow.querySelector('[data-action="pause"]');
+      if (pause && window.VSC.GifPlayback?.get(video)) {
+        const label = video.paused ? 'Play animation' : 'Pause animation';
+        pause.textContent = video.paused ? '▶' : 'Ⅱ';
+        pause.setAttribute('aria-label', label);
+        pause.setAttribute('title', label);
       }
     };
     updateFrameButtons();

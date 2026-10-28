@@ -148,24 +148,29 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
   });
 
   await runTest(
-    'Muted looping custom players retain controls while decorative loops stay excluded',
+    'Muted loops receive controls before site transport arrives and retain site controls',
     async () => {
       await loadFixture();
       await page.evaluate((source) => {
         const custom = document.createElement('section');
-        custom.style.cssText = 'position:relative;width:640px';
         custom.innerHTML = '<div><video id="custom-loop" loop muted playsinline></video></div>';
         const decorative = document.createElement('section');
         decorative.innerHTML = '<video id="decorative-loop" loop muted playsinline></video>';
         for (const root of [custom, decorative]) {
+          root.style.cssText = 'position:relative;width:640px';
           const video = root.querySelector('video');
+          video.width = 640;
+          video.height = 360;
           video.muted = true;
           video.src = source;
           document.querySelector('#fixture-root').append(root);
         }
       }, mediaUrl);
-      await page.waitForFunction(() => document.querySelector('#custom-loop')?.readyState >= 2);
-      assert.false(await page.evaluate(() => !!document.querySelector('#custom-loop').vsc));
+      await page.waitForFunction(
+        () =>
+          document.querySelector('#custom-loop')?.vsc?.div.isConnected &&
+          document.querySelector('#decorative-loop')?.vsc?.div.isConnected
+      );
       await page.evaluate(() => {
         const video = document.querySelector('#custom-loop');
         video.parentElement.parentElement.insertAdjacentHTML(
@@ -181,9 +186,9 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
           document.querySelector('#custom-loop')?.vsc?.div.isConnected &&
           document.querySelector('#decorative-loop')?.readyState >= 2
       );
-      assert.false(
+      assert.true(
         await page.evaluate(() => !!document.querySelector('#decorative-loop').vsc),
-        'Decorative loop must remain excluded'
+        'Silent loops without site transport receive controls'
       );
       await page.click('#custom-sound');
       assert.false(
@@ -200,8 +205,8 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
       );
       assert.equal(
         await page.evaluate(() => window.VSC.stateManager.getControlledElements().length),
-        1,
-        'Only the interactive player is controlled'
+        2,
+        'Both loops are controlled'
       );
     }
   );

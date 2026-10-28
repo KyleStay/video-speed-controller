@@ -26,6 +26,8 @@ export async function loadCoreModules() {
 
   // State management
   await import('../../src/core/state-manager.js');
+  await import('../../src/core/gif-decoder.js');
+  await import('../../src/core/gif-playback.js');
 
   // Site handlers
   await import('../../src/site-handlers/base-handler.js');
@@ -64,6 +66,7 @@ export async function loadCoreModules() {
   // Observers
   await import('../../src/observers/mutation-observer.js');
   await import('../../src/observers/media-observer.js');
+  await import('../../src/observers/gif-observer.js');
 }
 
 /**

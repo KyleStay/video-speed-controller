@@ -199,6 +199,10 @@ class ActionHandler {
    * @param {number} seekSeconds - Seconds to seek
    */
   seek(video, seekSeconds) {
+    if (window.VSC.GifPlayback?.get(video)) {
+      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seekSeconds));
+      return;
+    }
     // Use site-specific seeking (handlers return true if they handle it)
     window.VSC.siteHandlerManager.handleSeek(video, seekSeconds);
   }
@@ -224,6 +228,11 @@ class ActionHandler {
    * @param {number} fallbackFps - Binding value: fps used when none is detected
    */
   stepFrame(video, direction, fallbackFps) {
+    const gif = window.VSC.GifPlayback?.get(video);
+    if (gif) {
+      gif.stepFrame(direction);
+      return;
+    }
     if (video.tagName !== 'VIDEO') {
       window.VSC.logger.debug('stepFrame ignored: not a video element');
       return;

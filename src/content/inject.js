@@ -524,6 +524,15 @@ class VideoSpeedExtension {
    * Set up observers for DOM changes and video detection
    */
   setupObservers() {
+    this.gifObserver?.cleanup();
+    try {
+      this.gifObserver = new window.VSC.GifObserver(document, (image, parent) =>
+        this.onVideoFound(image, parent)
+      );
+    } catch (error) {
+      this.gifObserver = null;
+      this.logger.debug(`GIF discovery unavailable: ${error?.message}`);
+    }
     // Media element observer
     this.mediaObserver = new this.MediaElementObserver(this.config, this.siteHandlerManager);
 
@@ -533,7 +542,8 @@ class VideoSpeedExtension {
       (video, parent) => this.onVideoFound(video, parent),
       (video) => this.onVideoRemoved(video),
       this.mediaObserver,
-      () => this.handleDocumentReplaced()
+      () => this.handleDocumentReplaced(),
+      this.gifObserver
     );
   }
 
@@ -793,6 +803,9 @@ class VideoSpeedExtension {
     for (const video of this.pendingVideoElements) {
       this.clearPendingVideoAttachment(video);
     }
+
+    this.gifObserver?.cleanup();
+    this.gifObserver = null;
 
     // Remove all controllers from tracked media elements
     const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
