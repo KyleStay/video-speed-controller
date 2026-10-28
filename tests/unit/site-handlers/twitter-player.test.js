@@ -293,6 +293,23 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(candidate.identityCurrent()).toBe(false);
   });
 
+  it.each(['textTracks', 'tracks'])(
+    'hands back when caption capability %s becomes accessor-backed',
+    (key) => {
+      const candidate = resolve();
+      const getter = vi.fn(() => []);
+      Object.defineProperty(key === 'textTracks' ? state : state.textTracks, key, {
+        configurable: true,
+        get: getter,
+      });
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(true);
+      expect(getter).not.toHaveBeenCalled();
+      state.session.id = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      expect(candidate.identityCurrent()).toBe(false);
+    }
+  );
+
   it('permits handback during a seek without approving a new takeover before decoded data', () => {
     const candidate = resolve();
     property(video, 'readyState', 1);

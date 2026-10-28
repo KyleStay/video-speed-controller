@@ -270,7 +270,7 @@ window.VSC = window.VSC || {};
             return null;
           }
           for (const value of [state, snapshot]) {
-            const tracks = own(own(value, 'textTracks'), 'tracks');
+            const tracks = identityOnly ? null : own(own(value, 'textTracks'), 'tracks');
             if (
               (!identityOnly && (!Array.isArray(tracks) || tracks.length !== 0 || !clear(value))) ||
               own(own(value, 'session'), 'id') !== sessionId ||
