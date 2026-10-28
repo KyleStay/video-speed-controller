@@ -4,9 +4,23 @@ Release packet updated October 28, 2026. Target: iPhone and iPad on iOS/iPadOS
 18.4+. Archive/export, Apple upload/processing and tester availability are
 separate verification steps.
 
-## Current release preparation — GIF and WebM controls
+## Current release preparation — custom WebM on iOS
 
-The next candidate adds controls to muted looping MP4/WebM clips, including
+The next candidate adds native playback and StayFast controls for recognized
+expanded OGV WebM players on iOS. It probes the site's exact source before
+replacing presentation, retains unsupported clips and restores the original
+renderer on handback. Reentrant site actions, source replacement, queued decoder
+events and shadow-root changes have regression coverage. Controlled browser and
+native Safari checks remain separate from physical-device acceptance. The open
+X fast-playback report is not resolved by this change.
+
+Record final reviewed source, local CI, native Safari/decoder compatibility,
+signed archive/export, Apple processing and existing Personal Auto availability
+under `build/safari/testflight/` before claiming tester rollout.
+
+## Previous release — GIF and WebM controls
+
+Build 0.11.6 (31) adds controls to muted looping MP4/WebM clips, including
 clips without site controls, and supported multi-frame GIF images. GIFs retain
 their original image node and source while gaining speed, pause/play, seek and
 exact frame stepping. Still GIFs remain unchanged. Cross-origin images require

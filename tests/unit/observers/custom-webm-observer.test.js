@@ -180,8 +180,11 @@ describe('native custom WebM ownership', () => {
   it.each(['stop', 'source'])('does not resurrect a decoder after reentrant pause %s', (kind) => {
     const { original, pause } = make();
     pause.mockImplementation(() => {
-      if (kind === 'stop') original.stop();
-      else original.src = 'https://example.test/new.webm';
+      if (kind === 'stop') {
+        original.stop();
+      } else {
+        original.src = 'https://example.test/new.webm';
+      }
     });
     observer = new window.VSC.CustomWebMObserver(document, attach);
     const row = observer.entries.get(original);
