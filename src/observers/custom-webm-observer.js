@@ -122,16 +122,25 @@ class CustomWebMObserver {
         target.addEventListener(type, callback);
         removers.push(() => target.removeEventListener(type, callback));
       };
-      const current = (allowDetached = false) => {
+      const originCurrent = () => {
         try {
           return (
-            !closed &&
             this.active &&
             original.isConnected &&
             original.ownerDocument === this.document &&
             original.parentElement === container &&
             container.getRootNode() === originRoot &&
-            new URL(original.src, this.document.baseURI).href === source.href &&
+            new URL(original.src, this.document.baseURI).href === source.href
+          );
+        } catch {
+          return false;
+        }
+      };
+      const current = (allowDetached = false) => {
+        try {
+          return (
+            !closed &&
+            originCurrent() &&
             video.src === source.href &&
             (!committed ||
               allowDetached ||
@@ -195,14 +204,14 @@ class CustomWebMObserver {
           }
         }
         style?.remove();
-        if (restore) {
+        if (restore && originCurrent() && !this.document.hidden) {
           try {
             original.muted = video.muted;
             original.volume = video.volume;
-            if (original.seekable?.length && Number.isFinite(time)) {
+            if (originCurrent() && original.seekable?.length && Number.isFinite(time)) {
               original.currentTime = time;
             }
-            if (playing && restorePlayback) {
+            if (playing && restorePlayback && originCurrent() && !this.document.hidden) {
               originalPlay.call(original)?.catch?.(() => {});
             }
           } catch {

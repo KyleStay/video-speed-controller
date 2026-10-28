@@ -201,6 +201,23 @@ describe('native custom WebM ownership', () => {
     expect(row.video.isConnected).toBe(false);
     expect(observer.entries.size).toBe(0);
   });
+  it('does not seek or resume a source recycled during controller teardown', () => {
+    const { original, play } = make();
+    observer = new window.VSC.CustomWebMObserver(document, attach);
+    const row = observer.entries.get(original);
+    row.video.dispatchEvent(new Event('loadeddata'));
+    row.video.currentTime = 7;
+    row.video.vsc = {
+      remove() {
+        original.src = 'https://example.test/next.webm';
+        original.currentTime = 0;
+      },
+    };
+    row.cleanup();
+    expect(original.currentTime).toBe(0);
+    expect(play).not.toHaveBeenCalled();
+    expect(row.video.isConnected).toBe(false);
+  });
   it('releases an old source before considering a recycled decoder', () => {
     const { original, play } = make();
     observer = new window.VSC.CustomWebMObserver(document, attach);
