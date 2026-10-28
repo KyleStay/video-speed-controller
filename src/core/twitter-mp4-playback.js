@@ -60,7 +60,7 @@ window.VSC = window.VSC || {};
   }
 
   class TwitterMP4Session {
-    constructor(controller, candidate, rate) {
+    constructor(controller, candidate, rate, source) {
       this.controller = controller;
       this.original = controller.video;
       this.candidate = candidate;
@@ -69,6 +69,11 @@ window.VSC = window.VSC || {};
       this.root = this.doc.documentElement;
       this.url = this.doc.URL;
       this.rate = rate;
+      const localRate = controller.actionHandler.eventManager?.getMediaRateState?.(this.original);
+      this.rateRevision =
+        source === 'presentation' && localRate?.lifecycleSpeed === rate
+          ? (localRate.lifecycleSpeedRevision ?? controller.config.speedPreferenceRevision ?? 0)
+          : (controller.config.speedPreferenceRevision ?? 0);
       this.time = this.original.currentTime;
       this.playing = !this.original.paused && !this.original.ended;
       this.video = this.doc.createElement('video');
@@ -246,7 +251,7 @@ window.VSC = window.VSC || {};
       });
       this.listen(this.view, 'pagehide', yieldToSite);
       this.listen(this.doc, 'visibilitychange', () => {
-        if (this.presentation && this.doc.hidden) {
+        if (this.presentation && !this.committed && this.doc.hidden) {
           this.cleanup({ resume: false });
         }
       });
@@ -336,7 +341,7 @@ window.VSC = window.VSC || {};
             this.video
           );
           if (rateState) {
-            const revision = this.controller.config.speedPreferenceRevision ?? 0;
+            const revision = this.rateRevision;
             rateState.lifecycleSpeed = rateState.acceptedSpeed = rate;
             rateState.lifecycleSpeedRevision = rateState.acceptedSpeedRevision = revision;
           }
@@ -371,6 +376,9 @@ window.VSC = window.VSC || {};
     }
 
     abort() {
+      if (this.closed) {
+        return;
+      }
       suppressAutomatic(this);
       this.cleanup();
       try {
@@ -390,7 +398,7 @@ window.VSC = window.VSC || {};
       if (this.closed) {
         return;
       }
-      const preferenceRevision = this.controller.config.speedPreferenceRevision ?? 0;
+      let preferenceRevision = this.rateRevision;
       const sameProducer = this.identityCurrent();
       let current = sameProducer && this.ownsNativeSource();
       // A handback is final for automatic initialization on this clip. A later
@@ -405,6 +413,15 @@ window.VSC = window.VSC || {};
           this.finished && (priorPlaying ?? (this.committed ? !this.video.paused : this.playing));
         // load() resets the decoder's rate; snapshot playback before disposal.
         rate = this.video.playbackRate;
+        const localRate = this.controller.actionHandler.eventManager?.getMediaRateState?.(
+          this.video
+        );
+        if (
+          localRate?.lifecycleSpeed === rate &&
+          Number.isFinite(localRate.lifecycleSpeedRevision)
+        ) {
+          preferenceRevision = localRate.lifecycleSpeedRevision;
+        }
         muted = this.video.muted;
         volume = this.video.volume;
       } catch {
@@ -634,11 +651,15 @@ window.VSC = window.VSC || {};
         }
         const prior = originals.get(controller.video);
         if (prior) {
-          if (rate <= 2 && source !== 'presentation') {
+          if (source === 'presentation') {
+            return prior;
+          }
+          if (rate <= 2) {
             prior.cleanup();
             return null;
           }
           prior.rate = rate;
+          prior.rateRevision = controller.config.speedPreferenceRevision ?? 0;
           prior.video.playbackRate = rate;
           return prior;
         }
@@ -646,7 +667,7 @@ window.VSC = window.VSC || {};
         if (!candidate) {
           return null;
         }
-        session = new TwitterMP4Session(controller, candidate, rate);
+        session = new TwitterMP4Session(controller, candidate, rate, source);
         originals.set(controller.video, session);
         players.set(session.video, session);
         active.add(session);

@@ -24,7 +24,7 @@ describe('X retained MediaSource MP4 playback', () => {
     loaded(session);
     return session;
   };
-  const attachedPlayer = () => {
+  const attachedPlayer = ({ realClose = false } = {}) => {
     const player = new window.VSC.IOSPlayer(controller);
     controller.iosPlayer = player;
     controller.controlsManager = { inlinePlayer: { error: vi.fn() } };
@@ -35,7 +35,7 @@ describe('X retained MediaSource MP4 playback', () => {
       'close',
       'releaseMediaOwnership',
       'releaseInlinePlayback',
-    ]) {
+    ].filter((name) => !realClose || name !== 'close')) {
       vi.spyOn(player, name).mockImplementation(() => {});
     }
     vi.spyOn(window.VSC.IOSPlayerTakeover, 'register').mockReturnValue(vi.fn());
@@ -975,6 +975,74 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
+  it.each([false, true])(
+    'ignores canceled Play rejection when a new entry exists: %s',
+    async (newEntry) => {
+      let reject;
+      nativePlay.mockImplementationOnce(function () {
+        mediaState(this).paused = false;
+        return new Promise((resolve, fail) => {
+          reject = fail;
+        });
+      });
+      const player = attachedPlayer();
+      expect(player.open({ play: true })).toBe(true);
+      const first = api().getPending(original);
+      api().cancelPresentation(original, { resume: false });
+      expectReleased(first);
+      let second;
+      if (newEntry) {
+        expect(player.open({ play: true })).toBe(true);
+        second = api().getPending(original);
+      }
+      reject(new DOMException('Play interrupted by cleanup', 'AbortError'));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(player.presentationUnavailable).toBe(false);
+      expect(player.button.textContent).toBe('Custom player');
+      expect(controller.controlsManager.inlinePlayer.error).not.toHaveBeenCalled();
+      expect(api().getPending(original)).toBe(second ?? null);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('cancels pagehide before real IOSPlayer.close can resume pending playback', () => {
+    const player = attachedPlayer({ realClose: true });
+    const close = vi.spyOn(player, 'close');
+    expect(player.open({ play: true })).toBe(true);
+    const session = api().getPending(original);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(close).toHaveBeenCalledWith({ settle: false });
+    expect(originalPlay).not.toHaveBeenCalled();
+    expect(original.paused).toBe(true);
+    expect(api().getPending(original)).toBeNull();
+    expectReleased(session);
+  });
+
+  it('keeps committed presentation source, time and rate across visibility suspension', () => {
+    const player = attachedPlayer();
+    expect(player.open({ play: true })).toBe(true);
+    const session = api().getPending(original);
+    loaded(session);
+    session.video.currentTime = 28;
+    session.video.playbackRate = 4;
+    const source = session.video.src;
+    const originalSource = original.src;
+    vi.mocked(Object.getOwnPropertyDescriptor(document, 'hidden').get).mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(api().get(session.video)).toBe(session);
+    expect(session.video.isConnected).toBe(true);
+    expect(session.video.currentTime).toBe(28);
+    expect(session.video.playbackRate).toBe(4);
+    expect(session.video.src).toBe(source);
+    expect(original.src).toBe(originalSource);
+    expect(unsubscribe).not.toHaveBeenCalled();
+    vi.mocked(Object.getOwnPropertyDescriptor(document, 'hidden').get).mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(api().get(session.video)).toBe(session);
+    expect(nativePlay).toHaveBeenCalledOnce();
+  });
+
   it('cancels only the matching pending presentation and cannot attach after cancellation', () => {
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
@@ -1123,5 +1191,136 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(controller.config.settings.lastSpeed).toBe(7);
     expect(controller.config.save).not.toHaveBeenCalled();
     expectReleased(session);
+  });
+
+  it.each(['pending', 'active', 'active-new-command'])(
+    'does not promote stale rate authority after an external preference change while %s',
+    (phase) => {
+      const states = new WeakMap();
+      const local = (video) => {
+        if (!states.has(video)) {
+          states.set(video, {});
+        }
+        return states.get(video);
+      };
+      controller.config.settings.lastSpeed = 4;
+      controller.config.speedPreferenceRevision = 1;
+      controller.actionHandler.eventManager = {
+        getMediaRateState: vi.fn((video) => states.get(video)),
+        getOrCreateMediaRateState: vi.fn(local),
+      };
+      controller.actionHandler.adjustSpeed = vi.fn((video, rate) => {
+        video.playbackRate = rate;
+      });
+      original.playbackRate = 4;
+      const session = begin(4, 'init');
+      session.finish();
+      if (phase !== 'pending') {
+        loaded(session);
+      }
+      const retainedRate = phase === 'active-new-command' ? 5 : 4;
+      const retainedRevision = phase === 'active-new-command' ? 2 : 1;
+      if (phase === 'active-new-command') {
+        session.video.playbackRate = retainedRate;
+        Object.assign(local(session.video), {
+          lifecycleSpeed: retainedRate,
+          acceptedSpeed: retainedRate,
+          lifecycleSpeedRevision: retainedRevision,
+          acceptedSpeedRevision: retainedRevision,
+        });
+      }
+      controller.config.settings.lastSpeed = 6;
+      controller.config.speedPreferenceRevision = retainedRevision + 1;
+      if (phase === 'pending') {
+        loaded(session);
+      }
+      expect(local(session.video)).toMatchObject({
+        lifecycleSpeed: retainedRate,
+        lifecycleSpeedRevision: retainedRevision,
+      });
+      let lifecycle;
+      window.VSC_controller.onVideoFound.mockImplementation((video) => {
+        lifecycle = {
+          video,
+          config: controller.config,
+          actionHandler: controller.actionHandler,
+          getTargetSpeed: previousController.prototype.getTargetSpeed,
+        };
+        previousController.prototype.setupEventHandlers.call(lifecycle);
+      });
+      session.cleanup();
+      expect(local(original)).toMatchObject({
+        lifecycleSpeed: retainedRate,
+        lifecycleSpeedRevision: retainedRevision,
+      });
+      expect(controller.config.settings.lastSpeed).toBe(6);
+      original.dispatchEvent(new Event('play'));
+      expect(controller.actionHandler.adjustSpeed).toHaveBeenCalledExactlyOnceWith(original, 6, {
+        source: 'init',
+      });
+      expect(original.playbackRate).toBe(6);
+      for (const [type, handler] of [
+        ['play', lifecycle.handlePlay],
+        ['seeked', lifecycle.handleSeek],
+        ['emptied', lifecycle.handleRateSourceReset],
+        ['loadstart', lifecycle.handleRateSourceReset],
+        ['ratechange', lifecycle.handleShadowRateChange],
+      ]) {
+        original.removeEventListener(type, handler);
+      }
+      expectReleased(session);
+    }
+  );
+
+  it('keeps matching original authority through repeated pending presentation requests', () => {
+    const states = new WeakMap();
+    const local = (video) => {
+      if (!states.has(video)) {
+        states.set(video, {});
+      }
+      return states.get(video);
+    };
+    states.set(original, { lifecycleSpeed: 2, lifecycleSpeedRevision: 1 });
+    controller.actionHandler.eventManager = {
+      getMediaRateState: vi.fn((video) => states.get(video)),
+      getOrCreateMediaRateState: vi.fn(local),
+    };
+    controller.config.settings.lastSpeed = 7;
+    controller.config.speedPreferenceRevision = 2;
+    original.playbackRate = 2;
+    expect(api().open(controller)).toBe(true);
+    const session = api().getPending(original);
+    original.playbackRate = 3;
+    controller.config.speedPreferenceRevision = 3;
+    expect(api().open(controller)).toBe(true);
+    expect(api().getPending(original)).toBe(session);
+    expect(session.video.playbackRate).toBe(2);
+    loaded(session);
+    expect(local(session.video)).toMatchObject({ lifecycleSpeed: 2, lifecycleSpeedRevision: 1 });
+    expect(controller.config.settings.lastSpeed).toBe(7);
+  });
+
+  it('updates pending authority revision for a new explicit speed command', () => {
+    const states = new WeakMap();
+    controller.actionHandler.eventManager = {
+      getMediaRateState: vi.fn((video) => states.get(video)),
+      getOrCreateMediaRateState: vi.fn((video) => {
+        if (!states.has(video)) {
+          states.set(video, {});
+        }
+        return states.get(video);
+      }),
+    };
+    controller.config.speedPreferenceRevision = 1;
+    const session = begin(4);
+    session.finish();
+    controller.config.speedPreferenceRevision = 2;
+    expect(begin(5)).toBe(session);
+    loaded(session);
+    expect(session.video.playbackRate).toBe(5);
+    expect(states.get(session.video)).toMatchObject({
+      lifecycleSpeed: 5,
+      lifecycleSpeedRevision: 2,
+    });
   });
 });

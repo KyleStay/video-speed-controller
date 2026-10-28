@@ -216,6 +216,7 @@ class IOSPlayer {
     this.listen(this.video, 'leavepictureinpicture', presentationChanged);
     this.listen(this.view, 'pagehide', () => {
       this.resumeOnShow = this.active;
+      window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: false });
       this.close({ settle: false });
       this.scrollRestore?.cancel();
       this.nativeScroll?.cancel();

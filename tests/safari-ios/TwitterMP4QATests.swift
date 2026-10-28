@@ -99,6 +99,9 @@ import XCTest
         XCTAssertTrue(speed.waitForExistence(timeout: 10)); speed.tap()
         XCTAssertTrue(safari.buttons["4×"].waitForExistence(timeout: 10)); safari.buttons["4×"].tap()
         wait(safari) { $0["nativeReady"] as? Bool == true && $0["fullscreen"] as? Bool == true && $0["rate"] as? Double == 4 && $0["paused"] as? Bool == false }
+        XCUIDevice.shared.press(.home)
+        safari.activate()
+        wait(safari) { $0["nativeReady"] as? Bool == true && $0["rate"] as? Double == 4 && $0["paused"] as? Bool == false }
         XCTAssertTrue(safari.buttons["Pause video"].waitForExistence(timeout: 10))
         retained(safari)
         capture(safari, "retained-mse-fullscreen-entry")
