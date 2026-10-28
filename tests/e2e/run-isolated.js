@@ -22,12 +22,16 @@ import runTwitterPristine from './twitter-pristine.e2e.js';
 import runTwitterModernPlayer from './twitter-modern-player.e2e.js';
 import runFeedPosition from './twitter-feed-position.e2e.js';
 import runCustomFeed from './custom-feed.e2e.js';
+import runLoopingMedia from './looping-media.e2e.js';
+import runGifImages from './gif-images.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
   process.env.STAYFAST_CHROME_RUNNER ||
   join(homedir(), '.codex/skills/chrome-extension-test-runner/scripts/launch_test_chrome.py');
 const suites = {
+  'gif-images': runGifImages,
+  loops: runLoopingMedia,
   resume: runResume,
   startup: runStartup,
   basic: runBasic,
@@ -57,7 +61,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 

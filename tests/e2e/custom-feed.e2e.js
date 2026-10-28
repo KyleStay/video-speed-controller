@@ -143,9 +143,8 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
       await page.waitForFunction(() => document.querySelector('video').readyState >= 2);
       await check(variant, 'discovery preserves the local source and paused state', async () => {
         if (query.includes('late-controls')) {
-          assert.false(
-            await page.evaluate(() => !!document.querySelector('video').vsc),
-            'Without transport the muted loop stays decorative'
+          await page.waitForFunction(
+            () => document.querySelector('video').vsc?.iosPlayer?.attached
           );
           await page.click('#show-transport');
         }

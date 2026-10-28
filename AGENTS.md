@@ -7,7 +7,7 @@ any change that invalidates it.
 ## What this is
 
 A Manifest V3 browser extension that adds speed/seek controls to any HTML5
-`<video>`/`<audio>` element on any site. Pure browser extension — no backend.
+`<video>`/`<audio>` element and supported multi-frame GIF images. Pure browser extension — no backend.
 Source in `src/`, bundled by esbuild into a default Chrome `dist/` or explicit
 browser resource builds under `dist/<browser>/`. Chrome and Firefox are
 release-ready; Safari targets Safari 18.4+/iOS 18.4+ with a native containing app
@@ -114,13 +114,20 @@ with direct `chrome.*` access.
   media-gated deferred recovery path after tab suspension or history restoration;
   teardown removes these listeners along with navigation listeners.
 - `core/`
+  - `gif-decoder.js` — bounded GIF89a framing and native single-frame patch decoding,
+    transparency/disposal compositing and PNG snapshots. No third-party decoder.
+  - `gif-playback.js` — media-shaped properties on the original `<img>` and an owned
+    Web Animation of its `content` image; shared speed/seek/pause/frame-step actions.
+    Cancelling that animation restores native rendering without changing `src`,
+    wrapping/replacing the image or writing its layout styles.
   - `settings.js` — `VideoSpeedConfig`: load/save, debounced speed writes,
     migrations, self-echo guard.
   - `storage-manager.js` — context-aware storage (chrome vs bridge).
   - `state-manager.js` — registry of controlled media elements.
   - `action-handler.js` — executes shortcut actions (speed/seek/mark/frame-step/…).
     `stepFrame` (the `,`/`.` frame-step actions) seeks by `1/fps` **video-only**
-    and **only while paused**; it writes `currentTime` via the seek path, never
+    and **only while paused**; confirmed GIF images use their actual frame
+    boundaries instead. It writes `currentTime`, never
     `playbackRate`, so it never touches the ratechange cooldown/fight machinery.
     Expanded controllers, the toolbar popup and owned-player More panel expose
     Frame back/Frame forward buttons through this same paused-video action.
@@ -139,6 +146,11 @@ with direct `chrome.*` access.
     vetoes cannot fall back to older metadata or HTML alternatives.
     No fetches, new permissions, polling, or source URL construction.
 - `observers/`
+  - `gif-observer.js` — visible GIF candidates only, captured image loads and the
+    existing bounded mutation/shadow walk. One decode at a time; byte, frame and
+    document memory limits; same-origin/CORS fetches with no new permissions.
+    Source writes/removal/disable/document replacement abort pending work and
+    release owned properties, animations, listeners and frame URLs.
   - `media-observer.js` — light/comprehensive media scanning (incl. shadow DOM,
     depth-capped); `hasMediaIndicators` gate.
   - `mutation-observer.js` — detects dynamically added/removed media; tracks
@@ -245,6 +257,18 @@ with direct `chrome.*` access.
   position, visibility and listeners. Detached media is disposed instead. Each
   document owns only its own media; YouTube embeds use their own `all_frames`
   instance, never a parent controller.
+- **GIF-style videos**: muted, looping MP4/WebM videos qualify for controls even
+  without native or custom transport. Apply only the existing site-specific
+  vetoes.
+- **GIF images**: confirm multiple image descriptors before taking over an `<img>`.
+  Gate discovery on GIF paths/format hints, GIF data URLs, blobs or selected picture
+  sources; ordinary still-image URLs cause no fetch. Keep native rendering on
+  unreadable/CSP-blocked/unsupported or over-budget input. `GifDecoder.limits`
+  owns byte/frame/pixel budgets; active GIFs share the frame-pixel budget and
+  `GifObserver` limits player count per document. Preserve GIF delays, transparency, disposal and finite
+  loop counts. Never use video-site SDKs for GIF playback. Frame-step uses actual
+  GIF boundaries while paused. Offscreen/hidden suspension preserves an explicit
+  pause. `node tests/e2e/run-isolated.js gif-images` verifies the built extension.
 - **Touch controls**: coarse pointers or a touch on the pill select explicit
   expand/collapse state with 44px targets; hover does not control mobile state.
   Position the compact controller from the current media bounds; clamp its

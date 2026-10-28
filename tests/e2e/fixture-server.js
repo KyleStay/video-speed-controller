@@ -719,6 +719,7 @@ export async function startFixtureServer({
   mp4Path = resolve('tests/e2e/sample.mp4'),
   probeMp4Path = mp4Path,
   htmlRoutes = {},
+  binaryRoutes = {},
   port = 0,
 } = {}) {
   // VP8/WebM has native Chrome/Firefox decoding without OS H.264 libraries.
@@ -730,6 +731,12 @@ export async function startFixtureServer({
   const customFeed = await readFile(resolve('tests/e2e/custom-feed.html'), 'utf8');
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
+    if (Object.hasOwn(binaryRoutes, url.pathname)) {
+      const route = binaryRoutes[url.pathname];
+      response.writeHead(200, { 'Content-Type': route.type, 'Cache-Control': 'no-store' });
+      response.end(route.body);
+      return;
+    }
     if (url.pathname === '/sample.webm') {
       respondWithMedia(request, response, media);
       return;
