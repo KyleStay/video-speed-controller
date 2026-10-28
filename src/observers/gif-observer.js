@@ -36,6 +36,14 @@ class GifObserver {
             continue;
           }
           row.visible = entry.isIntersecting;
+          if (!row.visible && !row.started) {
+            // A queued image can scroll away before its turn. Return its slot
+            // without treating that cancellation as a failed resource attempt.
+            this.attempts.delete(row.image);
+            this.release(row);
+            this.intersections.observe(row.image);
+            continue;
+          }
           row.playback?.suspend(this.document.hidden || !row.visible);
         }
         this.schedule();

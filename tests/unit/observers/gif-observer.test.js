@@ -125,6 +125,38 @@ describe('bounded GIF discovery', () => {
     expect(observer.entries.get(node)).not.toBe(first);
     expect(first.abort.signal.aborted).toBe(true);
   });
+  it('reclaims queued slots when visible images scroll away before decoding', () => {
+    let callback;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(fn) {
+          callback = fn;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+    observer = new window.VSC.GifObserver(document, vi.fn());
+    const first = Array.from({ length: 32 }, (_, index) =>
+      image(`https://example.test/${index}.gif`)
+    );
+    for (const node of first) {
+      observer.consider(node);
+    }
+    callback(first.map((target) => ({ target, isIntersecting: true })));
+    expect(observer.entries.size).toBe(32);
+    callback(first.map((target) => ({ target, isIntersecting: false })));
+    expect(observer.entries.size).toBe(0);
+    expect(first.every((node) => !observer.attempts.has(node))).toBe(true);
+    const next = image('https://example.test/next.gif');
+    observer.consider(next);
+    callback([{ target: next, isIntersecting: true }]);
+    expect(observer.entries.has(next)).toBe(true);
+    callback([{ target: first[0], isIntersecting: true }]);
+    expect(observer.entries.has(first[0])).toBe(true);
+  });
   it('admits visible overflow when a decoding slot is released', async () => {
     vi.useFakeTimers();
     try {
