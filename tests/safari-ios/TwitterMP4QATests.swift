@@ -32,11 +32,13 @@ import XCTest
         XCTAssertEqual(row["errors"] as? Int, 0)
     }
     private func openMore(_ safari: XCUIApplication) {
-        if !safari.buttons["More video options"].exists {
-            safari.otherElements["Video display"].tap()
-        }
+        // Start from the known idle state rather than racing the four-second
+        // HUD timer while XCTest resolves accessibility snapshots.
+        XCTAssertTrue(safari.buttons["More video options"].waitForNonExistence(timeout: 6))
+        safari.otherElements["Video display"].tap()
         XCTAssertTrue(safari.buttons["More video options"].waitForExistence(timeout: 5))
         safari.buttons["More video options"].tap()
+        XCTAssertTrue(safari.buttons["Use site player"].waitForExistence(timeout: 5))
     }
     private func measure(_ safari: XCUIApplication, _ rate: Double) {
         safari.buttons["Measure current playback"].tap()
