@@ -106,6 +106,11 @@ describe('X retained MediaSource MP4 playback', () => {
     unsubscribe = vi.fn();
     candidate = {
       originalUrl: MSE,
+      sourceUrl: 'https://video.twimg.com/ext_tw_video/123/pu/pl/clip.m3u8',
+      contentId: '123',
+      sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      sdk: {},
+      store: {},
       progressiveUrl: MP4,
       loop: true,
       current: vi.fn(() => original.src === MSE && original.isConnected),
@@ -435,6 +440,88 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(begin(4, 'internal')).toBeTruthy();
   });
 
+  it.each(['sessionId', 'sourceUrl', 'contentId', 'sdk', 'api', 'store', 'progressiveUrl'])(
+    'permits saved-speed initialization for a newly validated %s on the same blob',
+    (key) => {
+      const session = begin();
+      session.finish();
+      session.video.dispatchEvent(new Event('error'));
+      expectReleased(session);
+      expect(api().canBegin(controller, 4, 'init')).toBe(false);
+      if (['sdk', 'api', 'store'].includes(key)) {
+        candidate[key] = { ...candidate[key] };
+      } else {
+        candidate[key] += '-new';
+      }
+      expect(original.src).toBe(MSE);
+      expect(api().canBegin(controller, 4, 'init')).toBe(true);
+      expect(begin(4, 'init')).toBeTruthy();
+    }
+  );
+
+  it('disposes a synchronous invalidating subscription before setup can continue', () => {
+    const play = original.play;
+    const pause = original.pause;
+    const loadedSources = [];
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(function () {
+      loadedSources.push(this.src);
+    });
+    candidate.subscribe.mockImplementation((callback) => {
+      candidate.current.mockReturnValue(false);
+      candidate.identityCurrent.mockReturnValue(false);
+      callback();
+      return unsubscribe;
+    });
+    expect(begin()).toBeNull();
+    expect(original.play).toBe(play);
+    expect(original.pause).toBe(pause);
+    expect(loadedSources).not.toContain(MP4);
+    expect(nativePlay).not.toHaveBeenCalled();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(api().isRetained(original)).toBe(false);
+    expect(timers.mock.calls.filter((args) => args[1] === 10000)).toHaveLength(0);
+    expect(document.querySelectorAll('video')).toHaveLength(1);
+  });
+
+  it.each(['captured-play', 'companion-removal'])(
+    'does not automatically recapture a clip during reentrant %s handback',
+    (kind) => {
+      const session = commit();
+      let replacement;
+      let automatic;
+      const eligible = [];
+      window.VSC_controller.onVideoFound.mockImplementation((video) => {
+        replacement = {
+          video,
+          config: controller.config,
+          actionHandler: controller.actionHandler,
+          iosPlayer: { active: false },
+          disposed: false,
+        };
+        original.vsc = replacement;
+        const allowed = api().canBegin(replacement, 4, 'init');
+        eligible.push(allowed);
+        if (allowed) {
+          automatic = api().begin(replacement, 4, 'init');
+        }
+      });
+      if (kind === 'captured-play') {
+        originalPlay();
+        original.dispatchEvent(new Event('playing'));
+      } else {
+        session.video.remove();
+        api().mediaRemoved(session.video);
+      }
+      expect(eligible).toEqual([false]);
+      expect(automatic).toBeUndefined();
+      expectReleased(session);
+      expect(document.querySelectorAll('video')).toHaveLength(1);
+      expect(original.paused).toBe(false);
+      expect(api().canBegin(replacement, 4, 'internal')).toBe(true);
+      expect(api().begin(replacement, 4, 'internal')).toBeTruthy();
+    }
+  );
+
   it.each(['hidden', 'native-session', 'native-fullscreen', 'picture-in-picture', 'invalid-rate'])(
     'does not start automatic replacement during %s',
     (kind) => {
@@ -571,6 +658,46 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
     expectReleased(session);
   });
+
+  it('preserves accepted rate and volume before decoder load resets them during teardown', () => {
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(function () {
+      this.playbackRate = this.defaultPlaybackRate;
+      this.muted = false;
+      this.volume = 1;
+    });
+    const session = commit();
+    session.video.currentTime = 27.5;
+    session.video.playbackRate = 4;
+    session.video.muted = true;
+    session.video.volume = 0.25;
+    api().cleanupAll();
+    expect(session.video.playbackRate).toBe(1);
+    expect(original.playbackRate).toBe(4);
+    expect(original.muted).toBe(true);
+    expect(original.volume).toBe(0.25);
+    expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(27.5);
+    expect(originalPlay).toHaveBeenCalledOnce();
+    expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
+    expectReleased(session);
+  });
+
+  it.each(['currentTime', 'playbackRate'])(
+    'releases resources and restores controls when companion %s throws',
+    (property) => {
+      const session = commit();
+      Object.defineProperty(session.video, property, {
+        configurable: true,
+        get() {
+          throw new Error('Page getter changed');
+        },
+      });
+      expect(() => session.cleanup()).not.toThrow();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(window.VSC_controller.onVideoFound).toHaveBeenCalledOnce();
+      expectReleased(session);
+    }
+  );
 
   it('does not seek or play a source replaced during companion controller teardown', () => {
     const session = commit();

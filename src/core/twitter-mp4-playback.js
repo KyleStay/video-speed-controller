@@ -6,6 +6,22 @@ window.VSC = window.VSC || {};
   const players = new WeakMap();
   const active = new Set();
   const failed = new WeakMap();
+  const identityKeys = [
+    'originalUrl',
+    'sourceUrl',
+    'contentId',
+    'sessionId',
+    'sdk',
+    'api',
+    'store',
+    'progressiveUrl',
+  ];
+  const suppressAutomatic = (session) => {
+    failed.set(
+      session.original,
+      Object.fromEntries(identityKeys.map((key) => [key, session.candidate[key]]))
+    );
+  };
 
   function resolve(controller, rate, source) {
     if (
@@ -25,16 +41,21 @@ window.VSC = window.VSC || {};
         controller.video.webkitPresentationMode !== 'inline') ||
       controller.video.ownerDocument.pictureInPictureElement === controller.video ||
       controller.video.ownerDocument.fullscreenElement === controller.video ||
-      window.VSC.IOSPlayer.siteRelinquished.has(controller.video) ||
-      (source === 'init' &&
-        failed.get(controller.video) === (controller.video.currentSrc || controller.video.src))
+      window.VSC.IOSPlayer.siteRelinquished.has(controller.video)
     ) {
       return null;
     }
-    return window.VSC.TwitterPlayer?.resolve(
+    const candidate = window.VSC.TwitterPlayer?.resolve(
       controller.video,
       controller.iosPlayer?.active ? controller.iosPlayer.originParent : null
     );
+    const previous = failed.get(controller.video);
+    return source === 'init' &&
+      candidate &&
+      previous &&
+      identityKeys.every((key) => previous[key] === candidate[key])
+      ? null
+      : candidate;
   }
 
   class TwitterMP4Session {
@@ -149,13 +170,22 @@ window.VSC = window.VSC || {};
         attributes: true,
         attributeFilter: ['src', 'poster'],
       });
-      this.unsubscribe = this.candidate.subscribe(() => {
+      const unsubscribe = this.candidate.subscribe(() => {
         if (!this.originCurrent()) {
           this.cleanup({ resume: this.identityCurrent() });
         }
       });
-      if (typeof this.unsubscribe !== 'function') {
+      if (typeof unsubscribe !== 'function') {
         throw new Error('X player does not provide subscription cleanup');
+      }
+      if (this.closed) {
+        unsubscribe();
+        return;
+      }
+      this.unsubscribe = unsubscribe;
+      if (!this.originCurrent()) {
+        this.cleanup({ resume: false });
+        return;
       }
       for (const name of ['play', 'pause']) {
         const descriptor = Object.getOwnPropertyDescriptor(this.original, name);
@@ -314,7 +344,7 @@ window.VSC = window.VSC || {};
     }
 
     abort() {
-      failed.set(this.original, this.candidate.originalUrl);
+      suppressAutomatic(this);
       this.cleanup();
     }
 
@@ -323,10 +353,24 @@ window.VSC = window.VSC || {};
         return;
       }
       const sameProducer = this.identityCurrent();
-      const current = sameProducer && this.ownsNativeSource();
-      const time = this.committed ? this.video.currentTime : this.time;
-      const playing =
-        this.finished && (priorPlaying ?? (this.committed ? !this.video.paused : this.playing));
+      let current = sameProducer && this.ownsNativeSource();
+      // A handback is final for automatic initialization on this clip. A later
+      // explicit speed command or a genuinely new SDK session may try again.
+      if (this.finished) {
+        suppressAutomatic(this);
+      }
+      let time, playing, rate, muted, volume;
+      try {
+        time = this.committed ? this.video.currentTime : this.time;
+        playing =
+          this.finished && (priorPlaying ?? (this.committed ? !this.video.paused : this.playing));
+        // load() resets the decoder's rate; snapshot playback before disposal.
+        rate = this.video.playbackRate;
+        muted = this.video.muted;
+        volume = this.video.volume;
+      } catch {
+        current = false;
+      }
       this.closed = true;
       active.delete(this);
       originals.delete(this.original);
@@ -402,9 +446,9 @@ window.VSC = window.VSC || {};
         const sameOrigin = sameProducer && stillSame();
         if (sameOrigin && current && resume) {
           try {
-            this.original.muted = this.video.muted;
-            this.original.volume = this.video.volume;
-            this.original.playbackRate = this.video.playbackRate;
+            this.original.muted = muted;
+            this.original.volume = volume;
+            this.original.playbackRate = rate;
             if (Number.isFinite(time) && stillSame()) {
               this.candidate.api.seekTo(time);
             }
@@ -498,7 +542,7 @@ window.VSC = window.VSC || {};
         players.set(session.video, session);
         active.add(session);
         session.start();
-        return session;
+        return session.closed ? null : session;
       } catch {
         session?.cleanup();
         return null;

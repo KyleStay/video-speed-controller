@@ -31,6 +31,13 @@ import XCTest
         XCTAssertEqual(row["controllers"] as? Int, 1)
         XCTAssertEqual(row["errors"] as? Int, 0)
     }
+    private func openMore(_ safari: XCUIApplication) {
+        if !safari.buttons["More video options"].exists {
+            safari.otherElements["Video display"].tap()
+        }
+        XCTAssertTrue(safari.buttons["More video options"].waitForExistence(timeout: 5))
+        safari.buttons["More video options"].tap()
+    }
     private func measure(_ safari: XCUIApplication, _ rate: Double) {
         safari.buttons["Measure current playback"].tap()
         wait(safari) { ($0["measurement"] as? [String: Any])?["done"] as? Bool == true }
@@ -64,7 +71,7 @@ import XCTest
         measure(safari, 2.1)
         safari.buttons["Open owned fullscreen"].tap()
         XCTAssertTrue(safari.buttons["Close StayFast video player"].waitForExistence(timeout: 10))
-        safari.buttons["More video options"].tap()
+        openMore(safari)
         safari.buttons["Use site player"].tap()
         wait(safari) { $0["native"] as? Bool == false && $0["originalPaused"] as? Bool == false }
         retained(safari)
@@ -91,7 +98,7 @@ import XCTest
         XCTAssertTrue(safari.buttons["Pause video"].waitForExistence(timeout: 10))
         retained(safari)
         capture(safari, "retained-mse-fullscreen-entry")
-        safari.buttons["More video options"].tap()
+        openMore(safari)
         safari.buttons["Use site player"].tap()
         wait(safari) { $0["native"] as? Bool == false }
         retained(safari)
