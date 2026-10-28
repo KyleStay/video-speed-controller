@@ -11,13 +11,15 @@ class VideoMutationObserver {
     onVideoRemoved,
     mediaObserver,
     onDocumentReplaced,
-    gifObserver
+    gifObserver,
+    customWebMObserver
   ) {
     this.config = config;
     this.onVideoFound = onVideoFound;
     this.onVideoRemoved = onVideoRemoved;
     this.mediaObserver = mediaObserver;
     this.gifObserver = gifObserver;
+    this.customWebMObserver = customWebMObserver;
     this.onDocumentReplacedCallback = onDocumentReplaced || null;
     this.observer = null;
     this.observedDocument = null;
@@ -426,6 +428,13 @@ class VideoMutationObserver {
         this.gifObserver?.remove(node);
       }
     }
+    if (node.nodeName === 'OGVJS') {
+      if (job.added) {
+        this.customWebMObserver?.consider(node);
+      } else {
+        this.customWebMObserver?.remove(node);
+      }
+    }
     return Boolean(job.next);
   }
 
@@ -754,6 +763,7 @@ class VideoMutationObserver {
 
     shadowObserver.observe(shadowRoot, this.buildObserverOptions());
     this.gifObserver?.observeRoot(shadowRoot);
+    this.customWebMObserver?.observeRoot(shadowRoot);
     this.listenForReadyMedia(shadowRoot);
     this.shadowObservers.set(shadowRoot, shadowObserver);
 
@@ -775,6 +785,7 @@ class VideoMutationObserver {
         }
         shadowObserver.disconnect();
         this.gifObserver?.unobserveRoot(shadowRoot);
+        this.customWebMObserver?.unobserveRoot(shadowRoot);
         this.unlistenForReadyMedia(shadowRoot);
         this.shadowObservers.delete(shadowRoot);
         window.VSC.logger.debug('Pruned shadow observer for detached host');
@@ -836,6 +847,7 @@ class VideoMutationObserver {
     this.shadowObservers.forEach((shadowObserver, shadowRoot) => {
       shadowObserver.disconnect();
       this.gifObserver?.unobserveRoot(shadowRoot);
+      this.customWebMObserver?.unobserveRoot(shadowRoot);
       this.unlistenForReadyMedia(shadowRoot);
     });
     this.shadowObservers.clear();

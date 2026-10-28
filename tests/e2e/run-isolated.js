@@ -24,12 +24,14 @@ import runFeedPosition from './twitter-feed-position.e2e.js';
 import runCustomFeed from './custom-feed.e2e.js';
 import runLoopingMedia from './looping-media.e2e.js';
 import runGifImages from './gif-images.e2e.js';
+import runCustomWebM from './custom-webm.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
   process.env.STAYFAST_CHROME_RUNNER ||
   join(homedir(), '.codex/skills/chrome-extension-test-runner/scripts/launch_test_chrome.py');
 const suites = {
+  'custom-webm': runCustomWebM,
   'gif-images': runGifImages,
   loops: runLoopingMedia,
   resume: runResume,

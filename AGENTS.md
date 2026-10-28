@@ -146,6 +146,13 @@ with direct `chrome.*` access.
     vetoes cannot fall back to older metadata or HTML alternatives.
     No fetches, new permissions, polling, or source URL construction.
 - `observers/`
+  - `custom-webm-observer.js` — iOS-only adapter for an unambiguous expanded
+    OGV decoder surface. Probe the exact supplied WebM in an off-DOM native video
+    until its first frame is available, then pause/hide the custom renderer and
+    attach normal controls. Preserve site Play/Pause/Stop intent throughout the
+    probe and ownership; handback, source/root changes and removal release the
+    native decoder, scoped hiding CSS and owned method wrappers. Bound probes
+    and retries; unsupported clips retain the original player.
   - `gif-observer.js` — visible GIF candidates only, captured image loads and the
     existing bounded mutation/shadow walk. One decode at a time; byte, frame and
     document memory limits; same-origin/CORS fetches with no new permissions.

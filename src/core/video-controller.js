@@ -721,6 +721,7 @@ class VideoController {
 
     // Remove reference from video element
     delete this.video.vsc;
+    window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
 
     window.VSC.logger.debug('VideoController removed successfully');
   }

@@ -524,6 +524,15 @@ class VideoSpeedExtension {
    * Set up observers for DOM changes and video detection
    */
   setupObservers() {
+    this.customWebMObserver?.cleanup();
+    try {
+      this.customWebMObserver = new window.VSC.CustomWebMObserver(document, (video, parent) =>
+        this.onVideoFound(video, parent)
+      );
+    } catch (error) {
+      this.customWebMObserver = null;
+      this.logger.debug(`Custom WebM discovery unavailable: ${error?.message}`);
+    }
     this.gifObserver?.cleanup();
     try {
       this.gifObserver = new window.VSC.GifObserver(document, (image, parent) =>
@@ -543,7 +552,8 @@ class VideoSpeedExtension {
       (video) => this.onVideoRemoved(video),
       this.mediaObserver,
       () => this.handleDocumentReplaced(),
-      this.gifObserver
+      this.gifObserver,
+      this.customWebMObserver
     );
   }
 
@@ -806,6 +816,8 @@ class VideoSpeedExtension {
 
     this.gifObserver?.cleanup();
     this.gifObserver = null;
+    this.customWebMObserver?.cleanup();
+    this.customWebMObserver = null;
 
     // Remove all controllers from tracked media elements
     const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
