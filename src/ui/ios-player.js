@@ -1854,6 +1854,7 @@ class IOSPlayer {
     this.close();
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();
+    window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
   }
 
   releaseMediaOwnership() {

@@ -25,6 +25,10 @@ const fixture = await startFixtureServer({
     },
   },
   htmlRoutes: {
+    '/custom-webm.html': await readFile(
+      new URL('../e2e/custom-webm.html', import.meta.url),
+      'utf8'
+    ),
     '/gif-images.html': await readFile(new URL('./gif-images.html', import.meta.url), 'utf8'),
     '/feed-position.html': (
       await readFile(new URL('../e2e/twitter-feed-position.html', import.meta.url), 'utf8')

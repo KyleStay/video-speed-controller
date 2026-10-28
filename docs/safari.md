@@ -19,6 +19,30 @@ retain descriptive labels. The star sets preferred speed, the padlock locks
 controls, the ellipsis opens More, and the close (×) icon returns to the page.
 Icon shadows preserve contrast over the picture.
 
+## Custom WebM decoders
+
+On iOS, an expanded OGV surface with one custom renderer and an explicit HTTP(S)
+WebM source can use native decoding and the owned inline/fullscreen interface.
+The adapter probes that exact source off DOM and waits for `loadeddata` before
+pausing or hiding the original renderer. A native decode/play failure leaves or
+restores the original player. No source URL construction or extension fetch is
+involved. The adapter does not claim arbitrary canvas players.
+
+Discovery shares the existing bounded mutation/shadow walk and captured decoder
+readiness events. It allows eight simultaneous probes, a ten-second loading
+deadline and one attempt per renderer/source until removal or a new source.
+Site Play/Pause yields ownership before calling the original method; Stop cancels
+even a pending probe. Source/document/root changes, removal, disable and Use site
+player remove the native video and restore owned methods, markers and chrome.
+Only the exact renderer and its recognized transport are hidden by scoped CSS.
+
+`node tests/e2e/run-isolated.js custom-webm` covers the built extension with a
+neutral local decoder surface and a real native WebM. Native Safari coverage is
+`CustomWebMQATests/testNativeTakeoverAndReturn` against `/custom-webm.html` from
+the iOS fixture server. These fixtures simulate the original decoder API;
+compatibility with a deployed decoder and physical-device behavior are separate
+runtime checks.
+
 ## Open Twitter regressions
 
 These October 26, 2026 reports remain open after TestFlight 0.11.6 (25).

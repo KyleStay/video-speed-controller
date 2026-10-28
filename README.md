@@ -15,6 +15,10 @@ advertising, analytics, or StayTech backend.
   inside supported embedded players and dynamic pages. WebM and GIF-style
   MP4/WebM loops receive controls even when muted and shown without a site's
   playback controls.
+- **Custom WebM on iOS** — recognized expanded OGV players use StayFast's
+  inline and fullscreen controls when Safari can decode the supplied WebM.
+  Unsupported clips keep their original player; **Use site player** returns
+  control to the original renderer.
 - **Animated GIF images** — GIF images with multiple frames get speed, Play/Pause,
   seek and frame-step controls; still GIFs stay unchanged. The original image,
   layout and links remain in place. GIF data must be readable by the page

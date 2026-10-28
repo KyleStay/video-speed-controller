@@ -30,6 +30,7 @@ import '../core/gif-playback.js';
 import '../observers/media-observer.js';
 import '../observers/mutation-observer.js';
 import '../observers/gif-observer.js';
+import '../observers/custom-webm-observer.js';
 
 // Core functionality - depends on settings and observers
 import '../site-handlers/twitter-media-source.js';

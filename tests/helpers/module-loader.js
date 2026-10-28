@@ -67,6 +67,7 @@ export async function loadCoreModules() {
   await import('../../src/observers/mutation-observer.js');
   await import('../../src/observers/media-observer.js');
   await import('../../src/observers/gif-observer.js');
+  await import('../../src/observers/custom-webm-observer.js');
 }
 
 /**

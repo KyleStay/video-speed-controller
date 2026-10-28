@@ -1,0 +1,136 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Custom WebM controls</title>
+<style>
+  body {
+    font: 16px system-ui;
+    margin: 16px;
+  }
+  .ogv-cnt {
+    position: relative;
+    width: 340px;
+    max-width: 100%;
+  }
+  ogvjs {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #395968;
+  }
+  .ogv-ctrl {
+    min-height: 44px;
+    background: #eee;
+  }
+  button {
+    min-height: 44px;
+    margin: 8px;
+  }
+</style>
+<h1>Custom WebM controls</h1>
+<button id="open">Open WebM clip</button>
+<button id="close">Close clip</button>
+<p id="state">Custom WebM: closed</p>
+<script>
+  let original,
+    container,
+    native,
+    closedNative,
+    originalPaused = true,
+    stops = 0,
+    callbacks = 0;
+  let errors = 0;
+  addEventListener('error', () => errors++);
+  addEventListener('unhandledrejection', () => errors++);
+  const source = new URL('/sample.webm', location.href).href;
+  const read = () => {
+    native = container?.querySelector('video') || (native?.isConnected ? native : null);
+    return {
+      native: !!native,
+      controlled: !!native?.vsc,
+      sameSource: native?.src === source,
+      paused: native?.paused,
+      rate: native?.playbackRate,
+      time: native?.currentTime,
+      frames: callbacks,
+      originalPaused,
+      originalVisible: original?.isConnected && getComputedStyle(original).display !== 'none',
+      chromeVisible:
+        !!container?.isConnected &&
+        getComputedStyle(container.querySelector('.ogv-ctrl')).display !== 'none',
+      owned: !!native?.vsc?.iosPlayer?.active,
+      nativeFullscreen: !!native?.webkitDisplayingFullscreen,
+      controllers: document.querySelectorAll('vsc-controller').length,
+      stopped: stops,
+      closedPaused: closedNative?.paused,
+      errors,
+    };
+  };
+  window.__customWebMState = read;
+  const draw = () => {
+    document.querySelector('#state').textContent = 'Custom WebM: ' + JSON.stringify(read());
+  };
+  document.querySelector('#open').onclick = () => {
+    container?.remove();
+    container = document.createElement('div');
+    container.className = 'ogv-cnt expandedWebm';
+    original = document.createElement('ogvjs');
+    original.src = source;
+    Object.assign(original, {
+      muted: true,
+      volume: 0.5,
+      currentTime: 0,
+      seekable: { length: 1 },
+      play() {
+        originalPaused = false;
+        return Promise.resolve();
+      },
+      pause() {
+        originalPaused = true;
+      },
+      stop() {
+        originalPaused = true;
+        stops++;
+      },
+    });
+    Object.defineProperty(original, 'paused', { get: () => originalPaused });
+    const chrome = document.createElement('div');
+    chrome.className = 'ogv-ctrl';
+    chrome.textContent = 'Site transport';
+    container.append(original, chrome);
+    document.querySelector('#state').before(container);
+    original.play();
+    draw();
+  };
+  document.querySelector('#close').onclick = () => {
+    closedNative = native;
+    original?.stop();
+    container?.remove();
+    draw();
+  };
+  document.addEventListener('click', () => setTimeout(draw, 0), true);
+  for (const type of [
+    'loadedmetadata',
+    'loadeddata',
+    'playing',
+    'pause',
+    'timeupdate',
+    'ratechange',
+  ]) {
+    document.addEventListener(
+      type,
+      (event) => {
+        if (event.target.localName === 'video' && type === 'playing') {
+          const video = event.target;
+          let remaining = 90;
+          const frame = () => {
+            callbacks++;
+            if (--remaining > 0 && video.isConnected) video.requestVideoFrameCallback(frame);
+          };
+          video.requestVideoFrameCallback(frame);
+        }
+        draw();
+      },
+      true
+    );
+  }
+</script>

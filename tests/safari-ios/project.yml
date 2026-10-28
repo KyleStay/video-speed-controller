@@ -20,6 +20,7 @@ targets:
       - TwitterPlaybackQATests.swift
       - HLSPlayerQATests.swift
       - GifImageQATests.swift
+      - CustomWebMQATests.swift
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: co.staytech.stayfast.qa.ui
