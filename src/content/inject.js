@@ -714,7 +714,8 @@ class VideoSpeedExtension {
         parent,
         this.config,
         this.actionHandler,
-        shouldStartHidden
+        shouldStartHidden,
+        options.initialSpeed
       );
     } catch (error) {
       this.logger.error(`Failed to attach controller to video: ${error.message}`);

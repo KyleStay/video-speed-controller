@@ -495,6 +495,18 @@ up to 720p when available. It reads no global registry, constructs no media URL
 and fetches no post data. This adapter is iOS-only and leaves generic blob/MSE
 source switching disabled.
 
+Explicit owned fullscreen or Custom player entry stages that same verified MP4
+at the current accepted rate, including 1× and 2×, before any original-node
+portal. Native verification found WebKit can discard MSE buffers when that node
+is moved into the dialog. The companion opens the owned overlay after its first
+frame; this callback requests neither Play nor browser DOM fullscreen. Pending
+entry preserves pause unless the action explicitly requests Play, and a newer
+presentation, hidden page, close or handback cancels its opening intent.
+Controller transfer preserves the accepted local rate and lifecycle authority
+without saving a new speed preference. Unsupported X blob streams remain inline;
+the Custom player entry becomes an explicit Use site player escape. Apple-player
+entry remains a separate user choice.
+
 The adapter rejects captions, DRM, live/ad content, alternate native tracks,
 ambiguous media scopes and unsupported SDK schemas. It validates bounded
 metadata before loading and subscribes to the current SDK store while active.

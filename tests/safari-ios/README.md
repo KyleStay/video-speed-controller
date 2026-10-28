@@ -188,7 +188,9 @@ Open a fresh `/twitter-mp4.html` before each native test. Run
 `testDecodedFastPlaybackAndHandback` for four-second decoded 4× and 2.1×
 measurements, paused-rate changes and fullscreen handback. Run
 `testStartFromOwnedFullscreen` for a speed command issued inside the original
-owned presentation. Require at least 60 presented frames, rate progress within
+owned presentation entry. Assert that the verified companion opens at 1× with
+the original parent, MediaSource and SourceBuffer unchanged before selecting 4×.
+Require at least 60 presented frames, rate progress within
 10%, gaps below 500 ms, one controller, no errors and retained original
 source/MediaSource/SourceBuffer identities. This neutral structural fixture is
 separate from live X and physical-device acceptance. `twitter-live-mp4` uses a

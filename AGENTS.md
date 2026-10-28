@@ -146,12 +146,18 @@ with direct `chrome.*` access.
     vetoes cannot fall back to older metadata or HTML alternatives.
     No fetches, new permissions, polling, or source URL construction.
   - `twitter-mp4-playback.js` + `site-handlers/twitter-player.js` — iOS-only
-    current X SDK adapter for blob/MSE clips above 2×. Retain and pause the
+    current X SDK adapter for blob/MSE clips above 2× and explicit owned-player
+    entry at any accepted rate. Retain and pause the
     original producer; play an explicitly supplied same-asset MP4 companion.
     Bind bounded React metadata to the exact SDK/media/content/session/source;
     captions, DRM, live and ambiguity veto takeover. Handback seeks/resumes the
     unchanged original only while that identity and companion source remain
     owned. Metadata callbacks attach presentation, never request Play.
+    Intercept X blob presentation before any original-node portal; unsupported
+    streams stay inline with an explicit Use site player escape. Pending entry
+    honors presentation revisions, visibility and cancellation. Preserve accepted
+    rates through initialSpeed and per-media lifecycle authority without saving
+    a new global preference just for opening fullscreen.
 - `observers/`
   - `custom-webm-observer.js` — iOS-only adapter for an unambiguous expanded
     OGV decoder surface. Probe the exact supplied WebM in an off-DOM native video
@@ -408,6 +414,8 @@ with direct `chrome.*` access.
   playback: a finite native-HLS clip may use the site's exact same-asset MP4
   rendition above 2×. The current X SDK adapter instead retains its MSE producer
   and controls a supplied MP4 companion; it never reloads or detaches the original.
+  Explicit owned presentation also stages that companion before moving any media,
+  because WebKit can discard the original MSE buffers on a DOM portal.
   Generic source switching rejects MSE/blob, DRM, live streams, meaningful/unknown in-band
   text tracks and alternate audio/video selections. SDK capability vetoes apply
   before every source route, including HTML children. JW `allSources` belongs to

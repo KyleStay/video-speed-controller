@@ -87,6 +87,7 @@ export default async function runTwitterMP4({ launch }) {
       const row = await state();
       assert.true(
         row.originalConnected &&
+          row.originalParentUnchanged &&
           row.originalSourceUnchanged &&
           row.sameMediaSource &&
           row.sameSourceBuffer,

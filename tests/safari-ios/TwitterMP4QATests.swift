@@ -25,7 +25,7 @@ import XCTest
     }
     private func retained(_ safari: XCUIApplication) {
         let row = state(safari)
-        for key in ["originalConnected", "originalSourceUnchanged", "sameMediaSource", "sameSourceBuffer"] {
+        for key in ["originalConnected", "originalParentUnchanged", "originalSourceUnchanged", "sameMediaSource", "sameSourceBuffer"] {
             XCTAssertEqual(row[key] as? Bool, true, "\(key): \(row)")
         }
         XCTAssertEqual(row["controllers"] as? Int, 1)
@@ -93,6 +93,8 @@ import XCTest
         safari.buttons["Play original"].tap()
         wait(safari) { $0["originalPaused"] as? Bool == false }
         safari.buttons["Open owned fullscreen"].tap()
+        wait(safari) { $0["nativeReady"] as? Bool == true && $0["fullscreen"] as? Bool == true && $0["rate"] as? Double == 1 && $0["paused"] as? Bool == false }
+        retained(safari)
         let speed = safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Playback speed'")).firstMatch
         XCTAssertTrue(speed.waitForExistence(timeout: 10)); speed.tap()
         XCTAssertTrue(safari.buttons["4×"].waitForExistence(timeout: 10)); safari.buttons["4×"].tap()

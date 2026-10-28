@@ -6,7 +6,14 @@
 window.VSC = window.VSC || {};
 
 class VideoController {
-  constructor(target, parent, config, actionHandler, shouldStartHidden = false) {
+  constructor(
+    target,
+    parent,
+    config,
+    actionHandler,
+    shouldStartHidden = false,
+    initialSpeed = null
+  ) {
     // Return existing controller if already attached
     if (target.vsc) {
       return target.vsc;
@@ -52,7 +59,7 @@ class VideoController {
       }
 
       // Initialize speed
-      this.initializeSpeed();
+      this.initializeSpeed(initialSpeed);
 
       // Create UI
       this.div = this.initializeControls();
@@ -267,8 +274,9 @@ class VideoController {
    * conflict with the player's own initialization sequence.
    * @private
    */
-  initializeSpeed() {
-    const targetSpeed = this.getTargetSpeed();
+  initializeSpeed(initialSpeed = null) {
+    const targetSpeed =
+      Number.isFinite(initialSpeed) && initialSpeed > 0 ? initialSpeed : this.getTargetSpeed();
 
     window.VSC.logger.debug(`Setting initial playbackRate to: ${targetSpeed}`);
 

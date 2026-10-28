@@ -171,6 +171,7 @@
         errors,
         emulation: 'localhost host helper and progressive URL only',
         originalConnected: original.isConnected,
+        originalParentUnchanged: original.parentElement === parent,
         originalSourceUnchanged:
           original.src === initialSource && original.currentSrc === initialSource,
         sameMediaSource: mse === initialMse,

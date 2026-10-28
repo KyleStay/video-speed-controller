@@ -28,7 +28,8 @@ window.VSC = window.VSC || {};
       !controller ||
       source === 'external' ||
       !Number.isFinite(rate) ||
-      rate <= 2 ||
+      rate <= 0 ||
+      (rate <= 2 && source !== 'presentation') ||
       controller.disposed ||
       active.size >= 4 ||
       players.has(controller.video) ||
@@ -41,7 +42,7 @@ window.VSC = window.VSC || {};
         controller.video.webkitPresentationMode !== 'inline') ||
       controller.video.ownerDocument.pictureInPictureElement === controller.video ||
       controller.video.ownerDocument.fullscreenElement === controller.video ||
-      window.VSC.IOSPlayer.siteRelinquished.has(controller.video)
+      (source !== 'presentation' && window.VSC.IOSPlayer.siteRelinquished.has(controller.video))
     ) {
       return null;
     }
@@ -244,6 +245,11 @@ window.VSC = window.VSC || {};
         }
       });
       this.listen(this.view, 'pagehide', yieldToSite);
+      this.listen(this.doc, 'visibilitychange', () => {
+        if (this.presentation && this.doc.hidden) {
+          this.cleanup({ resume: false });
+        }
+      });
       this.deadline = this.view.setTimeout(() => this.abort(), 10000);
       video.src = this.candidate.progressiveUrl;
       video.load();
@@ -293,9 +299,14 @@ window.VSC = window.VSC || {};
       }
       try {
         const wasFullscreen = Boolean(this.controller.iosPlayer?.active);
+        const requestedPresentation =
+          this.presentation &&
+          !this.doc.hidden &&
+          this.presentation.revision === window.VSC.IOSPlayer.presentationRevision;
         this.committing = true;
         this.controller.remove();
         this.committing = false;
+        const presentationRevision = window.VSC.IOSPlayer.presentationRevision;
         if (!this.originCurrent()) {
           this.cleanup({ resume: false });
           return;
@@ -320,12 +331,22 @@ window.VSC = window.VSC || {};
         this.view.clearTimeout(this.deadline);
         this.creatingController = true;
         try {
+          const rate = this.video.playbackRate;
+          const rateState = this.controller.actionHandler.eventManager?.getOrCreateMediaRateState?.(
+            this.video
+          );
+          if (rateState) {
+            const revision = this.controller.config.speedPreferenceRevision ?? 0;
+            rateState.lifecycleSpeed = rateState.acceptedSpeed = rate;
+            rateState.lifecycleSpeedRevision = rateState.acceptedSpeedRevision = revision;
+          }
           this.video.vsc = new window.VSC.VideoController(
             this.video,
             this.host,
             this.controller.config,
             this.controller.actionHandler,
-            false
+            false,
+            rate
           );
         } finally {
           this.creatingController = false;
@@ -334,7 +355,13 @@ window.VSC = window.VSC || {};
           this.cleanup({ resume: false });
           return;
         }
-        if (wasFullscreen) {
+        if (
+          (wasFullscreen || requestedPresentation) &&
+          !this.doc.hidden &&
+          presentationRevision === window.VSC.IOSPlayer.presentationRevision
+        ) {
+          // Play was requested in the entry/speed command stack. Async readiness
+          // may open the overlay, never Play or browser DOM fullscreen.
           this.video.vsc.iosPlayer?.open();
         }
       } catch {
@@ -346,12 +373,24 @@ window.VSC = window.VSC || {};
     abort() {
       suppressAutomatic(this);
       this.cleanup();
+      try {
+        if (this.presentation && this.candidate.identityCurrent?.()) {
+          const player = this.original.vsc?.iosPlayer;
+          player?.setPresentationUnavailable(true);
+          player?.controller.controlsManager?.inlinePlayer?.error(
+            'Fullscreen is unavailable for this stream.'
+          );
+        }
+      } catch {
+        /* A replaced page player retains its own interface. */
+      }
     }
 
     cleanup({ resume = true, reinitialize = true, site = false, playing: priorPlaying } = {}) {
       if (this.closed) {
         return;
       }
+      const preferenceRevision = this.controller.config.speedPreferenceRevision ?? 0;
       const sameProducer = this.identityCurrent();
       let current = sameProducer && this.ownsNativeSource();
       // A handback is final for automatic initialization on this clip. A later
@@ -457,6 +496,13 @@ window.VSC = window.VSC || {};
           }
         }
         if (sameOrigin && current && resume && playing && !this.doc.hidden && stillSame()) {
+          const state = this.controller.actionHandler.eventManager?.getOrCreateMediaRateState?.(
+            this.original
+          );
+          if (state) {
+            state.lifecycleSpeed = state.acceptedSpeed = rate;
+            state.lifecycleSpeedRevision = state.acceptedSpeedRevision = preferenceRevision;
+          }
           try {
             this.originalPlay.call(this.original)?.catch?.(() => {});
           } catch {
@@ -470,10 +516,22 @@ window.VSC = window.VSC || {};
           reinitialize &&
           this.committed &&
           sameOrigin &&
+          stillSame() &&
           !window.VSC_controller?.teardownRequested &&
           this.controller.config.settings.enabled !== false
         ) {
-          window.VSC_controller?.onVideoFound(this.original, this.original.parentElement);
+          const initialSpeed = this.original.playbackRate;
+          const state = this.controller.actionHandler.eventManager?.getOrCreateMediaRateState?.(
+            this.original
+          );
+          if (state) {
+            state.lifecycleSpeed = state.acceptedSpeed = initialSpeed;
+            state.lifecycleSpeedRevision = state.acceptedSpeedRevision = preferenceRevision;
+          }
+          window.VSC_controller?.onVideoFound(this.original, this.original.parentElement, {
+            forceAttach: true,
+            initialSpeed,
+          });
         }
       } catch {
         /* A replaced/detached page player retains its latest intent. */
@@ -483,6 +541,57 @@ window.VSC = window.VSC || {};
 
   window.VSC.TwitterMP4Playback = {
     get: (video) => players.get(video),
+    getPending: (video) => {
+      const session = originals.get(video);
+      return session && !session.committed ? session : null;
+    },
+    cancelPresentation(video, { resume = true } = {}) {
+      const session = originals.get(video);
+      if (session?.presentation && !session.committing && !session.committed) {
+        session.cleanup({ resume });
+      }
+    },
+    open(controller, options = {}) {
+      let scoped = false;
+      let session;
+      try {
+        const video = controller?.video;
+        if (
+          !video ||
+          players.has(video) ||
+          !window.VSC.IOSPlayer?.isSupported(video) ||
+          !window.VSC.EventManager.isTwitterHost(new URL(video.ownerDocument.URL).hostname)
+        ) {
+          return null;
+        }
+        scoped = true;
+        if (!(video.currentSrc || video.src).startsWith('blob:')) {
+          return null;
+        }
+        // Portaling an original X MSE node can detach its SourceBuffers in
+        // WebKit. Unsupported streams stay inline rather than taking that path.
+        if (options.automatic || controller.disposed || video.ownerDocument.hidden) {
+          return false;
+        }
+        session = this.begin(controller, video.playbackRate, 'presentation');
+        if (!session || !session.current()) {
+          session?.cleanup({ resume: false });
+          return false;
+        }
+        session.presentation = { revision: window.VSC.IOSPlayer.presentationRevision };
+        if (options.play) {
+          session.playing = true;
+          if (session.finished) {
+            session.video.play()?.catch?.(() => session.abort());
+          }
+        }
+        session.finish();
+        return !session.closed;
+      } catch {
+        session?.cleanup();
+        return scoped ? false : null;
+      }
+    },
     isRetained: (video) => originals.get(video)?.committed === true,
     controllerRemoved(video) {
       const original = originals.get(video);
@@ -525,7 +634,7 @@ window.VSC = window.VSC || {};
         }
         const prior = originals.get(controller.video);
         if (prior) {
-          if (rate <= 2) {
+          if (rate <= 2 && source !== 'presentation') {
             prior.cleanup();
             return null;
           }
