@@ -6,7 +6,14 @@
 window.VSC = window.VSC || {};
 
 class VideoController {
-  constructor(target, parent, config, actionHandler, shouldStartHidden = false) {
+  constructor(
+    target,
+    parent,
+    config,
+    actionHandler,
+    shouldStartHidden = false,
+    initialSpeed = null
+  ) {
     // Return existing controller if already attached
     if (target.vsc) {
       return target.vsc;
@@ -52,7 +59,7 @@ class VideoController {
       }
 
       // Initialize speed
-      this.initializeSpeed();
+      this.initializeSpeed(initialSpeed);
 
       // Create UI
       this.div = this.initializeControls();
@@ -267,8 +274,9 @@ class VideoController {
    * conflict with the player's own initialization sequence.
    * @private
    */
-  initializeSpeed() {
-    const targetSpeed = this.getTargetSpeed();
+  initializeSpeed(initialSpeed = null) {
+    const targetSpeed =
+      Number.isFinite(initialSpeed) && initialSpeed > 0 ? initialSpeed : this.getTargetSpeed();
 
     window.VSC.logger.debug(`Setting initial playbackRate to: ${targetSpeed}`);
 
@@ -276,7 +284,8 @@ class VideoController {
       !this.actionHandler ||
       (this.video.readyState >= 1 &&
         targetSpeed === this.video.playbackRate &&
-        !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init'))
+        !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') &&
+        !window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init'))
     ) {
       return;
     }
@@ -561,7 +570,10 @@ class VideoController {
       // cooldown, dispatch synthetic events and flash an already-correct UI.
       try {
         if (event.target.playbackRate === targetSpeed) {
-          if (window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init')) {
+          if (
+            window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') ||
+            window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
+          ) {
             this.actionHandler.adjustSpeed(event.target, targetSpeed, { source: 'init' });
             return;
           }
@@ -722,6 +734,7 @@ class VideoController {
     // Remove reference from video element
     delete this.video.vsc;
     window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
+    window.VSC.TwitterMP4Playback?.controllerRemoved(this.video);
 
     window.VSC.logger.debug('VideoController removed successfully');
   }

@@ -1,0 +1,369 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Retained MSE fast playback fixture</title>
+<style>
+  body {
+    font: 16px system-ui;
+    margin: 16px;
+  }
+  h1 {
+    font-size: 22px;
+  }
+  body > p {
+    font-size: 12px;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    position: fixed;
+    bottom: 12px;
+    left: 8px;
+    right: 8px;
+    gap: 4px;
+    z-index: 2147483646;
+    background: white;
+  }
+  .actions button {
+    margin: 0;
+    font-size: 12px;
+  }
+  body[data-fullscreen='true'] .actions {
+    display: none;
+  }
+  #status {
+    font-size: 10px;
+    max-height: 88px;
+    overflow: auto;
+  }
+  #player {
+    position: relative;
+    width: 340px;
+    max-width: 100%;
+    aspect-ratio: 16/9;
+  }
+  video {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  button {
+    min-height: 44px;
+    margin: 4px;
+  }
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>
+<h1>Retained MSE fast playback</h1>
+<p>
+  Neutral local fixture: only host recognition and the resolved MP4 transport URL are mapped to
+  localhost. Production resolution validates the supplied SDK and metadata schema.
+</p>
+<div id="player"><video id="original" muted loop playsinline></video></div>
+<div class="actions">
+  <button id="play">Play original</button><button id="pause">Pause current</button>
+  <button id="speed21">Set 2.1×</button><button id="speed4">Set 4×</button>
+  <button id="reset">Reset current to 1×</button><button id="cancel">Request 4× then cancel</button>
+  <button id="fullscreen">Open owned fullscreen</button
+  ><button id="handback">Use site player</button> <button id="captions">Supply caption track</button
+  ><button id="replace">Replace source session</button>
+  <button id="measure">Measure current playback</button>
+</div>
+<pre id="status">Loading</pre>
+<script>
+  (async () => {
+    const original = document.querySelector('#original');
+    const parent = document.querySelector('#player');
+    const contentId = '2041611432752742400',
+      postId = '2041611432752742401';
+    const sourceUrl = `https://video.twimg.com/amplify_video/${contentId}/pl/current.m3u8?tag=21`;
+    const mp4 = `https://video.twimg.com/amplify_video/${contentId}/vid/avc1/640x360/current.mp4?tag=21`;
+    const content = {
+      contentId,
+      contentType: 'video',
+      sourceType: 'tweet',
+      sourceId: postId,
+      tweetId: postId,
+      durationMs: 32000,
+      mediaAssetUrl: sourceUrl,
+    };
+    const state = {
+      content,
+      source: { kind: 'hls', src: sourceUrl, playlistDurationSec: 32 },
+      session: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+      textTracks: { tracks: [] },
+      playback: { shouldLoop: true },
+      media: { muted: true, volume: 0.5, paused: true },
+    };
+    const subscribers = new Set();
+    const api = {
+      getMediaElement: () => original,
+      getState: () => state,
+      seekTo: (time) => {
+        original.currentTime = time;
+      },
+    };
+    const store = {
+      getSnapshot: () => state,
+      subscribe: (callback) => {
+        subscribers.add(callback);
+        return () => subscribers.delete(callback);
+      },
+    };
+    const sdk = { controller: { api }, element: original, store, src: sourceUrl };
+    const props = { content, src: sourceUrl, hostKey: `${postId}:${contentId}` };
+    const metadata = {
+      downloadUrl: mp4,
+      poppedOutSource: {
+        hostKey: props.hostKey,
+        playerProps: { content, src: sourceUrl, downloadUrl: mp4 },
+      },
+      timeRemainingAccessory: {
+        props: {
+          media: {
+            id_str: contentId,
+            video_download_url: mp4,
+            video_info: {
+              duration_millis: 32000,
+              variants: [
+                { content_type: 'application/x-mpegURL', url: sourceUrl },
+                { content_type: 'video/mp4', url: mp4, bitrate: 700000 },
+              ],
+            },
+          },
+        },
+      },
+    };
+    parent.__reactFiber$fixture = {
+      memoizedState: { memoizedState: sdk, next: null },
+      memoizedProps: props,
+      return: { memoizedState: null, memoizedProps: metadata, return: null },
+    };
+    let mse,
+      buffer,
+      initialMse,
+      initialBuffer,
+      initialSource,
+      ready = false,
+      error = null,
+      errors = 0,
+      measurement = null;
+    const ownedUrls = new Set();
+    const frameHandles = new Map();
+    let interval;
+    addEventListener('error', () => errors++);
+    addEventListener('unhandledrejection', () => errors++);
+    const current = () =>
+      window.VSC?.stateManager?.getControlledElements().find((video) => video !== original) ||
+      original;
+    const notify = () => {
+      for (const callback of [...subscribers]) callback();
+    };
+    const range = (video) =>
+      video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+    const snapshot = () => {
+      const video = current();
+      return {
+        ready,
+        error,
+        errors,
+        emulation: 'localhost host helper and progressive URL only',
+        originalConnected: original.isConnected,
+        originalParentUnchanged: original.parentElement === parent,
+        originalSourceUnchanged:
+          original.src === initialSource && original.currentSrc === initialSource,
+        sameMediaSource: mse === initialMse,
+        sameSourceBuffer: buffer === initialBuffer && mse?.sourceBuffers[0] === initialBuffer,
+        mediaSourceState: mse?.readyState,
+        buffered: range(original),
+        originalTime: original.currentTime,
+        originalPaused: original.paused,
+        originalRate: original.playbackRate,
+        native: video !== original,
+        nativeReady: video !== original && video.readyState >= 2,
+        time: video.currentTime,
+        paused: video.paused,
+        rate: video.playbackRate,
+        controllers: window.VSC?.stateManager?.controllers.size || 0,
+        hosts: document.querySelectorAll('[data-vsc-twitter-mp4]').length,
+        videos: document.querySelectorAll('video').length,
+        subscribers: subscribers.size,
+        fullscreen: !!video.vsc?.iosPlayer?.active,
+        canResolve: !!window.VSC?.TwitterPlayer?.resolve(original),
+        measurement,
+      };
+    };
+    window.__twitterMP4State = snapshot;
+    window.__twitterMP4Fixture = { original, state, sdk, store, notify, current };
+    const draw = () => {
+      const player = current().vsc?.iosPlayer;
+      document.body.dataset.fullscreen = String(!!player?.active);
+      const text = 'MP4 playback: ' + JSON.stringify(snapshot());
+      document.querySelector('#status').textContent = text;
+      // Native accessibility makes the page inert beneath a modal dialog.
+      // Keep fixture diagnostics readable inside the active test presentation.
+      if (player?.active) {
+        let status = player.ui.dialog.querySelector('[data-qa-status]');
+        if (!status) {
+          status = document.createElement('p');
+          status.setAttribute('data-qa-status', '');
+          status.style.cssText =
+            'position:absolute;top:72px;left:8px;right:8px;max-height:60px;overflow:hidden;font:8px monospace;pointer-events:none;';
+          player.ui.dialog.append(status);
+        }
+        status.textContent = text;
+      }
+    };
+    const once = (target, event) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          target.removeEventListener(event, done);
+          reject(new Error(`${event} timed out`));
+        }, 10000);
+        function done() {
+          clearTimeout(timer);
+          resolve();
+        }
+        target.addEventListener(event, done, { once: true });
+      });
+    async function loadMSE() {
+      const Media = window.ManagedMediaSource || window.MediaSource;
+      if (!Media) throw new Error('No real MediaSource implementation');
+      original.disableRemotePlayback = true;
+      const mime = 'video/mp4; codecs="avc1.42c01e, mp4a.40.2"';
+      if (!Media.isTypeSupported(mime)) throw new Error(`Unsupported MSE type: ${mime}`);
+      mse = new Media();
+      const url = URL.createObjectURL(mse);
+      ownedUrls.add(url);
+      const opened = once(mse, 'sourceopen');
+      original.src = url;
+      await opened;
+      buffer = mse.addSourceBuffer(mime);
+      const bytes = await (await fetch('/sample.mp4')).arrayBuffer();
+      const appended = once(buffer, 'updateend');
+      buffer.appendBuffer(bytes);
+      await appended;
+      mse.duration = 32;
+      const loaded = original.readyState >= 2 ? Promise.resolve() : once(original, 'loadeddata');
+      await loaded;
+      original.currentTime = 2;
+      if (!initialMse) {
+        initialMse = mse;
+        initialBuffer = buffer;
+        initialSource = url;
+      }
+    }
+    function setSpeed(rate, video = current()) {
+      window.VSC_controller.actionHandler.setSpeed(video, rate);
+    }
+    document.querySelector('#play').onclick = () => {
+      void original.play();
+    };
+    document.querySelector('#pause').onclick = () => current().pause();
+    document.querySelector('#speed21').onclick = () => setSpeed(2.1);
+    document.querySelector('#speed4').onclick = () => setSpeed(4);
+    document.querySelector('#reset').onclick = () => setSpeed(1, current());
+    document.querySelector('#cancel').onclick = () => {
+      setSpeed(4);
+      setSpeed(1);
+    };
+    document.querySelector('#fullscreen').onclick = () => current().vsc.iosPlayer.open();
+    document.querySelector('#handback').onclick = () => current().vsc.iosPlayer.restoreSitePlayer();
+    document.querySelector('#captions').onclick = () => {
+      state.textTracks.tracks = [{ kind: 'captions', id: 'fixture-caption' }];
+      notify();
+    };
+    document.querySelector('#replace').onclick = () => {
+      state.session = { id: 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+      notify();
+      void loadMSE().catch((failure) => {
+        error = failure.message;
+        draw();
+      });
+    };
+    document.querySelector('#measure').onclick = () => {
+      const video = current(),
+        start = performance.now(),
+        firstTime = video.currentTime;
+      measurement = {
+        done: false,
+        requestedRate: video.playbackRate,
+        frames: 0,
+        startTime: firstTime,
+      };
+      let previousTime = firstTime,
+        elapsedMedia = 0,
+        previousFrame = start,
+        maxGapMs = 0;
+      const source = video.currentSrc;
+      const sample = (now) => {
+        frameHandles.delete(video);
+        measurement.frames++;
+        maxGapMs = Math.max(maxGapMs, now - previousFrame);
+        previousFrame = now;
+        const delta = video.currentTime - previousTime;
+        elapsedMedia += delta < -0.5 && video.loop ? video.duration + delta : delta;
+        previousTime = video.currentTime;
+        if (video.currentSrc !== source) {
+          measurement.error = 'source changed';
+          measurement.done = true;
+          draw();
+          return;
+        }
+        if (now - start >= 4000) {
+          const wallSeconds = (performance.now() - start) / 1000;
+          Object.assign(measurement, {
+            done: true,
+            wallSeconds,
+            mediaSeconds: elapsedMedia,
+            maxGapMs,
+            ratio: elapsedMedia / wallSeconds,
+          });
+          draw();
+        } else frameHandles.set(video, video.requestVideoFrameCallback(sample));
+      };
+      frameHandles.set(video, video.requestVideoFrameCallback(sample));
+    };
+    try {
+      for (
+        let attempt = 0;
+        (!window.VSC?.TwitterPlayer || !window.VSC_controller?.initialized) && attempt < 100;
+        attempt++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!window.VSC?.TwitterPlayer)
+        throw new Error('Production TwitterPlayer module unavailable');
+      // Each case starts at 1× even when the previous fixture saved a fast rate.
+      window.VSC_controller.config.settings.lastSpeed = 1;
+      const host = window.VSC.EventManager.isTwitterHost;
+      window.VSC.EventManager.isTwitterHost = (hostname) =>
+        hostname === location.hostname || host(hostname);
+      const resolve = window.VSC.TwitterPlayer.resolve;
+      window.VSC.TwitterPlayer.resolve = function (...args) {
+        const candidate = resolve.apply(this, args);
+        if (candidate) candidate.progressiveUrl = new URL('/sample.mp4', location.href).href;
+        return candidate;
+      };
+      await loadMSE();
+      ready = true;
+      draw();
+      interval = setInterval(draw, 100);
+      setTimeout(() => clearInterval(interval), 90000);
+    } catch (failure) {
+      error = failure.message;
+      draw();
+    }
+    addEventListener(
+      'pagehide',
+      () => {
+        clearInterval(interval);
+        for (const [video, handle] of frameHandles) video.cancelVideoFrameCallback(handle);
+        frameHandles.clear();
+        for (const url of ownedUrls) URL.revokeObjectURL(url);
+      },
+      { once: true }
+    );
+  })();
+</script>

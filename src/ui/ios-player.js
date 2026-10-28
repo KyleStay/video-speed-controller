@@ -83,6 +83,10 @@ class IOSPlayer {
     this.listen(this.button, 'click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (this.presentationUnavailable) {
+        this.restoreSitePlayer();
+        return;
+      }
       this.open({ play: true });
     });
 
@@ -127,6 +131,7 @@ class IOSPlayer {
       // Feeds reuse media nodes. Presentation and scroll restoration belong to
       // the old resource, never to the next item loaded into the same element.
       this.nativeGeneration++;
+      this.setPresentationUnavailable(false);
       documentFullscreen = false;
       this.resumeAfterPip = false;
       this.resumeOnShow = false;
@@ -211,6 +216,7 @@ class IOSPlayer {
     this.listen(this.video, 'leavepictureinpicture', presentationChanged);
     this.listen(this.view, 'pagehide', () => {
       this.resumeOnShow = this.active;
+      window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: false });
       this.close({ settle: false });
       this.scrollRestore?.cancel();
       this.nativeScroll?.cancel();
@@ -645,6 +651,18 @@ class IOSPlayer {
     this.nativeRecovery?.cancel();
     IOSPlayer.presentationRevision++;
     try {
+      const staged = window.VSC.TwitterMP4Playback?.open(this.controller, options);
+      if (staged !== null && staged !== undefined) {
+        if (!staged && !options.automatic) {
+          this.setPresentationUnavailable(true);
+          this.controller.controlsManager?.inlinePlayer?.error(
+            'Fullscreen is unavailable for this stream.'
+          );
+        } else if (staged) {
+          this.setPresentationUnavailable(false);
+        }
+        return staged;
+      }
       const scroll = options.fullscreen
         ? new window.VSC.IOSPlayerScrollState(this.video, true)
         : null;
@@ -667,6 +685,17 @@ class IOSPlayer {
       this.placeholder?.remove();
       window.VSC.logger?.warn(`Owned player unavailable: ${error?.message}`);
       return false;
+    }
+  }
+
+  setPresentationUnavailable(unavailable) {
+    this.presentationUnavailable = unavailable;
+    if (this.button) {
+      this.button.textContent = unavailable ? 'Use site player' : 'Custom player';
+      this.button.setAttribute(
+        'aria-label',
+        unavailable ? 'Use site player' : 'Open StayFast player'
+      );
     }
   }
 
@@ -1724,6 +1753,7 @@ class IOSPlayer {
   close({ settle = true } = {}) {
     this.nativeRecovery?.cancel();
     IOSPlayer.presentationRevision++;
+    window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: !this.disposed });
     if (!this.active) {
       return;
     }
@@ -1846,6 +1876,14 @@ class IOSPlayer {
   }
 
   restoreSitePlayer() {
+    this.setPresentationUnavailable(false);
+    const pendingTwitter = window.VSC.TwitterMP4Playback?.getPending(this.video);
+    const twitterPlayback = window.VSC.TwitterMP4Playback?.get(this.video) || pendingTwitter;
+    // Closing reparents the media, which can pause it. Preserve the user's
+    // current intent before that synchronous presentation change.
+    const playing = pendingTwitter
+      ? pendingTwitter.playing
+      : !this.video.paused && !this.video.ended;
     this.resumeAfterPip = false;
     this.resumeOnShow = false;
     IOSPlayer.siteRelinquished.add(this.video);
@@ -1855,6 +1893,7 @@ class IOSPlayer {
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();
     window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
+    twitterPlayback?.cleanup({ site: true, playing });
   }
 
   releaseMediaOwnership() {

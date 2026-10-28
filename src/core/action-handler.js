@@ -563,7 +563,9 @@ class ActionHandler {
     }
     let playbackTransition;
     try {
-      playbackTransition = window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
+      playbackTransition =
+        window.VSC.TwitterMP4Playback?.begin(video.vsc, numericSpeed, source) ||
+        window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
       window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
       const acceptedSpeed = video.playbackRate;
       if (!Number.isFinite(acceptedSpeed) || acceptedSpeed <= 0) {

@@ -444,8 +444,9 @@ including stuttering when the stream lacks an I-frame rendition. See the
 StayFast accepts requested rates from 0.07× to 16× on Safari, matching Chrome
 and Firefox. This is a product limit; an accepted rate does not establish smooth
 decoding. Playback retains the site's original media, tracks, DRM session
-and audio pitch policy. The source exception below applies only to eligible native-HLS
-videos with an explicit matching MP4 alternative. StayFast avoids reassigning an unchanged native rate and
+and audio pitch policy. Native-HLS switching requires an explicit matching MP4
+alternative. Current X MediaSource playback uses the separate retained-producer
+adapter described below. StayFast avoids reassigning an unchanged native rate and
 does not fight a source-specific initialization clamp.
 
 On iPhone/iPad, a speed above 2× selects an explicitly supplied matching MP4
@@ -483,6 +484,40 @@ does not survive MP4 selection: captions arriving later in that dormant stream
 will be unavailable until the original HLS resource is restored. Labeled,
 language-tagged or populated tracks retain HLS. An unavailable rendition keeps the
 original stream; smooth playback above 2× cannot be promised in that case.
+
+Current X uses a blob-backed MediaSource player on some iOS sessions. Replacing
+that video's source detaches the producer and its SourceBuffers; assigning the old
+blob back does not restore them. `TwitterMP4Playback` instead pauses and retains
+the original, then controls a native MP4 companion over the same picture. The
+resolver binds the nearby React hook to the exact SDK media element, cached
+state, content, session, source and supplied same-asset CDN variants. It selects
+up to 720p when available. It reads no global registry, constructs no media URL
+and fetches no post data. This adapter is iOS-only and leaves generic blob/MSE
+source switching disabled.
+
+Explicit owned fullscreen or Custom player entry stages that same verified MP4
+at the current accepted rate, including 1× and 2×, before any original-node
+portal. Native verification found WebKit can discard MSE buffers when that node
+is moved into the dialog. The companion opens the owned overlay after its first
+frame; this callback requests neither Play nor browser DOM fullscreen. Pending
+entry preserves pause unless the action explicitly requests Play, and a newer
+presentation, hidden page, close or handback cancels its opening intent.
+Controller transfer preserves the accepted local rate and lifecycle authority
+without saving a new speed preference. Unsupported X blob streams remain inline;
+the Custom player entry becomes an explicit Use site player escape. Apple-player
+entry remains a separate user choice.
+
+The adapter rejects captions, DRM, live/ad content, alternate native tracks,
+ambiguous media scopes and unsupported SDK schemas. It validates bounded
+metadata before loading and subscribes to the current SDK store while active.
+The speed command pauses the original and requests companion Play in the same
+call stack; loaded-data callbacks only transfer controls/presentation. Paused
+commands retain pause. Handback copies time and current playback intent to the
+unchanged producer through its verified seek API, then restores controls. A
+seek's temporary drop to metadata-only readiness does not invalidate that exact
+producer identity. Source/session changes, removal and teardown release the
+companion and owned wrappers/listeners without a stale resume. A caption or
+protection change returns to the same original producer.
 
 The coordinator performs one synchronous source/load/start-time/rate transition.
 It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
