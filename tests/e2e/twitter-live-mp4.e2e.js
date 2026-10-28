@@ -27,8 +27,76 @@ export default async function runTwitterLiveMP4({ launch }) {
     );
     await page.evaluate(() => {
       const original = document.querySelector('article video');
-      window.__stayfastLiveProbe = { original, source: original.currentSrc };
+      window.__stayfastLiveProbe = {
+        original,
+        source: original.currentSrc,
+        parent: original.parentElement,
+      };
     });
+    if (await page.$('[data-interaction="app-store-obstruction"][data-state="open"]')) {
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(
+        () =>
+          !document.querySelector('[data-interaction="app-store-obstruction"][data-state="open"]')
+      );
+    }
+    // Enter at 1x BEFORE changing speed: the original MSE must never be portaled.
+    const videoHandle = await page.evaluateHandle(
+      () => window.VSC.stateManager.getControlledElements()[0]
+    );
+    const rect = await videoHandle.asElement().boundingBox();
+    if (
+      await page.evaluate(
+        (video) => video.vsc.div.hasAttribute('data-vsc-inline-idle'),
+        videoHandle
+      )
+    ) {
+      await page.touchscreen.tap(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    }
+    await page.waitForFunction(() => {
+      const video = window.VSC.stateManager.getControlledElements()[0];
+      return !video.vsc.div.hasAttribute('data-vsc-inline-idle');
+    });
+    const openHandle = await page.evaluateHandle(
+      (video) => video.vsc.div.shadowRoot.querySelector('[aria-label="Open video fullscreen"]'),
+      videoHandle
+    );
+    await openHandle.asElement().tap();
+    await openHandle.dispose();
+    await videoHandle.dispose();
+    await page.waitForFunction(
+      () => window.VSC.stateManager.getControlledElements()[0]?.vsc.iosPlayer.active
+    );
+    await page.waitForFunction(() => {
+      const { original, source, parent } = window.__stayfastLiveProbe;
+      const native = window.VSC.stateManager.getControlledElements()[0];
+      return (
+        window.VSC.TwitterMP4Playback.isRetained(original) &&
+        original.parentElement === parent &&
+        original.currentSrc === source &&
+        native !== original &&
+        native.playbackRate === 1 &&
+        !native.paused &&
+        native.vsc.iosPlayer.active
+      );
+    });
+    await writeFile(
+      `${output}/live-x-1x-entry.json`,
+      JSON.stringify(
+        await page.evaluate(() => {
+          const { original, source, parent } = window.__stayfastLiveProbe;
+          const native = window.VSC.stateManager.getControlledElements()[0];
+          return {
+            originalParentUnchanged: original.parentElement === parent,
+            originalSourceUnchanged: original.currentSrc === source,
+            nativeRate: native.playbackRate,
+            ownedFullscreen: native.vsc.iosPlayer.active,
+          };
+        }),
+        null,
+        2
+      )
+    );
     for (let i = 0; i < 30; i++) {
       await page.keyboard.press('d');
     }
@@ -54,7 +122,7 @@ export default async function runTwitterLiveMP4({ launch }) {
       { timeout: 45000 }
     );
     const report = await page.evaluate(async () => {
-      const { original, source } = window.__stayfastLiveProbe;
+      const { original, source, parent } = window.__stayfastLiveProbe;
       const video = window.VSC.stateManager.getControlledElements()[0];
       const start = performance.now();
       let lastTime = video.currentTime,
@@ -86,6 +154,8 @@ export default async function runTwitterLiveMP4({ launch }) {
       });
       return {
         originalConnected: original.isConnected,
+        originalParentUnchanged: original.parentElement === parent,
+        ownedFullscreen: video.vsc.iosPlayer.active,
         originalSourceUnchanged: original.src === source && original.currentSrc === source,
         originalPaused: original.paused,
         mp4: /^https:\/\/video\.twimg\.com\/.+\.mp4(?:\?|$)/.test(video.currentSrc),
@@ -97,7 +167,11 @@ export default async function runTwitterLiveMP4({ launch }) {
       };
     });
     assert.true(
-      report.originalConnected && report.originalSourceUnchanged && report.originalPaused
+      report.originalConnected &&
+        report.originalParentUnchanged &&
+        report.originalSourceUnchanged &&
+        report.originalPaused &&
+        report.ownedFullscreen
     );
     assert.true(report.mp4 && !report.paused && report.rate === 4);
     assert.true(
@@ -106,39 +180,24 @@ export default async function runTwitterLiveMP4({ launch }) {
     );
     await writeFile(`${output}/live-x-4x.json`, JSON.stringify(report, null, 2));
     await page.screenshot({ path: `${output}/live-x-4x.png` });
-    if (await page.$('[data-interaction="app-store-obstruction"][data-state="open"]')) {
-      await page.keyboard.press('Escape');
-      await page.waitForFunction(
-        () =>
-          !document.querySelector('[data-interaction="app-store-obstruction"][data-state="open"]')
-      );
-    }
-    // Open the owned view using its genuine fullscreen button, then hand back.
-    const videoHandle = await page.evaluateHandle(
-      () => window.VSC.stateManager.getControlledElements()[0]
+    const stage = await page.evaluateHandle(
+      () => window.VSC.stateManager.getControlledElements()[0].vsc.iosPlayer.ui.stage
     );
-    const rect = await videoHandle.asElement().boundingBox();
     if (
-      await page.evaluate(
-        (video) => video.vsc.div.hasAttribute('data-vsc-inline-idle'),
-        videoHandle
+      await page.evaluate(() =>
+        window.VSC.stateManager
+          .getControlledElements()[0]
+          .vsc.iosPlayer.ui.host.hasAttribute('data-controls-hidden')
       )
     ) {
-      await page.touchscreen.tap(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await stage.asElement().tap();
     }
-    await page.waitForFunction(() => {
-      const video = window.VSC.stateManager.getControlledElements()[0];
-      return !video.vsc.div.hasAttribute('data-vsc-inline-idle');
-    });
-    const openHandle = await page.evaluateHandle(
-      (video) => video.vsc.div.shadowRoot.querySelector('[aria-label="Open video fullscreen"]'),
-      videoHandle
-    );
-    await openHandle.asElement().tap();
-    await openHandle.dispose();
-    await videoHandle.dispose();
+    await stage.dispose();
     await page.waitForFunction(
-      () => window.VSC.stateManager.getControlledElements()[0]?.vsc.iosPlayer.active
+      () =>
+        !window.VSC.stateManager
+          .getControlledElements()[0]
+          .vsc.iosPlayer.ui.host.hasAttribute('data-controls-hidden')
     );
     for (const name of ['more', 'site']) {
       const button = await page.evaluateHandle(
