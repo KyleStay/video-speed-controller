@@ -175,6 +175,25 @@ separate. Include `FeedPositionQATests.swift` when copying the QA sources below.
 
 ## X playback above 2× — current regression fixture
 
+For current X blob/MSE playback, `TwitterMP4QATests` uses `/twitter-mp4.html`
+with a generated, fragmented moving H.264/AAC clip. The original uses a real
+ManagedMediaSource/SourceBuffer; the companion uses the same content as MP4.
+Only the host helper and resolved MP4 transport URL are mapped to localhost.
+Production SDK/React identity validation, rate commands, presentation and cleanup
+remain active. Set `STAYFAST_FIXTURE_MP4` to the generated file when starting the
+fixture server. `node tests/e2e/run-isolated.js twitter-mp4` generates that file
+under `test-results/twitter-mse-fix/fixture.mp4` and runs seven Chromium checks.
+
+Open a fresh `/twitter-mp4.html` before each native test. Run
+`testDecodedFastPlaybackAndHandback` for four-second decoded 4× and 2.1×
+measurements, paused-rate changes and fullscreen handback. Run
+`testStartFromOwnedFullscreen` for a speed command issued inside the original
+owned presentation. Require at least 60 presented frames, rate progress within
+10%, gaps below 500 ms, one controller, no errors and retained original
+source/MediaSource/SourceBuffer identities. This neutral structural fixture is
+separate from live X and physical-device acceptance. `twitter-live-mp4` uses a
+public X post and its real SDK/CDN in disposable Chromium touch emulation.
+
 `TwitterPlaybackQATests` uses `/twitter-playback.html` with the public X clip
 reported by the user. The installed extension’s resolver, coordinator, rate pipeline and presentation
 code run unchanged, including the real iOS matcher. CDN playback requires the fixture's no-referrer policy.

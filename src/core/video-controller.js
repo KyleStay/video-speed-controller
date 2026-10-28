@@ -276,7 +276,8 @@ class VideoController {
       !this.actionHandler ||
       (this.video.readyState >= 1 &&
         targetSpeed === this.video.playbackRate &&
-        !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init'))
+        !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') &&
+        !window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init'))
     ) {
       return;
     }
@@ -561,7 +562,10 @@ class VideoController {
       // cooldown, dispatch synthetic events and flash an already-correct UI.
       try {
         if (event.target.playbackRate === targetSpeed) {
-          if (window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init')) {
+          if (
+            window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') ||
+            window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
+          ) {
             this.actionHandler.adjustSpeed(event.target, targetSpeed, { source: 'init' });
             return;
           }
@@ -722,6 +726,7 @@ class VideoController {
     // Remove reference from video element
     delete this.video.vsc;
     window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
+    window.VSC.TwitterMP4Playback?.controllerRemoved(this.video);
 
     window.VSC.logger.debug('VideoController removed successfully');
   }

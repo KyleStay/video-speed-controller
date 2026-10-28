@@ -1846,6 +1846,10 @@ class IOSPlayer {
   }
 
   restoreSitePlayer() {
+    const twitterPlayback = window.VSC.TwitterMP4Playback?.get(this.video);
+    // Closing reparents the media, which can pause it. Preserve the user's
+    // current intent before that synchronous presentation change.
+    const playing = !this.video.paused && !this.video.ended;
     this.resumeAfterPip = false;
     this.resumeOnShow = false;
     IOSPlayer.siteRelinquished.add(this.video);
@@ -1855,6 +1859,7 @@ class IOSPlayer {
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();
     window.VSC.CustomWebMObserver?.get(this.video)?.cleanup();
+    twitterPlayback?.cleanup({ site: true, playing });
   }
 
   releaseMediaOwnership() {

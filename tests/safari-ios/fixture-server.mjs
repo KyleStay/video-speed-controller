@@ -15,7 +15,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 // The shared HTTP helper also serves its repository-owned WebM and iframe fixtures.
 process.chdir(fileURLToPath(new URL('../../', import.meta.url)));
 const fixture = await startFixtureServer({
-  mp4Path: fileURLToPath(new URL('./sample.mp4', import.meta.url)),
+  mp4Path:
+    process.env.STAYFAST_FIXTURE_MP4 || fileURLToPath(new URL('./sample.mp4', import.meta.url)),
   probeMp4Path: process.env.STAYFAST_RATE_PROBE_MP4,
   binaryRoutes: {
     '/animated.gif': { type: 'image/gif', body: Buffer.from(gifFixture()) },
@@ -25,6 +26,10 @@ const fixture = await startFixtureServer({
     },
   },
   htmlRoutes: {
+    '/twitter-mp4.html': await readFile(
+      new URL('../e2e/twitter-mp4.html', import.meta.url),
+      'utf8'
+    ),
     '/custom-webm.html': await readFile(
       new URL('../e2e/custom-webm.html', import.meta.url),
       'utf8'

@@ -656,6 +656,9 @@ class VideoSpeedExtension {
    */
   onVideoFound(video, parent, options = {}) {
     try {
+      if (window.VSC.TwitterMP4Playback?.isRetained(video)) {
+        return;
+      }
       // all_frames owns each document independently, including same-origin
       // embeds. A parent must never register another frame's media.
       if (video.ownerDocument && video.ownerDocument !== document) {
@@ -818,6 +821,7 @@ class VideoSpeedExtension {
     this.gifObserver = null;
     this.customWebMObserver?.cleanup();
     this.customWebMObserver = null;
+    window.VSC.TwitterMP4Playback?.cleanupAll();
 
     // Remove all controllers from tracked media elements
     const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
@@ -893,6 +897,7 @@ class VideoSpeedExtension {
    */
   onVideoRemoved(video) {
     try {
+      window.VSC.TwitterMP4Playback?.mediaRemoved(video);
       this.clearPendingVideoAttachment(video);
       if (video.vsc) {
         this.logger.debug('Removing controller from video element');

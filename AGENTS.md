@@ -145,6 +145,13 @@ with direct `chrome.*` access.
     when its selected HLS variant otherwise matches exactly. SDK caption/protection
     vetoes cannot fall back to older metadata or HTML alternatives.
     No fetches, new permissions, polling, or source URL construction.
+  - `twitter-mp4-playback.js` + `site-handlers/twitter-player.js` — iOS-only
+    current X SDK adapter for blob/MSE clips above 2×. Retain and pause the
+    original producer; play an explicitly supplied same-asset MP4 companion.
+    Bind bounded React metadata to the exact SDK/media/content/session/source;
+    captions, DRM, live and ambiguity veto takeover. Handback seeks/resumes the
+    unchanged original only while that identity and companion source remain
+    owned. Metadata callbacks attach presentation, never request Play.
 - `observers/`
   - `custom-webm-observer.js` — iOS-only adapter for an unambiguous expanded
     OGV decoder surface. Probe the exact supplied WebM in an off-DOM native video
@@ -399,7 +406,9 @@ with direct `chrome.*` access.
 - **iOS player ownership**: retain the original media, source/srcObject,
   MediaSource/MediaKeys, and tracks. The source exception is eligible iOS native-HLS fast
   playback: a finite native-HLS clip may use the site's exact same-asset MP4
-  rendition above 2×. Reject MSE/blob, DRM, live streams, meaningful/unknown in-band
+  rendition above 2×. The current X SDK adapter instead retains its MSE producer
+  and controls a supplied MP4 companion; it never reloads or detaches the original.
+  Generic source switching rejects MSE/blob, DRM, live streams, meaningful/unknown in-band
   text tracks and alternate audio/video selections. SDK capability vetoes apply
   before every source route, including HTML children. JW `allSources` belongs to
   the current item; do not combine arrays or scan other items. Whole-player and
