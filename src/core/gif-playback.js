@@ -82,6 +82,12 @@ class GifPlayback {
           if (!Number.isFinite(value)) {
             return;
           }
+          // Seeking away from a finished finite animation must remain paused,
+          // as frame-step and media seeking do after ordinary playback ends.
+          if (this.finished || this.animation.playState === 'finished') {
+            this.userPaused = true;
+            this.animation.pause();
+          }
           const time = Math.max(0, Math.min(gif.duration, value));
           this.finished = false;
           this.seekEnd = time === gif.duration;

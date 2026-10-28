@@ -270,6 +270,9 @@ export default async function runGifImages({ launch, browserName = 'chrome' }) {
           document.querySelector('#finite-gif').vsc && document.querySelector('#finite-gif').ended
       );
       assert.equal(await page.$eval('#finite-gif', (image) => image.currentTime), 0.5);
+      await page.$eval('#finite-gif', (image) => window.VSC.GifPlayback.get(image).stepFrame(-1));
+      assert.true(await page.$eval('#finite-gif', (image) => image.paused));
+      assert.equal(await page.$eval('#finite-gif', (image) => image.currentTime), 0);
       await page.$eval('#finite-gif', async (image) => {
         await image.play();
       });
@@ -278,6 +281,11 @@ export default async function runGifImages({ launch, browserName = 'chrome' }) {
         window.__finiteGif = image;
         image.remove();
       });
+      await page.waitForFunction(() => !window.__finiteGif.vsc);
+      await page.evaluate(() => document.body.append(window.__finiteGif));
+      await page.waitForFunction(() => window.__finiteGif.vsc?.div?.isConnected);
+      assert.true(await page.evaluate(() => !!window.VSC.GifPlayback.get(window.__finiteGif)));
+      await page.evaluate(() => window.__finiteGif.remove());
       await page.waitForFunction(() => !window.__finiteGif.vsc);
     });
     await check(

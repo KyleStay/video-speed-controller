@@ -9,6 +9,7 @@ class GifObserver {
     this.view = document.defaultView;
     this.attach = attach;
     this.entries = new Map();
+    this.waiting = new Set();
     this.attempts = new WeakMap();
     this.roots = new Set();
     this.active = true;
@@ -27,6 +28,11 @@ class GifObserver {
         for (const entry of entries) {
           const row = this.entries.get(entry.target);
           if (!row) {
+            if (entry.isIntersecting) {
+              this.consider(entry.target, true);
+            } else {
+              this.waiting.delete(entry.target);
+            }
             continue;
           }
           row.visible = entry.isIntersecting;
@@ -93,15 +99,15 @@ class GifObserver {
     }
   }
 
-  consider(image) {
+  consider(image, visible = !this.intersections) {
     try {
-      this.considerImage(image);
+      this.considerImage(image, visible);
     } catch (error) {
       window.VSC.logger.debug(`GIF candidate unavailable: ${error?.message}`);
     }
   }
 
-  considerImage(image) {
+  considerImage(image, visible) {
     if (
       !this.active ||
       !image?.isConnected ||
@@ -123,18 +129,28 @@ class GifObserver {
       !image.naturalWidth ||
       image.vsc ||
       !GifObserver.candidate(image) ||
-      this.attempts.get(image) === signature ||
-      this.entries.size >= 32
+      this.attempts.get(image) === signature
     ) {
       return;
     }
+    // Observe visibility before allocating a decoding slot. Offscreen images
+    // cannot fill the queue and prevent a later visible image from qualifying.
+    if (!visible) {
+      this.intersections?.observe(image);
+      return;
+    }
+    if (this.entries.size >= 32) {
+      this.waiting.add(image);
+      return;
+    }
+    this.waiting.delete(image);
     this.attempts.set(image, signature);
     const row = {
       image,
       signature,
       source: GifObserver.source(image),
       abort: new this.view.AbortController(),
-      visible: !this.intersections,
+      visible,
       started: false,
     };
     // Only candidates own attribute observers. Source intent immediately ends
@@ -156,6 +172,13 @@ class GifObserver {
     }
     this.pumpTimer = this.view.setTimeout(() => {
       this.pumpTimer = null;
+      for (const image of this.waiting) {
+        if (this.entries.size >= 32) {
+          break;
+        }
+        this.waiting.delete(image);
+        this.consider(image, true);
+      }
       void this.pump();
     }, 0);
   }
@@ -257,6 +280,9 @@ class GifObserver {
     row.released = true;
     if (this.entries.get(row.image) === row) {
       this.entries.delete(row.image);
+      if (row.playback || !row.image.isConnected) {
+        this.attempts.delete(row.image);
+      }
     }
     row.abort.abort();
     row.observer.disconnect();
@@ -266,6 +292,10 @@ class GifObserver {
   }
 
   remove(image, expected = this.entries.get(image)) {
+    if (!expected) {
+      this.waiting.delete(image);
+      this.intersections?.unobserve(image);
+    }
     if (!expected || this.entries.get(image) !== expected) {
       return;
     }
@@ -284,6 +314,7 @@ class GifObserver {
     }
     this.document.removeEventListener('visibilitychange', this.visibility);
     this.intersections?.disconnect();
+    this.waiting.clear();
     for (const image of this.entries.keys()) {
       this.remove(image);
     }

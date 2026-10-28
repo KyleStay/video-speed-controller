@@ -1,0 +1,56 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>StayFast GIF verification</title>
+<style>
+  body {
+    font: 16px system-ui;
+    margin: 20px;
+  }
+  .picture {
+    position: relative;
+    width: 320px;
+  }
+  img {
+    display: block;
+    image-rendering: pixelated;
+  }
+  button {
+    min-height: 44px;
+    margin: 8px;
+  }
+</style>
+<h1>GIF playback</h1>
+<div class="picture">
+  <img
+    id="animated"
+    src="/animated.gif"
+    width="320"
+    height="180"
+    alt="Animated red and blue picture"
+  />
+</div>
+<div class="picture">
+  <img id="still" src="/still.gif" width="100" height="60" alt="Still GIF" />
+</div>
+<button id="read">Read GIF state</button>
+<p id="state">GIF state: waiting</p>
+<script>
+  const image = document.querySelector('#animated');
+  const source = image.src;
+  const original = image;
+  let errors = 0;
+  addEventListener('error', () => errors++);
+  addEventListener('unhandledrejection', () => errors++);
+  document.querySelector('#read').addEventListener('click', () => {
+    const content = getComputedStyle(image).content;
+    const frame = image
+      .getAnimations()
+      .find((animation) => animation.effect.getKeyframes().some((key) => key.content));
+    const keys = frame?.effect.getKeyframes().filter((key) => key.offset < 1) || [];
+    const index = keys.findIndex((key) =>
+      content.includes(key.content.match(/blob:[^"\s)]+/)?.[0])
+    );
+    document.querySelector('#state').textContent =
+      `GIF state: controlled=${!!image.vsc}; same=${image === original && image.src === source}; still=${!!document.querySelector('#still').vsc}; paused=${image.paused}; rate=${image.playbackRate}; time=${image.currentTime?.toFixed(3)}; frame=${index}; blob=${content.includes('blob:')}; errors=${errors}`;
+  });
+</script>

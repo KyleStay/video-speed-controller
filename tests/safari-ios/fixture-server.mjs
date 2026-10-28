@@ -4,6 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { startFixtureServer } from '../e2e/fixture-server.js';
+import { gifFixture } from '../helpers/gif-fixture.js';
 
 const portFlag = process.argv.indexOf('--port');
 const port = portFlag < 0 ? 62938 : Number(process.argv[portFlag + 1]);
@@ -16,7 +17,15 @@ process.chdir(fileURLToPath(new URL('../../', import.meta.url)));
 const fixture = await startFixtureServer({
   mp4Path: fileURLToPath(new URL('./sample.mp4', import.meta.url)),
   probeMp4Path: process.env.STAYFAST_RATE_PROBE_MP4,
+  binaryRoutes: {
+    '/animated.gif': { type: 'image/gif', body: Buffer.from(gifFixture()) },
+    '/still.gif': {
+      type: 'image/gif',
+      body: Buffer.from(gifFixture({ frames: [{ color: 1, delay: 20 }] })),
+    },
+  },
   htmlRoutes: {
+    '/gif-images.html': await readFile(new URL('./gif-images.html', import.meta.url), 'utf8'),
     '/feed-position.html': (
       await readFile(new URL('../e2e/twitter-feed-position.html', import.meta.url), 'utf8')
     ).replace('/__feed.webm', '/sample.mp4'),

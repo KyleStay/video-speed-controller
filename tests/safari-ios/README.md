@@ -37,6 +37,17 @@ player, open `/mobile.html?mp4&owned&takeover&theater-overlay&surface-scrub` and
 through a genuine tap, then runs the same inline, fullscreen and resumed-playback
 assertions. This is a local structural regression, not live authenticated X proof.
 
+## Animated GIF images
+
+Open `/gif-images.html` after activation and run
+`GifImageQATests/testAnimationControlsAndFrames`. It uses genuine taps on the
+installed extension to pause a confirmed multi-frame GIF, step to its red and
+blue frames, set 2× and resume. Fixture diagnostics only read state; screenshots
+must confirm the two rendered colors. Require the original node/source, an
+untouched still GIF and zero page errors. Include `GifImageQATests.swift` when
+copying the harness sources. This native fixture check does not establish
+physical-device or all-site acceptance.
+
 ## Synthetic custom-player feed
 
 The [local custom-player fixtures](../e2e/CUSTOM-PLAYER-FIXTURES.md) provide

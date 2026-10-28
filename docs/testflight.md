@@ -1,10 +1,27 @@
 # StayFast Video — iOS TestFlight
 
-Release packet updated October 26, 2026. Target: iPhone and iPad on iOS/iPadOS
+Release packet updated October 28, 2026. Target: iPhone and iPad on iOS/iPadOS
 18.4+. Archive/export, Apple upload/processing and tester availability are
 separate verification steps.
 
-## Current release preparation — October 26, 2026
+## Current release preparation — GIF and WebM controls
+
+The next candidate adds controls to muted looping MP4/WebM clips, including
+clips without site controls, and supported multi-frame GIF images. GIFs retain
+their original image node and source while gaining speed, pause/play, seek and
+exact frame stepping. Still GIFs remain unchanged. Cross-origin images require
+CORS; unreadable, CSP-blocked, unsupported and over-budget images retain native
+rendering. GIF source changes, removal and disable release the owned animation
+and frame URLs. Removed/reinserted feed images must regain controls, and
+offscreen candidates must not block visible images.
+
+Record final reviewed source, local CI, Chrome GIF/loop regressions and native
+Safari GIF controls, signed archive/export, Apple processing, What to Test and
+existing Personal Auto availability before claiming distribution. Use the
+existing TestFlight runner and its one-upload-attempt receipt for the next
+available build; retain evidence under `build/safari/testflight/`.
+
+## Previous release — current-track MP4 selection
 
 The next candidate repairs MP4 selection for X's current selected-track metadata,
 including its observed HLS transport marker and the expanded viewer's absent

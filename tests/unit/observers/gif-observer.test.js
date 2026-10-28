@@ -82,6 +82,71 @@ describe('bounded GIF discovery', () => {
     expect(observer.framePixels).toBe(0);
     expect(observer.entries.size).toBe(0);
   });
+  it('does not let offscreen candidates consume the visible decoding queue', () => {
+    let callback;
+    const observed = new Set();
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(fn) {
+          callback = fn;
+        }
+        observe(node) {
+          observed.add(node);
+        }
+        unobserve(node) {
+          observed.delete(node);
+        }
+        disconnect() {
+          observed.clear();
+        }
+      }
+    );
+    observer = new window.VSC.GifObserver(document, vi.fn());
+    for (let index = 0; index < 40; index++) {
+      observer.consider(image(`https://example.test/offscreen-${index}.gif`));
+    }
+    const visible = image('https://example.test/visible.gif');
+    observer.consider(visible);
+    expect(observer.entries.size).toBe(0);
+    expect(observed.has(visible)).toBe(true);
+    callback([{ target: visible, isIntersecting: true }]);
+    expect(observer.entries.get(visible).visible).toBe(true);
+  });
+  it('reconsiders detached nodes without retrying failed connected resources', () => {
+    const node = image();
+    observer = new window.VSC.GifObserver(document, vi.fn());
+    const first = observer.entries.get(node);
+    node.remove();
+    observer.remove(node);
+    document.body.append(node);
+    observer.consider(node);
+    expect(observer.entries.get(node)).toBeDefined();
+    expect(observer.entries.get(node)).not.toBe(first);
+    expect(first.abort.signal.aborted).toBe(true);
+  });
+  it('admits visible overflow when a decoding slot is released', async () => {
+    vi.useFakeTimers();
+    try {
+      observer = new window.VSC.GifObserver(document, vi.fn());
+      for (let index = 0; index < 32; index++) {
+        observer.consider(image(`https://example.test/${index}.gif`));
+      }
+      const extra = image('https://example.test/extra.gif');
+      observer.consider(extra);
+      expect(observer.waiting.has(extra)).toBe(true);
+      const first = observer.entries.keys().next().value;
+      first.remove();
+      observer.remove(first);
+      const pump = vi.spyOn(observer, 'pump').mockResolvedValue();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observer.entries.has(extra)).toBe(true);
+      expect(observer.entries.size).toBe(32);
+      expect(pump).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('aborts pending work when a source changes and never attaches an older result', async () => {
     let resolve;
     fetch.mockImplementation(

@@ -129,6 +129,16 @@ describe('original-image GIF playback', () => {
     expect(image.playbackRate).toBe(7);
     expect(window.VSC.GifPlayback.get(image)).toBeUndefined();
   });
+  it('keeps a completed finite animation paused when stepping back into its frames', () => {
+    attach(null);
+    animation.playState = 'finished';
+    animation.onfinish();
+    playback.stepFrame(-1);
+    expect(image.paused).toBe(true);
+    expect(image.ended).toBe(false);
+    expect(image.currentTime).toBe(0);
+    expect(animation.playState).toBe('paused');
+  });
   it('rolls back if a page already owns a media-shaped image property', () => {
     Object.defineProperty(image, 'duration', { configurable: true, value: 7 });
     expect(() => attach()).toThrow('already has duration');
