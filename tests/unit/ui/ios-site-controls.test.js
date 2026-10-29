@@ -60,6 +60,63 @@ describe('scoped iOS site controls', () => {
     return { ...result, trigger, play: trigger.firstChild, group: trigger.lastChild };
   }
 
+  function nestedModernX() {
+    const result = modernX();
+    result.play.setAttribute('aria-label', 'Pause');
+    const wrapper = document.createElement('div');
+    wrapper.className =
+      'pointer-events-none absolute inset-s-0 inset-e-0 bottom-0 z-20 flex items-end';
+    const gradient = document.createElement('div');
+    gradient.className = 'absolute inset-0 bg-linear-to-b from-transparent to-black/80';
+    wrapper.append(gradient, result.group);
+    result.trigger.append(wrapper);
+    return { ...result, wrapper };
+  }
+
+  it('recognizes the observed one-level X controls wrapper without hiding unrelated content', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const { container, video, owner, trigger, play, group, wrapper, caption, button } =
+      nestedModernX();
+    const unknown = document.createElement('div');
+    unknown.textContent = 'Site information';
+    wrapper.append(unknown);
+    expect(owner.acquire()).toBe(true);
+    expect(owner.container).toBe(container);
+    expect(getComputedStyle(play).display).toBe('none');
+    expect(getComputedStyle(group).display).toBe('none');
+    for (const node of [trigger, wrapper, caption, button, unknown]) {
+      expect(getComputedStyle(node).display).not.toBe('none');
+    }
+    expect(window.VSC.IOSSiteControls.xSurfaceControl(play)).toEqual({ node: container, video });
+    owner.release();
+    expect(getComputedStyle(play).display).not.toBe('none');
+    expect(getComputedStyle(group).display).not.toBe('none');
+  });
+
+  it.each(['wrong-wrapper', 'deeper-group', 'duplicate-group', 'second-video', 'iframe'])(
+    'rejects a nested X lookalike with %s',
+    (kind) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { container, owner, trigger, group, wrapper } = nestedModernX();
+      if (kind === 'wrong-wrapper') {
+        wrapper.classList.remove('pointer-events-none');
+      }
+      if (kind === 'deeper-group') {
+        const extra = document.createElement('div');
+        wrapper.append(extra);
+        extra.append(group);
+      }
+      if (kind === 'duplicate-group') {
+        trigger.append(group.cloneNode(true));
+      }
+      if (kind === 'second-video' || kind === 'iframe') {
+        container.append(document.createElement(kind === 'iframe' ? 'iframe' : 'video'));
+      }
+      expect(owner.acquire()).toBe(false);
+      expect(container.hasAttribute(marker)).toBe(false);
+    }
+  );
+
   it('recognizes modern X siblings, hiding exact transport while retaining captions and unrelated actions', () => {
     vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
     const { container, video, owner, trigger, play, group, caption, button } = modernX();

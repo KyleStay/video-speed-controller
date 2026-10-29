@@ -189,6 +189,28 @@ describe('compact iOS inline controls', () => {
       }
     });
 
+    it('repairs a hidden strip after page chrome changes without a media resize', () => {
+      const player = new window.VSC.IOSPlayer({ video, div: host, controlsManager: manager });
+      player.attached = player.mediaPrepared = true;
+      video.vsc.iosPlayer = player;
+      const occlusion = vi
+        .spyOn(manager, 'avoidInlineOcclusion')
+        .mockImplementation((_s, _v, placement) => {
+          placement.y += 80;
+        });
+      manager.positionInlineControls(shadow, video);
+      expect(host.hasAttribute('data-vsc-inline-strip-hidden')).toBe(true);
+      occlusion.mockRestore();
+      const position = vi.spyOn(manager, 'positionInlineControls');
+      player.refreshSiteControls();
+      player.refreshSiteControls();
+      expect(host.hasAttribute('data-vsc-inline-strip-hidden')).toBe(true);
+      vi.advanceTimersByTime(20);
+      expect(host.hasAttribute('data-vsc-inline-strip-hidden')).toBe(false);
+      expect(position).toHaveBeenCalledTimes(1);
+      player.cleanup();
+    });
+
     it('recalculates independent rail offsets after occlusion and nonuniform rescaling', () => {
       const occlusion = vi
         .spyOn(manager, 'avoidInlineOcclusion')

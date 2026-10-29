@@ -33,11 +33,14 @@ const SITE_CONTROL_PROFILES = [
 ];
 const siteControlOwners = new WeakMap();
 let siteControlSequence = 0;
+const XDS_NESTED_CONTROL_GROUP =
+  'div.pointer-events-none.absolute.inset-s-0.inset-e-0.bottom-0.z-20.flex.items-end > [class~="group/controls"]';
 const XDS_SITE_CONTROL_PROFILE = {
   controls: [
     '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Play"]',
     '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Pause"]',
     '> [data-slot="xds-context-menu-trigger"] > [class~="group/controls"]',
+    `> [data-slot="xds-context-menu-trigger"] > ${XDS_NESTED_CONTROL_GROUP}`,
     '> [data-slot="xds-context-menu-trigger"] [data-slot="xds-button"][aria-label="Mute"]',
     '> [data-slot="xds-context-menu-trigger"] [data-slot="xds-button"][aria-label="Unmute"]',
   ],
@@ -77,7 +80,9 @@ class IOSSiteControls {
         !trigger.querySelector(
           ':scope > button[aria-label="Play"], :scope > button[aria-label="Pause"]'
         ) ||
-        trigger.querySelectorAll(':scope > [class~="group/controls"]').length !== 1
+        trigger.querySelectorAll(
+          `:scope > [class~="group/controls"], :scope > ${XDS_NESTED_CONTROL_GROUP}`
+        ).length !== 1
       ) {
         return null;
       }

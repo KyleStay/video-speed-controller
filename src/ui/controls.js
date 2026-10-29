@@ -277,6 +277,13 @@ class ControlsManager {
     });
   }
 
+  refreshHiddenInlineControls() {
+    if (this.inlinePlayer?.host.hasAttribute('data-vsc-inline-strip-hidden')) {
+      const view = this.inlinePlayer.host.ownerDocument.defaultView;
+      ControlsManager.inlineScrollGroups.get(view)?.queue();
+    }
+  }
+
   positionInlineControls(shadow, video) {
     // Detached geometry is zero, so using it would double the media offset
     // after insertion and temporarily enlarge a virtualized feed's scroll range.

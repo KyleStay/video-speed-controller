@@ -215,6 +215,24 @@
       trace.video = video;
       trace.player = player;
       trace.source = video.src;
+      if (new URLSearchParams(location.search).has('nested')) {
+        // Current X places this one controls bank below an exact direct-child
+        // layer, beside its gradient. Captions and unrelated actions stay out.
+        const group = trigger.querySelector(':scope > [class~="group/controls"]');
+        const layer = document.createElement('div');
+        layer.id = 'nested-controls-wrapper';
+        layer.className =
+          'pointer-events-none absolute inset-s-0 inset-e-0 bottom-0 z-20 flex items-end';
+        layer.style.cssText =
+          'position:absolute;inset-inline:0;bottom:0;display:flex;align-items:flex-end;pointer-events:none;z-index:20';
+        const gradient = document.createElement('div');
+        gradient.className = 'absolute inset-0 bg-linear-to-b from-transparent to-black/80';
+        gradient.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+        group.style.position = 'relative';
+        group.style.width = '100%';
+        layer.append(gradient, group);
+        trigger.append(layer);
+      }
       trace.retained = new URLSearchParams(location.search).has('retained');
       if (trace.retained) {
         // Controlled variant: retain a visible entry outside the hidden transport
