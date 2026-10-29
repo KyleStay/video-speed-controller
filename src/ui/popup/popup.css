@@ -601,6 +601,14 @@ body {
     font-size: 16px;
   }
 
+  .site-controls-toggle input {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    font-size: 16px;
+    touch-action: manipulation;
+  }
+
   .icon-btn {
     width: 44px;
     height: 44px;

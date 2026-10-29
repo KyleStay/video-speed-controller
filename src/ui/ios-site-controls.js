@@ -606,6 +606,9 @@ class IOSSiteControls {
         'aria-label',
         'title',
         'href',
+        'type',
+        'data-testid',
+        'data-vsc-twitter-mp4',
         SITE_CONTROL_ATTRIBUTE,
       ],
     });

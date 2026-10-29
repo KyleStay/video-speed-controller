@@ -64,6 +64,36 @@ describe('opt-in site button suppression', () => {
     }
   );
 
+  it.each(['captions', 'subtitles'])(
+    'restores a suppressed ancestor when an existing descendant is identified as %s',
+    async (testid) => {
+      const { container, owner } = fixture();
+      const group = document.createElement('div');
+      group.className = 'vjs-control-bar';
+      group.innerHTML = '<span>Current caption</span><button>Site settings</button>';
+      container.append(group);
+      expect(owner.acquire()).toBe(true);
+      expect(getComputedStyle(group).display).toBe('none');
+      group.firstChild.dataset.testid = testid;
+      await settle();
+      expect(group.hasAttribute(hidden)).toBe(false);
+      expect(getComputedStyle(group).display).not.toBe('none');
+      expect(getComputedStyle(group.lastChild).display).toBe('none');
+    }
+  );
+
+  it('hides an existing hidden input when the site turns it into a seek control', async () => {
+    const { container, owner } = fixture();
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    container.append(input);
+    expect(owner.acquire()).toBe(true);
+    expect(input.hasAttribute(hidden)).toBe(false);
+    input.type = 'range';
+    await settle();
+    expect(getComputedStyle(input).display).toBe('none');
+  });
+
   it('retains caption trees, renderers, StayFast controls, and their parents', () => {
     const { container, owner } = fixture();
     container.insertAdjacentHTML(
