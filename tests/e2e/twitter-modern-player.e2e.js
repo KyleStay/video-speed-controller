@@ -200,8 +200,12 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
         void request.abort('blockedbyclient');
       }
     });
-    const navigate = async (retained = false) => {
-      await page.goto(`https://x.com/__stayfast_modern${retained ? '?retained=1' : ''}`, {
+    const navigate = async (retained = false, nested = false) => {
+      const query = new URLSearchParams({
+        ...(retained ? { retained: '1' } : {}),
+        ...(nested ? { nested: '1' } : {}),
+      });
+      await page.goto(`https://x.com/__stayfast_modern${query.size ? `?${query}` : ''}`, {
         waitUntil: 'domcontentloaded',
       });
       await page.waitForFunction(
@@ -249,6 +253,33 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
           JSON.stringify(current)
         );
         await page.screenshot({ path: resolve('tests/e2e/screenshots/twitter-modern-inline.png') });
+      }
+    );
+    await check(
+      'observed nested control layer retains reachable owned transport and reversible site chrome',
+      async () => {
+        await navigate(false, true);
+        const before = await state(page);
+        assertOriginal(before);
+        assert.true(!before.coverVisible && !before.groupVisible && before.captionVisible);
+        await tapInline(page, 'play');
+        await page.waitForFunction(() => !window.__modernX.video.paused);
+        await tapInline(page, 'play');
+        await page.waitForFunction(() => window.__modernX.video.paused);
+        await tap(page, () =>
+          window.__modernX.video.vsc.div.shadowRoot.querySelector('.inline-fullscreen')
+        );
+        await page.waitForFunction(() => window.__modernX.video.vsc.iosPlayer.active);
+        await tapOwned(page, 'more');
+        await tapOwned(page, 'site');
+        await page.waitForFunction(() => !window.__modernX.video.vsc.iosPlayer.active);
+        const current = await state(page);
+        assertOriginal(current);
+        assert.true(
+          current.coverVisible && current.groupVisible && current.captionVisible && current.paused,
+          JSON.stringify(current)
+        );
+        await assertScroll(page, before, 'nested controls handback');
       }
     );
     await check(

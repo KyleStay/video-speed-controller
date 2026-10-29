@@ -280,7 +280,7 @@ window.VSC = window.VSC || {};
       // stack. Metadata callbacks only attach presentation; they never play.
       this.originalPause.call(this.original);
       if (!this.current()) {
-        this.cleanup({ resume: false });
+        this.cleanup({ resume: this.identityCurrent() });
         return;
       }
       if (this.playing) {

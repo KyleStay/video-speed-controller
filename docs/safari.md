@@ -495,6 +495,21 @@ up to 720p when available. It reads no global registry, constructs no media URL
 and fetches no post data. This adapter is iOS-only and leaves generic blob/MSE
 source switching disabled.
 
+The reported October 28 post exposed an XDS transport group inside one additional
+chrome wrapper. Recognition accepts that exact bounded layout as well as the
+direct group, while retaining ambiguity checks and unrelated controls/captions.
+Known-media mutation reconciliation also queues the existing shared placement
+frame for an already hidden inline strip. This repairs stale occlusion after
+page chrome disappears without resizing the video; visible controls do not add
+layout work. A failed handoff resumes the original only while its producer and
+source identity remain owned.
+
+`twitter-live-mp4` tests the reported post through genuine inline 2.1×/4× controls
+and independent 1× fullscreen entry followed by 4×. It requires the exact post's
+media, actual hit targets, streaming decoded progress and original-source
+preservation. These Chromium results do not establish physical iPhone Safari
+acceptance, which remains a separate required check.
+
 Explicit owned fullscreen or Custom player entry stages that same verified MP4
 at the current accepted rate, including 1× and 2×, before any original-node
 portal. Native verification found WebKit can discard MSE buffers when that node

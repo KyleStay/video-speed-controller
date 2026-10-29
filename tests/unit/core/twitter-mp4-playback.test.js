@@ -756,6 +756,26 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
+  it('resumes the same producer when eligibility is lost during the handoff Pause', () => {
+    // Pause can publish new capabilities before the SDK subscription callback.
+    // The producer is still the same, so rejecting the companion must not leave
+    // the previously playing source paused with neither player running.
+    original.pause.mockImplementation(() => {
+      mediaState(original).paused = true;
+      candidate.current.mockReturnValue(false);
+    });
+    const session = begin();
+    expect(candidate.identityCurrent()).toBe(true);
+    session.finish();
+    expect(nativePlay).not.toHaveBeenCalled();
+    expect(companionCtor).not.toHaveBeenCalled();
+    expect(originalPlay).toHaveBeenCalledOnce();
+    expect(original.paused).toBe(false);
+    expect(original.src).toBe(MSE);
+    expect(original.load).not.toHaveBeenCalled();
+    expectReleased(session);
+  });
+
   it('pauses a stale native Play promise completion after teardown', async () => {
     let resolve;
     nativePlay.mockImplementationOnce(function () {

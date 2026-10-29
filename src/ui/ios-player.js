@@ -266,6 +266,9 @@ class IOSPlayer {
       return;
     }
     try {
+      // Page chrome can disappear without resizing or moving the media.
+      // Reuse the bounded shared placement frame only for an occluded strip.
+      this.controller.controlsManager?.refreshHiddenInlineControls?.();
       this.siteControls?.acquire();
       this.controller.controlsManager?.inlinePlayer?.refreshSurfaceContainer();
     } catch {
