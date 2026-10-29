@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { Script } from 'node:vm';
 import { nativeBuildArguments } from '../../../scripts/safari-native.mjs';
 
 const projectRoot = process.cwd();
 const appleRoot = path.join(projectRoot, 'apple', 'StayFast Video');
 
 describe('Safari native packaging', () => {
+  it('emits executable JavaScript from the native live-post diagnostic bookmarklet', () => {
+    const harness = readFileSync(
+      path.join(projectRoot, 'tests/safari-ios/TwitterLiveQATests.swift'),
+      'utf8'
+    );
+    const literal = harness.match(/#"""([\s\S]*?)"""#\.split/);
+    expect(literal).not.toBeNull();
+    // Compile the actual single-line representation pasted into Safari, where
+    // a line comment would otherwise consume all subsequent source lines.
+    const serialized = literal[1]
+      .split('\n')
+      .map((line) => line.trim())
+      .join(' ');
+    expect(() => new Script(serialized)).not.toThrow();
+  });
+
   it.each([
     ['ios-simulator', 'StayFast Video (iOS)', 'generic/platform=iOS Simulator'],
     ['ios', 'StayFast Video (iOS)', 'generic/platform=iOS'],

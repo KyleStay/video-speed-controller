@@ -283,8 +283,8 @@ import UIKit
             return{id:f.id,src:v.src,currentSrc:v.currentSrc,rate:v.playbackRate,paused:v.paused,ended:v.ended,time:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:null,ready:v.readyState,frames:f.frames,played:f.played,lastFrameAt:f.lastWall,frameGaps:f.gaps.map(g=>[g.at,g.gap]),nativeFrames:quality,controlled:!!v.vsc,owned:!!v.vsc?.iosPlayer?.active,rect:{x:r.x,y:r.y,width:r.width,height:r.height},error:v.error?{code:v.error.code,message:v.error.message}:null};
           };
           const snapshot=()=>{try{
-            // Capture once: replacement/removal must fail identity assertions,
-            // rather than silently rebinding the diagnostic to a newer video.
+            /* Capture once: replacement/removal must fail identity assertions,
+               rather than silently rebinding the diagnostic to a newer video. */
             if(!original){
               original=locate();
               if(original){
