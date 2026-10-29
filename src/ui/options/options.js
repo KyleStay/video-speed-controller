@@ -269,6 +269,13 @@ const SITE_RULE_COLUMNS = [
     placeholder: '(global)',
     label: 'Site rule speed',
   },
+  {
+    key: 'hideSiteControls',
+    type: 'checkbox',
+    className: 'ruleHideSiteControls',
+    default: false,
+    label: 'Hide site video buttons',
+  },
 ];
 
 export function validateCustomCSSSafety(css) {
@@ -870,18 +877,25 @@ function createKeyBindings(item) {
 
 /**
  * Add a site rule row to the container.
- * @param {Object} [data] - { pattern, enabled, speed }
+ * @param {Object} [data] - { pattern, enabled, speed, hideSiteControls }
  * @returns {HTMLElement}
  */
 function add_site_rule(data = { enabled: true }) {
   const container = document.getElementById('site-rules-container');
   const speedDisplay = data.speed !== null && data.speed !== undefined ? data.speed : undefined;
-  return createRow(
+  const row = createRow(
     container,
     SITE_RULE_COLUMNS,
-    { pattern: data.pattern, disabled: !data.enabled, speed: speedDisplay },
+    {
+      pattern: data.pattern,
+      disabled: !data.enabled,
+      speed: speedDisplay,
+      hideSiteControls: data.hideSiteControls === true,
+    },
     { className: 'site-rule', removable: true, removeLabel: 'Remove site rule' }
   );
+  row.siteRuleData = { ...data };
+  return row;
 }
 
 /**
@@ -901,15 +915,17 @@ function parseSpeed(s) {
 
 /**
  * Collect site rules from the DOM.
- * @returns {Array<{pattern: string, enabled: boolean, speed: number|null}>}
+ * @returns {Array<{pattern: string, enabled: boolean, speed: number|null, hideSiteControls: boolean}>}
  */
 function collectSiteRules() {
   const container = document.getElementById('site-rules-container');
   return Array.from(container.querySelectorAll('.row.site-rule'))
     .map((row) => ({
+      ...row.siteRuleData,
       pattern: row.querySelector('.rulePattern').value.trim(),
       enabled: !row.querySelector('.ruleDisabled').checked,
       speed: parseSpeed(row.querySelector('.ruleSpeed').value),
+      hideSiteControls: row.querySelector('.ruleHideSiteControls').checked,
     }))
     .filter((r) => r.pattern);
 }
@@ -1356,6 +1372,7 @@ export function validateImportedSettings(settings) {
           typeof rule.pattern !== 'string' ||
           !isValidSiteRulePattern(rule.pattern) ||
           typeof rule.enabled !== 'boolean' ||
+          (rule.hideSiteControls !== undefined && typeof rule.hideSiteControls !== 'boolean') ||
           (rule.speed !== null &&
             rule.speed !== undefined &&
             (!Number.isFinite(rule.speed) ||

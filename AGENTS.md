@@ -101,6 +101,9 @@ with direct `chrome.*` access.
   or hide mixed playback rates.
 - **Trust boundary**: the MAIN world may write **only `lastSpeed`** back to
   storage (`VSC_WRITE_STORAGE`); everything else is read-only from MAIN.
+  Popup `VSC_GET_SITE_INFO` targets frame 0 and reads its HTTP(S) URL directly
+  in ISOLATED, without a page event or new tab/host permissions. Site-rule writes
+  stay in extension UI contexts.
 
 ## Module map (`src/`)
 
@@ -192,7 +195,15 @@ with direct `chrome.*` access.
   `ios-player-gestures` owns stage touch gestures. `ios-player-fullscreen` owns
   optional container DOM fullscreen, scoped to the active UI/session and target.
   `ios-inline-player` owns responsive inline transport; `ios-site-controls`
-  reversibly hides exact recognized chrome; `ios-player-takeover` owns lazy,
+  reversibly hides exact recognized chrome. It also owns optional per-site
+  `siteRules[].hideSiteControls` suppression on all browsers: scoped semantic
+  buttons and recognized overlays, including late paused/playing controls.
+  `VideoController` shares this owner with `ios-player`; iOS handback and unusable
+  inline presentation still release it. Captions, media and StayFast remain
+  protected; opt-in observers stay within a bounded unambiguous player scope.
+  Popup saves exact-host overrides only where existing rule precedence and speed
+  semantics can be preserved; arbitrary path/regex rules use the Site rules editor.
+  `ios-player-takeover` owns lazy,
   per-window iOS fullscreen hooks and the explicit Apple-player bypass. Existing
   child-list reconciliation and known-media class/style rechecks refresh site
   chrome recognition and ambiguity; scroll placement does not reacquire it.

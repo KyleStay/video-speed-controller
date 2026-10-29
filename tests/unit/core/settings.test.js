@@ -387,6 +387,37 @@ describe('Settings', () => {
     expect(config.speedPreferenceRevision).toBe(revision + 4);
   });
 
+  it('keeps speed authority when only the current site button preference changes', () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    const rule = { pattern: '/.*/', enabled: true, speed: 2.1 };
+    config.settings.siteRules = [rule];
+    simulateExternalStorageWrite({ siteRules: [{ ...rule, hideSiteControls: true }] });
+    expect(config.settings.siteRules[0].hideSiteControls).toBe(true);
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({ siteRules: [{ ...rule, hideSiteControls: false }] });
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({
+      siteRules: [{ ...rule, speed: 4, hideSiteControls: true }],
+    });
+    expect(config.speedPreferenceRevision).toBe(1);
+    simulateExternalStorageWrite({
+      siteRules: [{ ...rule, speed: 4, enabled: false, hideSiteControls: false }],
+    });
+    expect(config.speedPreferenceRevision).toBe(2);
+  });
+
+  it('keeps speed authority for a new neutral site override and its removal', () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    config.settings.siteRules = [];
+    simulateExternalStorageWrite({
+      siteRules: [{ pattern: '/.*/', enabled: true, speed: null, hideSiteControls: true }],
+    });
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({ siteRules: undefined });
+    expect(config.speedPreferenceRevision).toBe(0);
+    expect(config.settings.siteRules).toEqual(window.VSC.Constants.DEFAULT_SETTINGS.siteRules);
+  });
+
   describe('legacy absolute speed normalization', () => {
     const legacy = () => ({
       rememberSpeed: true,

@@ -27,12 +27,16 @@ import runGifImages from './gif-images.e2e.js';
 import runCustomWebM from './custom-webm.e2e.js';
 import runTwitterMP4 from './twitter-mp4.e2e.js';
 import runTwitterLiveMP4 from './twitter-live-mp4.e2e.js';
+import runSiteControls from './site-controls.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
   process.env.STAYFAST_CHROME_RUNNER ||
   join(homedir(), '.codex/skills/chrome-extension-test-runner/scripts/launch_test_chrome.py');
 const suites = {
+  'site-controls': runSiteControls,
+  'site-controls-core': (options) => runSiteControls({ ...options, popup: false }),
+  'site-controls-ios': (options) => runSiteControls({ ...options, ios: true, popup: false }),
   'twitter-mp4': runTwitterMP4,
   'twitter-live-mp4': runTwitterLiveMP4,
   'custom-webm': runCustomWebM,
@@ -67,7 +71,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use site-controls, site-controls-core, site-controls-ios, gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 

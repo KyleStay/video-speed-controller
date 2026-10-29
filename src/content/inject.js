@@ -340,6 +340,7 @@ class VideoSpeedExtension {
 
       this.injectControllerCSS();
       this.setupCSSLiveUpdates();
+      this.setupSiteControlsLiveUpdates();
       this.siteHandlerManager.initialize(document);
 
       this.setupEventPipeline(document);
@@ -520,6 +521,41 @@ class VideoSpeedExtension {
     bridgeEvents.addEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
   }
 
+  refreshSiteControls() {
+    for (const info of window.VSC.stateManager?.controllers?.values() || []) {
+      const controller = info.controller;
+      if (controller?.video?.ownerDocument === document) {
+        try {
+          controller.refreshSiteControls?.();
+        } catch {
+          // One page-owned player must not prevent the remaining updates.
+        }
+      }
+    }
+  }
+
+  setupSiteControlsLiveUpdates() {
+    if (this.siteControlsLiveUpdateHandler) {
+      return;
+    }
+    this.siteControlsLiveUpdateHandler = (event) => {
+      if (!event.detail?.siteRules || this.siteControlsUpdateQueued) {
+        return;
+      }
+      this.siteControlsUpdateQueued = true;
+      const handler = this.siteControlsLiveUpdateHandler;
+      // Storage listeners finish updating config before any controller reads it.
+      queueMicrotask(() => {
+        if (this.siteControlsLiveUpdateHandler !== handler) {
+          return;
+        }
+        this.siteControlsUpdateQueued = false;
+        this.refreshSiteControls();
+      });
+    };
+    bridgeEvents.addEventListener('VSC_STORAGE_CHANGED', this.siteControlsLiveUpdateHandler);
+  }
+
   /**
    * Set up observers for DOM changes and video detection
    */
@@ -589,6 +625,7 @@ class VideoSpeedExtension {
       if (this.teardownRequested || !this.mediaObserver || this.spaRecoveryScheduled) {
         return;
       }
+      this.refreshSiteControls();
       // Respect the media-less-frame perf priority (P2): only rescan when the
       // frame actually has a media signal. hasMediaIndicators never skips when a
       // shadow host exists, so encapsulated players still trigger recovery, and
@@ -682,6 +719,7 @@ class VideoSpeedExtension {
 
       if (video.vsc) {
         video.vsc.repairDOMPlacement?.();
+        video.vsc.refreshSiteControls?.();
         this.logger.debug('Video already has controller attached');
         this.clearPendingVideoAttachment(video);
         return;
@@ -876,6 +914,11 @@ class VideoSpeedExtension {
       bridgeEvents.removeEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
       this.cssLiveUpdateHandler = null;
     }
+    if (this.siteControlsLiveUpdateHandler) {
+      bridgeEvents.removeEventListener('VSC_STORAGE_CHANGED', this.siteControlsLiveUpdateHandler);
+      this.siteControlsLiveUpdateHandler = null;
+    }
+    this.siteControlsUpdateQueued = false;
 
     // Remove adopted controller CSS (both default and custom sheets)
     if (document.adoptedStyleSheets) {

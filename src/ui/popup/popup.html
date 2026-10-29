@@ -158,6 +158,20 @@
         </form>
       </div>
 
+      <section class="site-controls-section" aria-label="Site controls">
+        <label class="site-controls-toggle">
+          <input
+            id="hide-site-controls"
+            type="checkbox"
+            aria-describedby="site-controls-status"
+            disabled
+          />
+          <span>Hide site video buttons</span>
+        </label>
+        <p id="site-controls-status" role="status" aria-live="polite">Loading site…</p>
+        <button id="site-controls-settings" type="button" hidden>Settings</button>
+      </section>
+
       <section
         id="video-diagnostics"
         class="diagnostics-section"
