@@ -115,8 +115,16 @@ remains compact at the top; the controller does not grow into a video-sized
 hit box. Existing placement events update rail coordinates after occlusion and
 ancestor scaling, without writing scroll or polling.
 Site metadata and controls do not move the rail upward.
-Unknown site controls can overlap it and retain their input priority; uncovered
-rail input, keyboard seeking and picture swipes remain available.
+By default, unknown site controls can overlap it and retain their input priority;
+uncovered rail input, keyboard seeking and picture swipes remain available.
+The popup's **Hide site video buttons** option and **Advanced → Site rules →
+Hide buttons** opt into broader suppression for a matching site rule. It applies
+live to playing, paused and newly inserted HTML controls in a validated player
+scope. Captions, media and StayFast controls remain visible. Unbounded or ambiguous
+player containers retain site controls. The popup offers Settings for arbitrary
+path/regex rules so a quick toggle cannot extend their speed or disable policy
+to other pages. Turning the preference off restores the default suppression;
+**Use site player** releases iOS ownership even while the preference is on.
 The top transport retains its vertical position relative to the video as the page
 scrolls. When its anchor passes the viewport edge or under a header, that strip
 hides instead of sliding down over the picture; the bottom rail remains independent.

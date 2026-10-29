@@ -80,6 +80,12 @@ A domain mentioned in another site's path or query does not match. Regex rules
 and other text patterns still match the full URL. Port-qualified rules match the
 effective port, including HTTPS port 443 and HTTP port 80 when omitted.
 
+To hide a site's video buttons and play/pause overlays, turn on **Hide site video
+buttons** in the popup, or **Hide buttons** under **Advanced → Site rules**.
+Changes apply to open videos immediately and include controls added later.
+StayFast controls and captions remain available. The option is off by default;
+turn it off to restore the usual behavior. Path/regex rules are edited in Settings.
+
 ## Default keyboard shortcuts
 
 | Key | Action                                         |

@@ -292,6 +292,22 @@ async function init() {
 
     // --- Ongoing: popup/background message relay ---
     chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+      if (request?.type === 'VSC_GET_SITE_INFO') {
+        // tabs.query exposes the ID without granting access to tab URLs. Read
+        // this isolated top frame directly; page events must not supply the site
+        // whose extension setting the popup will change.
+        try {
+          const url = new URL(window.location.href);
+          sendResponse(
+            window === window.top && ['http:', 'https:'].includes(url.protocol)
+              ? { ok: true, href: url.href }
+              : { ok: false }
+          );
+        } catch {
+          sendResponse({ ok: false });
+        }
+        return false;
+      }
       const requestId =
         typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()

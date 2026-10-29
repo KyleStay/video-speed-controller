@@ -23,6 +23,22 @@ describe('Options accessibility and CSS safety', () => {
     vi.resetModules();
   });
 
+  it('imports legacy site rules and explicit hide-buttons choices without coercion', async () => {
+    const { validateImportedSettings } = await import('../../../src/ui/options/options.js');
+    const rule = { pattern: 'example.com', enabled: true, speed: null };
+    const settings = (siteRule) => ({ keyBindings: [], siteRules: [siteRule] });
+    expect(validateImportedSettings(settings(rule))).toBe('');
+    for (const hideSiteControls of [false, true]) {
+      expect(validateImportedSettings(settings({ ...rule, hideSiteControls }))).toBe('');
+    }
+    for (const hideSiteControls of [null, 0, 1, 'false', 'true', [], {}]) {
+      expect(validateImportedSettings(settings({ ...rule, hideSiteControls }))).toContain(
+        'site rule'
+      );
+    }
+    expect(rule).toEqual({ pattern: 'example.com', enabled: true, speed: null });
+  });
+
   it('bounds Safari imported speeds while retaining invalid-value validation', async () => {
     const previousConstants = window.VSC.Constants;
     vi.stubGlobal('__VSC_BROWSER__', 'safari');
@@ -307,7 +323,10 @@ describe('Options accessibility and CSS safety', () => {
   it('bounds narrow touch row columns and gives the action selector its own row', () => {
     expect(optionsCss).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
     expect(optionsCss).toMatch(/\.row.customs \.customDo\s*\{\s*grid-column: 1 \/ -1;/);
-    expect(optionsCss).toContain('grid-template-columns: minmax(0, 1fr) 44px 70px 44px');
+    expect(optionsCss).toContain('grid-template-columns: 44px 70px minmax(0, 1fr) 44px');
+    expect(optionsCss).toMatch(
+      /\.row\.site-rule \.rulePattern\s*\{\s*grid-column: 1 \/ -1;\s*grid-row: 1;/
+    );
     expect(optionsCss).toMatch(/#site-rules-container\s*\{\s*width: 100%;\s*min-width: 0;/);
   });
 

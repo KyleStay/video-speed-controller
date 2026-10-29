@@ -74,6 +74,11 @@ class VideoController {
       // Start measuring the real frame rate (video-only, zero steady-state cost).
       this.setupFpsDetection();
 
+      if (target.localName === 'video' && window.VSC.IOSSiteControls) {
+        this.siteControls = new window.VSC.IOSSiteControls(target);
+        this.updateSiteControlsMode();
+      }
+
       // Assign before attach so constructor rollback can restore native state.
       if (window.VSC.IOSPlayer?.isSupported(target)) {
         window.VSC.recordVideoDiagnostic?.('before-inline-policy', target);
@@ -81,6 +86,7 @@ class VideoController {
         this.iosPlayer.attach();
         window.VSC.recordVideoDiagnostic?.('after-inline-policy', target);
       }
+      this.refreshSiteControls();
     } catch (error) {
       // Construction must be transactional. A page-owned DOM/media API can
       // throw in the MAIN world; never leave a stale expando or registered,
@@ -516,9 +522,9 @@ class VideoController {
     }
     // A moved ancestor can leave the direct media parent unchanged.
     try {
-      const siteContainer = this.iosPlayer?.siteControls?.container;
+      const siteContainer = this.siteControls?.container;
       if (siteContainer && !siteContainer.contains(this.video)) {
-        this.iosPlayer.refreshSiteControls();
+        this.refreshSiteControls();
       }
     } catch {
       // Page-owned DOM access must not prevent ordinary placement recovery.
@@ -538,12 +544,44 @@ class VideoController {
       this.mediaParentAncestor = parent.parentNode;
       if (this.controlsManager.inlineIOS) {
         this.positionControls(this.div);
-        this.iosPlayer?.refreshSiteControls();
+        this.refreshSiteControls();
       }
       return this.div.isConnected;
     } catch (error) {
       window.VSC.logger.warn(`Controller placement recovery failed: ${error.message}`);
       return false;
+    }
+  }
+
+  /** Resolve the first matching rule in this media's own document. */
+  updateSiteControlsMode() {
+    let hide = false;
+    try {
+      const rule = window.VSC.matchSiteRule?.(
+        this.config.settings.siteRules,
+        this.video.ownerDocument.URL
+      );
+      hide =
+        this.config.settings.enabled !== false &&
+        rule?.enabled !== false &&
+        rule?.hideSiteControls === true;
+    } catch {
+      // Invalid or inaccessible site metadata must leave page controls available.
+    }
+    this.siteControls?.setHideAllButtons(hide);
+    return hide;
+  }
+
+  refreshSiteControls() {
+    if (this.disposed || !this.siteControls) {
+      return;
+    }
+    if (this.iosPlayer) {
+      this.iosPlayer.refreshSiteControls();
+    } else if (this.updateSiteControlsMode() && this.video.isConnected) {
+      this.siteControls.acquire();
+    } else {
+      this.siteControls.release();
     }
   }
 
@@ -668,6 +706,7 @@ class VideoController {
     window.VSC.recordVideoDiagnostic?.('controller-remove', this.video);
     window.VSC.logger.debug('Removing VideoController');
     this.iosPlayer?.cleanup();
+    this.siteControls?.release();
     this.controlsManager?.cleanup();
     this.actionHandler?.eventManager?.releaseMediaState?.(this.video);
 

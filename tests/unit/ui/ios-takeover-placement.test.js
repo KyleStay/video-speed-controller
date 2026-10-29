@@ -27,23 +27,24 @@ function fixture() {
   destination.append(destinationChrome);
   document.body.append(original, destination);
 
-  const controller = {
+  const controller = Object.assign(Object.create(window.VSC.VideoController.prototype), {
     video,
     div,
     parent,
     mediaParentAncestor: ancestor,
     insertionParent: parent,
     disposed: false,
+    config: { settings: { siteRules: [] } },
+    siteControls: new window.VSC.IOSSiteControls(video),
     controlsManager: { inlineIOS: true },
     insertIntoDOM: vi.fn((_document, wrapper) => video.parentElement.append(wrapper)),
     positionControls: vi.fn(),
-  };
+  });
   const player = new window.VSC.IOSPlayer(controller);
   controller.iosPlayer = player;
   video.vsc = controller;
   player.attached = true;
   player.mediaPrepared = true;
-  player.siteControls = new window.VSC.IOSSiteControls(video);
   helpers.push(player.siteControls);
   expect(player.siteControls.acquire()).toBe(true);
   const initialStyle = player.siteControls.style;

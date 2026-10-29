@@ -88,6 +88,13 @@ export default async function runOptionsTests({ launch = launchChromeWithExtensi
     assert.equal(await page.$eval('#controllerCSS', (input) => input.value), '');
 
     const ruleCount = await page.$$eval('.site-rule', (rows) => rows.length);
+    assert.equal(
+      await page.$$eval('.ruleHideSiteControls', (inputs) =>
+        inputs.every((input) => !input.checked)
+      ),
+      true,
+      'Existing rules leave site buttons visible'
+    );
     await page.click('#add-site-rule');
     await page.type('.site-rule:last-child .rulePattern', 'example.com');
     await page.type('.site-rule:last-child .ruleSpeed', '1.5');
@@ -98,7 +105,47 @@ export default async function runOptionsTests({ launch = launchChromeWithExtensi
       pattern: 'example.com',
       enabled: true,
       speed: 1.5,
+      hideSiteControls: false,
     });
+    assert.equal(
+      await page.$eval('.site-rule:last-child .ruleHideSiteControls', (input) =>
+        input.getAttribute('aria-label')
+      ),
+      'Hide site video buttons'
+    );
+    await page.click('.site-rule:last-child .ruleHideSiteControls');
+    await page.waitForFunction(
+      async () =>
+        (await chrome.storage.sync.get('siteRules')).siteRules?.at(-1)?.hideSiteControls === true
+    );
+    await page.evaluate(async () => {
+      const { siteRules } = await chrome.storage.sync.get('siteRules');
+      siteRules.at(-1).futureOption = { enabled: true };
+      await chrome.storage.sync.set({ siteRules });
+    });
+    await page.reload();
+    await page.waitForSelector('#faster .customKey');
+    await page.click('#tab-advanced');
+    assert.equal(
+      await page.$eval('.site-rule:last-child .ruleHideSiteControls', (input) => input.checked),
+      true,
+      'The saved hide-buttons choice survives reload'
+    );
+    await page.click('.site-rule:last-child .ruleHideSiteControls');
+    await page.waitForFunction(
+      async () =>
+        (await chrome.storage.sync.get('siteRules')).siteRules?.at(-1)?.hideSiteControls === false
+    );
+    assert.deepEqual((await stored('siteRules')).at(-1), {
+      pattern: 'example.com',
+      enabled: true,
+      speed: 1.5,
+      hideSiteControls: false,
+      futureOption: { enabled: true },
+    });
+    await page.click('#revert');
+    await status('Changes reverted');
+    assert.equal((await stored('siteRules')).at(-1).hideSiteControls, true);
     await page.click('.site-rule:last-child .removeParent');
     await page.waitForFunction(
       async (count) => (await chrome.storage.sync.get('siteRules')).siteRules.length === count,
@@ -133,6 +180,22 @@ export default async function runOptionsTests({ launch = launchChromeWithExtensi
         true,
         `${tab} should fit a narrow viewport`
       );
+      if (tab === 'advanced') {
+        assert.equal(
+          await page.$$eval('.ruleHideSiteControls', (inputs) =>
+            inputs.every((input) => {
+              const rect = input.getBoundingClientRect();
+              const pattern = input
+                .closest('.site-rule')
+                .querySelector('.rulePattern')
+                .getBoundingClientRect();
+              return rect.width >= 44 && rect.height >= 44 && rect.top >= pattern.bottom;
+            })
+          ),
+          true,
+          'Per-site hide-buttons controls fit below the pattern with touch targets'
+        );
+      }
     }
     await page.click('#tab-settings');
     assert.equal(

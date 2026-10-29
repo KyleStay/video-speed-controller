@@ -848,6 +848,44 @@ describe('content-bridge', () => {
   });
 
   describe('runtime message relay', () => {
+    it.each([
+      ['https://video.example/watch', true, true],
+      ['http://video.example/watch', true, true],
+      ['https://child.example/watch', false, false],
+      ['file:///private/local.html', true, false],
+    ])(
+      'returns isolated site information only for a top HTTP(S) frame: %s',
+      async (href, top, ok) => {
+        let onMessage;
+        const originalAdd = chrome.runtime.onMessage.addListener;
+        chrome.runtime.onMessage.addListener = (listener) => {
+          onMessage = listener;
+        };
+        const events = collectEvents('VSC_MESSAGE');
+        try {
+          await loadBridge();
+          const isolatedWindow = { location: { href } };
+          isolatedWindow.top = top ? isolatedWindow : {};
+          vi.stubGlobal('window', isolatedWindow);
+          const respond = vi.fn();
+          expect(onMessage({ type: 'VSC_GET_SITE_INFO' }, {}, respond)).toBe(false);
+          expect(respond).toHaveBeenCalledExactlyOnceWith(ok ? { ok: true, href } : { ok: false });
+          expect(events.events).toEqual([]);
+          // A page-world response cannot substitute another site's URL.
+          docEl.dispatchEvent(
+            new CustomEvent('VSC_MESSAGE_RESULT', {
+              detail: { ok: true, href: 'https://unrelated.example/' },
+            })
+          );
+          expect(respond).toHaveBeenCalledOnce();
+        } finally {
+          vi.unstubAllGlobals();
+          chrome.runtime.onMessage.addListener = originalAdd;
+          events.cleanup();
+        }
+      }
+    );
+
     it.each([false, true])(
       'sanitizes diagnostic replies before crossing the bridge (invalid=%s)',
       async (invalid) => {

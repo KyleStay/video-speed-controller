@@ -37,6 +37,7 @@ class IOSPlayer {
   constructor(controller) {
     this.controller = controller;
     this.video = controller.video;
+    this.siteControls = controller.siteControls;
     this.doc = this.video.ownerDocument;
     this.view = this.doc.defaultView;
     this.active = false;
@@ -262,7 +263,9 @@ class IOSPlayer {
   }
 
   refreshSiteControls() {
+    this.controller.updateSiteControlsMode?.();
     if (!this.mediaPrepared || !this.shouldOwnInlineMedia()) {
+      this.siteControls?.release();
       return;
     }
     try {
@@ -281,6 +284,7 @@ class IOSPlayer {
       this.controller.controlsManager?.inlinePlayer?.setOwned(owned);
       if (owned && this.shouldOwnInlineMedia()) {
         this.siteControls ||= new window.VSC.IOSSiteControls(this.video);
+        this.controller.updateSiteControlsMode?.();
         this.siteControls.acquire();
         this.controller.controlsManager?.inlinePlayer?.refreshSurfaceContainer();
       } else {

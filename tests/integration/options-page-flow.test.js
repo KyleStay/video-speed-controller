@@ -268,6 +268,15 @@ describe('Actual options page flows', () => {
       pattern: 'example.com',
       enabled: true,
       speed: 1.5,
+      hideSiteControls: false,
+    });
+    row.querySelector('.ruleHideSiteControls').checked = true;
+    await changeAndWait(row.querySelector('.ruleHideSiteControls'));
+    expect(getMockStorage().siteRules.at(-1)).toEqual({
+      pattern: 'example.com',
+      enabled: true,
+      speed: 1.5,
+      hideSiteControls: true,
     });
   });
 

@@ -51,7 +51,10 @@ if (!window.VSC.VideoSpeedConfig) {
             // Explicit external replacements supersede per-media readback even
             // when a reset/import repeats the same value. Sibling commands and
             // this config's debounced self-echo retain their local authority.
-            if (['lastSpeed', 'siteDefaultSpeed', 'siteRules'].includes(key)) {
+            if (
+              ['lastSpeed', 'siteDefaultSpeed', 'siteRules'].includes(key) &&
+              !(key === 'siteRules' && this._onlySiteControlsChanged(change.newValue))
+            ) {
               this.speedPreferenceRevision += 1;
             }
 
@@ -79,6 +82,24 @@ if (!window.VSC.VideoSpeedConfig) {
         // StorageManager may not be fully available yet (e.g. during tests).
         // Non-fatal — the listener just won't be active.
         window.VSC.logger.debug(`Could not set up storage change listener: ${e.message}`);
+      }
+    }
+
+    /** A live visibility toggle must not cancel an in-flight speed command. */
+    _onlySiteControlsChanged(nextRules) {
+      try {
+        if (!window.VSC.matchSiteRule) {
+          return false;
+        }
+        const before = window.VSC.matchSiteRule(this.settings.siteRules, window.location.href);
+        const after = window.VSC.matchSiteRule(nextRules, window.location.href);
+        return (
+          (before?.hideSiteControls === true) !== (after?.hideSiteControls === true) &&
+          (before?.enabled !== false) === (after?.enabled !== false) &&
+          (before?.speed ?? null) === (after?.speed ?? null)
+        );
+      } catch {
+        return false;
       }
     }
 

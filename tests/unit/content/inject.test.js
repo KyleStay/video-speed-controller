@@ -1123,6 +1123,30 @@ describe('Inject', () => {
     extension.teardownRequested = false;
   });
 
+  it('coalesces site-rule changes after settings listeners and stops queued updates on teardown', async () => {
+    extension = window.VSC_controller;
+    extension.setupSiteControlsLiveUpdates();
+    const refresh = vi.spyOn(extension, 'refreshSiteControls').mockImplementation(() => {});
+    const send = (detail) =>
+      document.documentElement.dispatchEvent(new CustomEvent('VSC_STORAGE_CHANGED', { detail }));
+    send({ lastSpeed: { newValue: 2 } });
+    await Promise.resolve();
+    expect(refresh).not.toHaveBeenCalled();
+    send({ siteRules: { newValue: [{ pattern: '/.*/', hideSiteControls: true }] } });
+    send({ siteRules: { oldValue: [] } });
+    expect(refresh).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    send({ siteRules: { newValue: [] } });
+    extension.initialized = true;
+    extension.teardown();
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(extension.siteControlsLiveUpdateHandler).toBeNull();
+    refresh.mockRestore();
+    extension.teardownRequested = false;
+  });
+
   it('VSC_GET_STATUS responds with current speed when all controlled media match', () => {
     extension = window.VSC_controller;
     expect(extension).toBeDefined();

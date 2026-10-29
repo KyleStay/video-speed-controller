@@ -1,6 +1,7 @@
 import { SPEED_LIMITS, speedRangeDescription } from '../../utils/speed-limits.js';
 import { sendTabCommand } from './tab-command.js';
 import { initializeDiagnosticsPanel } from './diagnostics.js';
+import { initializeSiteControls } from './site-controls.js';
 
 // Message type constants
 const MessageTypes = {
@@ -14,6 +15,7 @@ const MessageTypes = {
 
 document.addEventListener('DOMContentLoaded', () => {
   initializeDiagnosticsPanel();
+  initializeSiteControls();
   const customInput = document.querySelector('#custom-speed-input');
   if (customInput) {
     customInput.max = String(SPEED_LIMITS.MAX);
