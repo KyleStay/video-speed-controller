@@ -116,7 +116,38 @@ window.VSC = window.VSC || {};
       : null;
   }
 
-  function nativeSafe(video, doc, originalUrl, identityOnly = false) {
+  function sourceChild(video, current) {
+    if (video.hasAttribute('src') || video.src || video.children.length > 32) {
+      return null;
+    }
+    const sources = Array.from(video.children).filter((child) => child.localName === 'source');
+    if (sources.length !== 1 || sources[0].src !== current) {
+      return null;
+    }
+    const node = sources[0];
+    return {
+      node,
+      attributes: ['src', 'type', 'media'].map((key) => node.getAttribute(key)),
+      properties: [node.src, node.type, node.media],
+    };
+  }
+
+  function assignedSourceCurrent(video, current, binding) {
+    if (!binding) {
+      return video.hasAttribute('src') && video.src === current;
+    }
+    const next = sourceChild(video, current);
+    return Boolean(
+      next &&
+      next.node === binding.node &&
+      next.node.parentNode === video &&
+      next.node.ownerDocument === video.ownerDocument &&
+      next.attributes.every((value, index) => value === binding.attributes[index]) &&
+      next.properties.every((value, index) => value === binding.properties[index])
+    );
+  }
+
+  function nativeSafe(video, doc, originalUrl, identityOnly = false, sourceBinding = null) {
     const page = new URL(doc.URL);
     const current = video.currentSrc || video.src;
     const blob = new URL(current);
@@ -130,8 +161,7 @@ window.VSC = window.VSC || {};
       blob.origin === page.origin &&
       blob.href === current &&
       (!originalUrl || originalUrl === current) &&
-      video.hasAttribute('src') &&
-      video.src === current &&
+      assignedSourceCurrent(video, current, sourceBinding) &&
       // Seeking the retained producer can temporarily drop decoded readiness.
       // Its loaded metadata and exact SDK/source identity still permit handback.
       video.readyState >= (identityOnly ? 1 : 2) &&
@@ -473,13 +503,19 @@ window.VSC = window.VSC || {};
         return null;
       }
     },
-    resolve(video, originParent) {
+    resolve(video, originParent, { allowSourceChild = false } = {}) {
       try {
         const doc = video?.ownerDocument;
-        if (!doc || !nativeSafe(video, doc)) {
+        if (!doc) {
           return null;
         }
         const originalUrl = video.currentSrc || video.src;
+        // Child-source MSE stays with the site except for explicit presentation.
+        // Retain the exact node and its representation throughout the session.
+        const sourceBinding = allowSourceChild ? sourceChild(video, originalUrl) : null;
+        if (!nativeSafe(video, doc, originalUrl, false, sourceBinding)) {
+          return null;
+        }
         const root = doc.documentElement;
         const documentUrl = doc.URL;
         const initial = inspect(video, originParent);
@@ -490,6 +526,7 @@ window.VSC = window.VSC || {};
         let companion;
         return {
           originalUrl,
+          sourceNode: sourceBinding?.node,
           progressiveUrl: initial.progressiveUrl,
           sourceUrl: initial.sourceUrl,
           contentId: initial.contentId,
@@ -522,7 +559,7 @@ window.VSC = window.VSC || {};
               if (
                 doc.documentElement !== root ||
                 doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl) ||
+                !nativeSafe(video, doc, originalUrl, false, sourceBinding) ||
                 initial.scope.getRootNode() !== scopeRoot
               ) {
                 return false;
@@ -558,7 +595,7 @@ window.VSC = window.VSC || {};
               if (
                 doc.documentElement !== root ||
                 doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl, true) ||
+                !nativeSafe(video, doc, originalUrl, true, sourceBinding) ||
                 initial.scope.getRootNode() !== scopeRoot ||
                 (companion && companion.ownerDocument !== doc)
               ) {

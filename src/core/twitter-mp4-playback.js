@@ -49,7 +49,8 @@ window.VSC = window.VSC || {};
     }
     const candidate = window.VSC.TwitterPlayer?.resolve(
       controller.video,
-      controller.iosPlayer?.active ? controller.iosPlayer.originParent : null
+      controller.iosPlayer?.active ? controller.iosPlayer.originParent : null,
+      { allowSourceChild: source === 'presentation' }
     );
     const previous = failed.get(controller.video);
     return source === 'init' &&
@@ -175,11 +176,21 @@ window.VSC = window.VSC || {};
       video.volume = this.original.volume;
       video.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;';
       const yieldToSite = () => this.cleanup({ resume: false });
-      this.observer = new this.view.MutationObserver(yieldToSite);
+      this.observer = new this.view.MutationObserver(() => {
+        this.originalIntentChanged = true;
+        yieldToSite();
+      });
       this.observer.observe(this.original, {
         attributes: true,
         attributeFilter: ['src', 'poster'],
+        childList: Boolean(this.candidate.sourceNode),
       });
+      if (this.candidate.sourceNode) {
+        this.observer.observe(this.candidate.sourceNode, {
+          attributes: true,
+          attributeFilter: ['src', 'type', 'media'],
+        });
+      }
       const unsubscribe = this.candidate.subscribe(() => {
         if (!this.originCurrent()) {
           this.cleanup({ resume: this.identityCurrent() });
@@ -503,7 +514,6 @@ window.VSC = window.VSC || {};
       players.delete(this.video);
       for (const release of [
         () => this.view.clearTimeout(this.deadline),
-        () => this.observer?.disconnect(),
         () => this.nativeObserver?.disconnect(),
       ]) {
         try {
@@ -566,9 +576,16 @@ window.VSC = window.VSC || {};
       // The original source was never replaced or loaded. Revalidate after
       // reentrant controller teardown before seeking/resuming that producer.
       try {
-        const stillSame = () =>
-          (this.candidate.identityCurrent?.() ?? this.candidate.current()) &&
-          this.original.isConnected;
+        const stillSame = () => {
+          if (this.observer?.takeRecords().length) {
+            this.originalIntentChanged = true;
+          }
+          return (
+            !this.originalIntentChanged &&
+            (this.candidate.identityCurrent?.() ?? this.candidate.current()) &&
+            this.original.isConnected
+          );
+        };
         const sameOrigin = sameProducer && stillSame();
         if (sameOrigin && current && resume) {
           try {
@@ -665,6 +682,12 @@ window.VSC = window.VSC || {};
         }
       } catch {
         /* A replaced/detached page player retains its latest intent. */
+      } finally {
+        try {
+          this.observer?.disconnect();
+        } catch {
+          /* Release the original observer after reentrant handback checks. */
+        }
       }
     }
   }

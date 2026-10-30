@@ -114,6 +114,112 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(pause).not.toHaveBeenCalled();
   });
 
+  describe('explicit presentation with one direct source child', () => {
+    let source;
+    const presentation = () =>
+      window.VSC.TwitterPlayer.resolve(video, null, { allowSourceChild: true });
+
+    beforeEach(() => {
+      video.removeAttribute('src');
+      source = document.createElement('source');
+      source.src = blob;
+      source.type = 'video/mp4';
+      source.media = '(min-width: 1px)';
+      video.append(source);
+    });
+
+    it('accepts only the explicit option without changing the retained producer', () => {
+      const load = vi.spyOn(video, 'load');
+      const play = vi.spyOn(video, 'play');
+      const pause = vi.spyOn(video, 'pause');
+      expect(resolve()).toBeNull();
+      const candidate = presentation();
+      expect(candidate).toMatchObject({ sourceNode: source, originalUrl: blob, sdk, api, store });
+      expect(candidate.current()).toBe(true);
+      expect(candidate.identityCurrent()).toBe(true);
+      expect(video.hasAttribute('src')).toBe(false);
+      expect(video.currentSrc).toBe(blob);
+      expect(source.src).toBe(blob);
+      expect(load).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'replacement',
+      'duplicate',
+      'removed',
+      'src',
+      'type',
+      'media',
+      'video-src',
+      'document',
+    ])('invalidates both startup and handback identity after %s changes', (kind) => {
+      const candidate = presentation();
+      if (kind === 'replacement') {
+        source.replaceWith(source.cloneNode());
+      } else if (kind === 'duplicate') {
+        video.append(source.cloneNode());
+      } else if (kind === 'removed') {
+        source.remove();
+      } else if (kind === 'src') {
+        source.src = 'blob:https://x.com/other';
+      } else if (kind === 'type') {
+        source.type = 'video/webm';
+      } else if (kind === 'media') {
+        source.media = '(min-width: 2px)';
+      } else if (kind === 'video-src') {
+        // Even an overriding attribute with the same URL changes site intent.
+        video.src = blob;
+      } else {
+        document.implementation.createHTMLDocument().body.append(video);
+      }
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(false);
+    });
+
+    it.each(['captions', 'native-captions', 'drm', 'live', 'ambiguous-media', 'ambiguous-sdk'])(
+      'retains the explicit presentation capability veto for %s',
+      (kind) => {
+        if (kind === 'captions') {
+          state.textTracks.tracks.push({ kind: 'captions' });
+        } else if (kind === 'native-captions') {
+          video.append(document.createElement('track'));
+        } else if (kind === 'drm') {
+          content.keySystems = {};
+        } else if (kind === 'live') {
+          state.source.live = true;
+        } else if (kind === 'ambiguous-media') {
+          parent.append(document.createElement('video'));
+        } else {
+          hooks[10].memoizedState = { ...sdk };
+        }
+        expect(presentation()).toBeNull();
+      }
+    );
+
+    it.each(['session', 'content', 'sdk'])(
+      'retains SDK identity rejection after a %s change',
+      (kind) => {
+        const candidate = presentation();
+        if (kind === 'session') {
+          state.session.id = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+        } else if (kind === 'content') {
+          state.content = { ...content };
+        } else {
+          hooks[11].memoizedState = { ...sdk };
+        }
+        expect(candidate.current()).toBe(false);
+        expect(candidate.identityCurrent()).toBe(false);
+      }
+    );
+
+    it('rejects multiple sources before capture even when both URLs match', () => {
+      video.append(source.cloneNode());
+      expect(presentation()).toBeNull();
+    });
+  });
+
   it.each(['', '&variant_version=1'])(
     'uses the same current SDK inspection for native HLS with suffix %j',
     (suffix) => {

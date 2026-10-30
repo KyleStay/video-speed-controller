@@ -193,6 +193,156 @@ describe('X retained MediaSource MP4 playback', () => {
     document.body.replaceChildren();
   });
 
+  describe('presentation-only source-child binding', () => {
+    let source;
+
+    beforeEach(() => {
+      original.removeAttribute('src');
+      source = document.createElement('source');
+      source.src = MSE;
+      source.type = 'video/mp4';
+      original.append(source);
+      Object.defineProperty(original, 'currentSrc', { configurable: true, get: () => MSE });
+      candidate.sourceNode = source;
+      candidate.current.mockImplementation(() => source.parentNode === original);
+      candidate.identityCurrent.mockImplementation(() => source.parentNode === original);
+      window.VSC.TwitterPlayer.resolve.mockImplementation((_video, _parent, options) =>
+        options?.allowSourceChild ? candidate : null
+      );
+    });
+
+    it('allows explicit presentation while leaving init and ordinary speed commands with the site', async () => {
+      expect(api().canBegin(controller, 4)).toBe(false);
+      expect(begin(4, 'init')).toBeNull();
+      expect(begin(4)).toBeNull();
+      expect(api().open(controller, { automatic: true })).toBe(false);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(api().open(controller)).toBe(true);
+      const session = api().getPending(original);
+      expect(window.VSC.TwitterPlayer.resolve).toHaveBeenLastCalledWith(original, null, {
+        allowSourceChild: true,
+      });
+      expect(original.hasAttribute('src')).toBe(false);
+      expect(original.firstElementChild).toBe(source);
+      expect(source.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+      await loaded(session);
+      expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      session.video.currentTime = 18;
+      session.cleanup();
+      expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(18);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.firstElementChild).toBe(source);
+      expect(source.src).toBe(MSE);
+      expectReleased(session);
+    });
+
+    it.each(['replacement', 'remove-reinsert', 'duplicate', 'src', 'type', 'media', 'video-src'])(
+      'does not resume after an intervening %s write even when the representation is restored',
+      async (kind) => {
+        const session = begin(4, 'presentation');
+        session.finish();
+        await loaded(session);
+        if (kind === 'replacement') {
+          source.replaceWith(source.cloneNode());
+        } else if (kind === 'remove-reinsert') {
+          source.remove();
+          original.append(source);
+        } else if (kind === 'duplicate') {
+          const duplicate = source.cloneNode();
+          original.append(duplicate);
+          duplicate.remove();
+        } else if (kind === 'video-src') {
+          original.src = MSE;
+          original.removeAttribute('src');
+        } else {
+          const initial = source.getAttribute(kind);
+          source.setAttribute(kind, kind === 'src' ? 'blob:https://x.com/other' : 'other');
+          if (initial === null) {
+            source.removeAttribute(kind);
+          } else {
+            source.setAttribute(kind, initial);
+          }
+        }
+        // Consume pending records synchronously, before observer delivery.
+        session.cleanup();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
+        expectReleased(session);
+      }
+    );
+
+    it('cancels from a selected-child mutation delivered before metadata', async () => {
+      const session = begin(4, 'presentation');
+      session.finish();
+      source.type = 'video/webm';
+      source.type = 'video/mp4';
+      await Promise.resolve();
+      await loaded(session);
+      expect(companionCtor).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(session.originalIntentChanged).toBe(true);
+      expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
+      expectReleased(session);
+    });
+
+    it('detects a transient source write during subscription before starting playback', () => {
+      candidate.subscribe.mockImplementationOnce(() => {
+        source.media = 'other';
+        source.removeAttribute('media');
+        return unsubscribe;
+      });
+      const session = begin(4, 'presentation');
+      expect(session).toBeNull();
+      expect(original.pause).not.toHaveBeenCalled();
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('detects restored child writes from reentrant companion teardown before handback', async () => {
+      const session = begin(4, 'presentation');
+      session.finish();
+      await loaded(session);
+      session.video.vsc.remove.mockImplementationOnce(() => {
+        source.type = 'video/webm';
+        source.type = 'video/mp4';
+      });
+      session.cleanup();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expectReleased(session);
+    });
+
+    it('disconnects the bounded child observer and releases it after handback', async () => {
+      const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+      const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+      const session = begin(4, 'presentation');
+      const observer = session.observer;
+      expect(observe).toHaveBeenCalledWith(original, {
+        attributes: true,
+        attributeFilter: ['src', 'poster'],
+        childList: true,
+      });
+      expect(observe).toHaveBeenCalledWith(source, {
+        attributes: true,
+        attributeFilter: ['src', 'type', 'media'],
+      });
+      session.finish();
+      await loaded(session);
+      session.cleanup();
+      expect(disconnect.mock.instances).toContain(observer);
+      source.type = 'video/webm';
+      await Promise.resolve();
+      expect(observer.takeRecords()).toEqual([]);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expectReleased(session);
+    });
+  });
+
   it('keeps one pending probe for repeated fast speeds and cancels at 2×', () => {
     const session = begin(3);
     expect(session).toBeTruthy();
@@ -806,7 +956,13 @@ describe('X retained MediaSource MP4 playback', () => {
     controller.iosPlayer.active = true;
     controller.iosPlayer.originParent = original.parentElement;
     const session = await commit();
-    expect(window.VSC.TwitterPlayer.resolve).toHaveBeenCalledWith(original, original.parentElement);
+    expect(window.VSC.TwitterPlayer.resolve).toHaveBeenCalledWith(
+      original,
+      original.parentElement,
+      {
+        allowSourceChild: false,
+      }
+    );
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
     await loaded(session);
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
