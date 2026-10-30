@@ -677,6 +677,20 @@ class VideoController {
    * @private
    */
   setupMutationObserver() {
+    this.handleSourceVisibility = () => {
+      if (this.disposed) {
+        return;
+      }
+      this.div.classList.toggle(
+        'vsc-nosource',
+        !this.video.src && !this.video.currentSrc && this.video.readyState < 2
+      );
+    };
+    // A <source> child can become playable without changing the video's src
+    // attribute. Reconcile readiness as well as explicit attribute writes.
+    for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+      this.video.addEventListener(event, this.handleSourceVisibility);
+    }
     this.targetObserver = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (
@@ -684,12 +698,7 @@ class VideoController {
           (mutation.attributeName === 'src' || mutation.attributeName === 'currentSrc')
         ) {
           window.VSC.logger.debug('Mutation of A/V element detected');
-          const controller = this.div;
-          if (!mutation.target.src && !mutation.target.currentSrc) {
-            controller.classList.add('vsc-nosource');
-          } else {
-            controller.classList.remove('vsc-nosource');
-          }
+          this.handleSourceVisibility();
         }
       });
     });
@@ -755,6 +764,12 @@ class VideoController {
     }
 
     // Disconnect mutation observer
+    if (this.handleSourceVisibility) {
+      for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+        this.video.removeEventListener(event, this.handleSourceVisibility);
+      }
+      this.handleSourceVisibility = null;
+    }
     if (this.targetObserver) {
       this.targetObserver.disconnect();
     }
