@@ -102,6 +102,205 @@ export default async function runTwitterMP4({ launch }) {
       passed++;
       console.log(`PASS: retained MSE fixture ${label}`);
     };
+    const clickProduct = async (selector) => {
+      const handle = await page.evaluateHandle(
+        (selector) =>
+          window.__twitterMP4Fixture.original.vsc.div.shadowRoot.querySelector(selector),
+        selector
+      );
+      try {
+        assert.true(!!handle.asElement(), `Missing product control ${selector}`);
+        await handle.asElement().click();
+      } finally {
+        await handle.dispose();
+      }
+    };
+    const prepareAudibleRejection = async ({ rejectRecovery = false } = {}) => {
+      await load();
+      await page.evaluate(() => {
+        const fixture = window.__twitterMP4Fixture;
+        fixture.original.muted = false;
+        fixture.original.volume = 0.5;
+        fixture.state.media.muted = false;
+        fixture.state.media.volume = 0.5;
+      });
+      // Genuine browser input starts the audible original before fault injection.
+      await page.click('#play');
+      await page.waitForFunction(() => !window.__twitterMP4State().originalPaused);
+      await clickProduct('.draggable');
+      await clickProduct('[data-action="setSpeed"][data-value="2"]');
+      await page.waitForFunction(() => window.__twitterMP4State().originalRate === 2);
+      await page.evaluate((rejectRecovery) => {
+        const fixture = window.__twitterMP4Fixture;
+        const original = fixture.original;
+        const controller = original.vsc;
+        const api = fixture.sdk.controller.api;
+        const manager = window.VSC.TwitterMP4Playback;
+        const begin = manager.begin;
+        const playDescriptor = Object.getOwnPropertyDescriptor(original, 'play');
+        const originalPlay = original.play;
+        const seek = api.seekTo;
+        const trace = {
+          scope: 'injected deferred companion Play rejection, not native autoplay policy',
+          calls: [],
+          clicks: [],
+          recoveryCalls: 0,
+          recoveryError: null,
+          seeks: [],
+          loaded: false,
+        };
+        let session, rejectPlay;
+        const recoveryPlay = function (...args) {
+          trace.recoveryCalls++;
+          if (rejectRecovery) {
+            trace.recoveryError = 'NotAllowedError';
+            return Promise.reject(
+              new DOMException('Injected original recovery refusal', 'NotAllowedError')
+            );
+          }
+          return originalPlay.apply(this, args);
+        };
+        Object.defineProperty(original, 'play', {
+          configurable: true,
+          writable: true,
+          value: recoveryPlay,
+        });
+        const seekTo = function (time) {
+          trace.seeks.push({ time, source: original.currentSrc });
+          return seek.call(this, time);
+        };
+        api.seekTo = seekTo;
+        const captureClick = (event) => {
+          const button = event.composedPath().find((node) => node?.dataset?.action);
+          if (button) {
+            trace.clicks.push({ action: button.dataset.action, isTrusted: event.isTrusted });
+          }
+        };
+        controller.div.shadowRoot.addEventListener('click', captureClick, true);
+        const instrumentBegin = function (...args) {
+          const candidate = begin.apply(this, args);
+          if (!session && args[0]?.video === original && candidate) {
+            session = candidate;
+            // The production fixture already maps ONLY host recognition and the
+            // supplied MP4 URL. This hook changes only this companion's Play result.
+            candidate.video.play = function () {
+              trace.calls.push({
+                muted: this.muted,
+                volume: this.volume,
+                originalPaused: original.paused,
+              });
+              return new Promise((resolve, reject) => {
+                rejectPlay = reject;
+              });
+            };
+            const loaded = () => {
+              trace.loaded = true;
+            };
+            if (candidate.video.readyState >= 2) {
+              loaded();
+            } else {
+              candidate.video.addEventListener('loadeddata', loaded, { once: true });
+            }
+            manager.begin = begin;
+          }
+          return candidate;
+        };
+        manager.begin = instrumentBegin;
+        window.__twitterRejectedPlay = {
+          trace,
+          reject() {
+            if (!rejectPlay) {
+              throw new Error('Companion Play was not requested');
+            }
+            trace.rejection = { name: 'NotAllowedError', afterLoadeddata: trace.loaded };
+            rejectPlay(new DOMException('Injected deferred companion refusal', 'NotAllowedError'));
+          },
+          snapshot() {
+            const shadow = original.vsc?.div?.shadowRoot;
+            const local = controller.actionHandler.eventManager.getMediaRateState(original);
+            return {
+              ...trace,
+              pending: !!manager.getPending(original),
+              committed: session?.committed,
+              closed: session?.closed,
+              companionReady: session?.video.readyState,
+              companionConnected: session?.video.isConnected,
+              companionSourceAttribute: session?.video.getAttribute('src'),
+              companionMuted: session?.video.muted,
+              originalMuted: original.muted,
+              originalVolume: original.volume,
+              sameOriginalController: original.vsc === controller,
+              originalPlayRestoredToCapturedMethod: original.play === recoveryPlay,
+              displayedRate: Number(shadow?.querySelector('.draggable')?.dataset.speed),
+              acceptedSpeed: local?.acceptedSpeed,
+              lifecycleSpeed: local?.lifecycleSpeed,
+              status: original.vsc?.controlsManager?.inlinePlayer?.refs.status?.textContent,
+            };
+          },
+          dispose() {
+            if (manager.begin === instrumentBegin) {
+              manager.begin = begin;
+            }
+            controller.div.shadowRoot.removeEventListener('click', captureClick, true);
+            if (original.play === recoveryPlay) {
+              if (playDescriptor) {
+                Object.defineProperty(original, 'play', playDescriptor);
+              } else {
+                delete original.play;
+              }
+            }
+            if (api.seekTo === seekTo) {
+              api.seekTo = seek;
+            }
+          },
+        };
+      }, rejectRecovery);
+      await clickProduct('[data-action="faster"]');
+      await page.waitForFunction(() => window.__twitterRejectedPlay.trace.loaded);
+      const pending = await page.evaluate(() => window.__twitterRejectedPlay.snapshot());
+      const row = await retained();
+      assert.true(
+        pending.pending &&
+          !pending.committed &&
+          pending.sameOriginalController &&
+          pending.calls.length === 1 &&
+          !pending.calls[0].muted &&
+          pending.calls[0].volume === 0.5 &&
+          pending.calls[0].originalPaused &&
+          !pending.originalMuted &&
+          row.originalPaused &&
+          row.hosts === 0 &&
+          row.subscribers === 1 &&
+          row.videos === 1,
+        JSON.stringify({ pending, row })
+      );
+      assert.true(
+        pending.clicks.some((click) => click.action === 'faster' && click.isTrusted),
+        JSON.stringify(pending.clicks)
+      );
+    };
+    const rejectCompanion = async () => {
+      await page.evaluate(() => window.__twitterRejectedPlay.reject());
+      await page.waitForFunction(() => !window.__twitterRejectedPlay.snapshot().pending);
+      return page.evaluate(() => window.__twitterRejectedPlay.snapshot());
+    };
+    const assertRejectedCleanup = (trace, row) => {
+      assert.true(
+        trace.closed &&
+          !trace.committed &&
+          !trace.companionConnected &&
+          trace.companionSourceAttribute === null &&
+          trace.sameOriginalController &&
+          trace.originalPlayRestoredToCapturedMethod &&
+          !trace.originalMuted &&
+          trace.originalVolume === 0.5 &&
+          row.hosts === 0 &&
+          row.videos === 1 &&
+          row.subscribers === 0 &&
+          trace.rejection.afterLoadeddata,
+        JSON.stringify({ trace, row })
+      );
+    };
     await check(
       'playing 4× has sustained decoded progress and retains the original producer',
       async () => {
@@ -200,6 +399,106 @@ export default async function runTwitterMP4({ launch }) {
       );
       measurements.push(row.measurement);
     });
+    await check(
+      'deferred companion Play refusal restores audible original rate, UI and playback',
+      async () => {
+        await prepareAudibleRejection();
+        await rejectCompanion();
+        await page.waitForFunction(() => !window.__twitterMP4State().originalPaused);
+        const trace = await page.evaluate(() => window.__twitterRejectedPlay.snapshot());
+        const row = await retained();
+        assertRejectedCleanup(trace, row);
+        assert.true(
+          row.originalRate === 2 &&
+            trace.displayedRate === 2 &&
+            trace.acceptedSpeed === 2 &&
+            trace.lifecycleSpeed === 2 &&
+            trace.recoveryCalls === 1 &&
+            !trace.recoveryError,
+          JSON.stringify({ trace, row })
+        );
+        const time = row.originalTime;
+        await page.waitForFunction(
+          (time) => window.__twitterMP4State().originalTime > time + 0.2,
+          {},
+          time
+        );
+        measurements.push({
+          scenario: 'injected audible companion refusal',
+          trace,
+          recovered: await state(),
+        });
+        await page.evaluate(() => window.__twitterRejectedPlay.dispose());
+      }
+    );
+    await check(
+      'refused original recovery preserves audible intent and exposes its failure',
+      async () => {
+        await prepareAudibleRejection({ rejectRecovery: true });
+        await rejectCompanion();
+        await page.waitForFunction(
+          () => window.__twitterRejectedPlay.snapshot().status === 'Playback could not start.'
+        );
+        const trace = await page.evaluate(() => window.__twitterRejectedPlay.snapshot());
+        const row = await retained();
+        assertRejectedCleanup(trace, row);
+        assert.true(
+          row.originalPaused &&
+            row.originalRate === 2 &&
+            trace.displayedRate === 2 &&
+            trace.acceptedSpeed === 2 &&
+            trace.lifecycleSpeed === 2 &&
+            trace.recoveryCalls === 1 &&
+            trace.recoveryError === 'NotAllowedError',
+          JSON.stringify({ trace, row })
+        );
+        measurements.push({
+          scenario: 'injected original recovery refusal',
+          trace,
+          recovered: row,
+        });
+        await page.evaluate(() => window.__twitterRejectedPlay.dispose());
+      }
+    );
+    await check(
+      'a late Play refusal cannot seek or resume a replacement source session',
+      async () => {
+        await prepareAudibleRejection();
+        await page.click('#replace');
+        await page.waitForFunction(
+          () =>
+            !window.__twitterMP4State().originalSourceUnchanged &&
+            window.__twitterMP4State().buffered >= 25 &&
+            !window.__twitterRejectedPlay.snapshot().pending
+        );
+        const source = await page.evaluate(() => window.__twitterMP4Fixture.original.currentSrc);
+        await rejectCompanion();
+        // Flush the deferred rejection handler before examining stale effects.
+        await page.evaluate(() => Promise.resolve());
+        const trace = await page.evaluate(() => window.__twitterRejectedPlay.snapshot());
+        const row = await state();
+        assertRejectedCleanup(trace, row);
+        assert.true(
+          row.originalPaused &&
+            !row.originalSourceUnchanged &&
+            trace.recoveryCalls === 0 &&
+            trace.seeks.length === 0 &&
+            row.buffered >= 25 &&
+            row.sameMediaSource === false,
+          JSON.stringify({ trace, row })
+        );
+        assert.equal(
+          await page.evaluate(() => window.__twitterMP4Fixture.original.currentSrc),
+          source
+        );
+        measurements.push({
+          scenario: 'source changed before injected refusal',
+          trace,
+          recovered: row,
+        });
+        await page.evaluate(() => window.__twitterRejectedPlay.dispose());
+      }
+    );
     await check('caption veto leaves the original source and controller', async () => {
       await load();
       await page.click('#captions');
@@ -254,6 +553,8 @@ export default async function runTwitterMP4({ launch }) {
           fixture: 'neutral localhost host-helper and progressive-transport emulation',
           realMediaSource: true,
           sameContentForBothProducers: true,
+          rejectionCoverage:
+            'Injected companion/recovery NotAllowedError; Chromium is not evidence of native Safari autoplay policy',
           passed,
           measurements,
         },

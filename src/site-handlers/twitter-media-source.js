@@ -316,7 +316,15 @@ window.VSC = window.VSC || {};
   }
 
   window.VSC.TwitterMediaSource = {
-    findPlayerStateCandidate: playerStateCandidate,
+    matchesCurrentPlayerHls: currentPlayerHlsMatches,
+    findPlayerStateCandidate(video, originParent) {
+      const legacy = playerStateCandidate(video, originParent);
+      if (legacy === null) {
+        return null;
+      }
+      const modern = window.VSC.TwitterPlayer?.findNativeHlsCandidate(video, originParent);
+      return modern === undefined ? legacy : modern;
+    },
     findCandidate(video, originParent) {
       try {
         if (
@@ -349,7 +357,7 @@ window.VSC = window.VSC || {};
           return null;
         }
 
-        const currentPlayer = playerStateCandidate(video, originParent);
+        const currentPlayer = this.findPlayerStateCandidate(video, originParent);
         if (currentPlayer !== undefined) {
           return currentPlayer;
         }

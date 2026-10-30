@@ -472,6 +472,12 @@ URL and select an explicitly supplied HTTPS MP4. X additionally validates the
 same asset identity in official CDN URLs. Its current SDK track may append one
 observed `variant_version=1` marker to the native HLS URL; only the SDK-selected
 variant can match through this exception, with every other URL component retained.
+Modern X native-HLS records use the same bound SDK identity, session and
+capability checks as the retained-producer adapter. The declared HLS, content
+and media IDs, supplied downloads and MP4 variants must agree. An absent SDK
+does not gain the marker exception; generic React pairs and variant arrays
+still require literal URL equality. This resolver coverage does not establish
+that the reported live iPhone failure is fixed.
 The current track’s caption/protection veto also blocks older React and HTML fallback. No global player registry is scanned. It never fetches
 post data or invents a source URL. Owned fullscreen searches the retained media container and its validated,
 connected original player scope, with at most twelve ancestor hops per root.
@@ -511,6 +517,16 @@ frame for an already hidden inline strip. This repairs stale occlusion after
 page chrome disappears without resizing the video; visible controls do not add
 layout work. A failed handoff resumes the original only while its producer and
 source identity remain owned.
+
+A playing retained-MP4 handoff waits for its initial Play promise before
+removing the original controller or committing presentation. Pause and newer
+Play requests supersede older settlements. Rejected or synchronously thrown
+Play requests release the companion, restore the producer's prior local rate
+unless the site changed it, and refresh the displayed rate. The saved speed
+preference remains available for other clips. A refused original-player resume
+shows the existing playback error only for the current source/request. These
+recovery regressions are distinct from the still-unverified live iPhone failure;
+an audible saved-speed Safari policy rejection remains a hypothesis.
 
 `twitter-live-mp4` tests the reported post through genuine inline 2.1×/4× controls
 and independent 1× fullscreen entry followed by 4×. It requires the exact post's

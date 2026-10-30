@@ -156,6 +156,10 @@ with direct `chrome.*` access.
     captions, DRM, live and ambiguity veto takeover. Handback seeks/resumes the
     unchanged original only while that identity and companion source remain
     owned. Metadata callbacks attach presentation, never request Play.
+    Playing handoffs commit only after their synchronous Play request succeeds;
+    pending Play/Pause generations prevent stale settlement from taking over.
+    Failed handoffs restore the original local rate and interface while retaining
+    the saved preference; recovery errors belong only to the current request.
     Intercept X blob presentation before any original-node portal; unsupported
     streams stay inline with an explicit Use site player escape. Pending entry
     honors presentation revisions, visibility and cancellation. Preserve accepted

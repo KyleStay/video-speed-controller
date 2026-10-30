@@ -114,6 +114,64 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(pause).not.toHaveBeenCalled();
   });
 
+  it.each(['', '&variant_version=1'])(
+    'uses the same current SDK inspection for native HLS with suffix %j',
+    (suffix) => {
+      const actual = sourceUrl + suffix;
+      video.src = actual;
+      property(video, 'currentSrc', actual);
+      expect(window.VSC.TwitterPlayer.findNativeHlsCandidate(video)).toEqual({
+        originalUrl: actual,
+        progressiveUrl: mp4('1280x720'),
+        mediaId: contentId,
+      });
+      expect(api.getState).toHaveBeenCalled();
+      // Native-HLS support must not broaden the retained-MSE adapter itself.
+      expect(resolve()).toBeNull();
+    }
+  );
+
+  it('distinguishes absent native SDK metadata from an authoritative capability veto', () => {
+    video.src = sourceUrl;
+    property(video, 'currentSrc', sourceUrl);
+    state.textTracks.tracks.push({ kind: 'captions' });
+    expect(window.VSC.TwitterPlayer.findNativeHlsCandidate(video)).toBeNull();
+    delete parent.__reactFiber$fixture;
+    expect(window.VSC.TwitterPlayer.findNativeHlsCandidate(video)).toBeUndefined();
+  });
+
+  it.each(['blob', 'native HLS'])(
+    'bounds %s variant inspection when a page descriptor grows its own array',
+    (kind) => {
+      if (kind === 'native HLS') {
+        video.src = sourceUrl;
+        property(video, 'currentSrc', sourceUrl);
+      }
+      const variants = modern.timeRemainingAccessory.props.media.video_info.variants;
+      const hls = variants[0];
+      const mp4Variant = variants[2];
+      let inspections = 0;
+      const growing = new Proxy(mp4Variant, {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === 'drm') {
+            inspections++;
+            // Keep the regression finite even with the former live-length loop.
+            if (variants.length < 30) {
+              variants.push(growing);
+            }
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      variants.splice(0, variants.length, hls, growing);
+      const candidate =
+        kind === 'blob' ? resolve() : window.VSC.TwitterPlayer.findNativeHlsCandidate(video);
+      expect(candidate).toBeNull();
+      expect(inspections).toBe(1);
+      expect(variants).toHaveLength(3);
+    }
+  );
+
   it('subscribes through the bound store and returns an idempotent disposer', () => {
     const callback = vi.fn();
     const dispose = vi.fn();

@@ -329,6 +329,7 @@ window.VSC = window.VSC || {};
           const variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
           const downloadAsset = asset(download, 'mp4');
+          const variantCount = own(variants, 'length');
           if (
             !modern ||
             ![modern, popped, supplied, media, info].every(clear) ||
@@ -342,14 +343,21 @@ window.VSC = window.VSC || {};
             downloadAsset.type !== sourceAsset.type ||
             own(media, 'video_download_url') !== download ||
             !Array.isArray(variants) ||
-            variants.length > 8
+            !Number.isSafeInteger(variantCount) ||
+            variantCount < 0 ||
+            variantCount > 8
           ) {
             return null;
           }
+          // Snapshot entries before their page-owned descriptors can mutate the
+          // array. Neither validation nor ranking may follow a growing length.
+          const variantEntries = [];
+          for (let variant = 0; variant < variantCount; variant++) {
+            variantEntries.push(own(variants, String(variant)));
+          }
           let matchedHls = false;
           let best;
-          for (let variant = 0; variant < variants.length; variant++) {
-            const item = own(variants, String(variant));
+          for (const item of variantEntries) {
             if (!clear(item)) {
               return null;
             }
@@ -388,7 +396,12 @@ window.VSC = window.VSC || {};
               best = ranked;
             }
           }
-          if (!matchedHls || !best || (result && result.sdk !== sdk)) {
+          if (
+            own(variants, 'length') !== variantCount ||
+            !matchedHls ||
+            !best ||
+            (result && result.sdk !== sdk)
+          ) {
             return null;
           }
           result = {
@@ -401,10 +414,65 @@ window.VSC = window.VSC || {};
         hook = own(hook, 'next');
       }
     }
-    return result || null;
+    return result;
   }
 
   window.VSC.TwitterPlayer = {
+    // undefined means no bound current SDK; null is an authoritative veto that
+    // callers must preserve before considering React or HTML alternatives.
+    findNativeHlsCandidate(video, originParent) {
+      try {
+        const doc = video?.ownerDocument;
+        const originalUrl = video?.currentSrc || video?.src;
+        const documentUrl = doc?.URL;
+        const root = doc?.documentElement;
+        if (
+          !doc ||
+          !asset(originalUrl, 'hls') ||
+          !window.VSC.EventManager.isTwitterHost(new URL(doc.URL).hostname)
+        ) {
+          return undefined;
+        }
+        const candidate = inspect(video, originParent);
+        if (!candidate) {
+          return candidate;
+        }
+        if (
+          video.localName !== 'video' ||
+          !video.isConnected ||
+          doc !== window.document ||
+          doc.URL !== documentUrl ||
+          doc.documentElement !== root ||
+          video.ownerDocument !== doc ||
+          (video.currentSrc || video.src) !== originalUrl ||
+          (video.hasAttribute('src')
+            ? video.src !== originalUrl
+            : video.children.length > 32 ||
+              !Array.from(video.children).some(
+                (child) => child.localName === 'source' && child.src === originalUrl
+              )) ||
+          video.readyState < 1 ||
+          !Number.isFinite(video.duration) ||
+          video.duration <= 0 ||
+          !Number.isFinite(video.currentTime) ||
+          video.srcObject ||
+          video.mediaKeys ||
+          video.webkitKeys ||
+          video.audioTracks?.length > 1 ||
+          video.videoTracks?.length > 1 ||
+          !window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(candidate.sourceUrl, originalUrl)
+        ) {
+          return null;
+        }
+        return {
+          originalUrl,
+          progressiveUrl: candidate.progressiveUrl,
+          mediaId: candidate.contentId,
+        };
+      } catch {
+        return null;
+      }
+    },
     resolve(video, originParent) {
       try {
         const doc = video?.ownerDocument;
