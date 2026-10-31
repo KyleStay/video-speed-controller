@@ -558,6 +558,24 @@ producer identity. Source/session changes, removal and teardown release the
 companion and owned wrappers/listeners without a stale resume. A caption or
 protection change returns to the same original producer.
 
+At 2.1× or faster, each current owned X MP4 has a decoded-frame watchdog.
+It watches only visible, playing, buffered media, using one video-frame callback
+and one three-second deadline. A moving clock alone is not healthy playback:
+both frame callbacks and the native frame counter must stop advancing before
+recovery is considered. Paused, seeking, hidden, offscreen, native-player and
+near-end media do not reload. Loading or unbuffered playback retains the site’s
+network recovery instead.
+
+Recovery reloads only the exact already-owned MP4 element, preserving its current
+time, accepted rate, mute, volume and presentation. It revalidates the current
+SDK’s caption, protection, live-stream and source identity safeguards. The
+original blob/MSE producer is never loaded or replaced. One validated load cycle
+may retain presentation and local speed authority; source/poster writes, a second
+load, newer input, navigation, hidden state or teardown invalidate it. There are
+at most two attempts per owned clip/session. A fulfilled Play promise or completed
+load is separate from observed decoded-frame recovery; physical Safari evidence
+must establish the latter before claiming the reported freeze fixed.
+
 The coordinator performs one synchronous source/load/start-time/rate transition.
 It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
 selection first joins an already-requested Play promise, then checks the still-current
@@ -568,6 +586,10 @@ must not strand a loading native-HLS clip on its original stream above 2×.
 X can initially leave its selected track’s caption status unknown, then explicitly
 report no captions after playback starts. Later trusted native `playing` events
 recheck full rendition eligibility, bounded to 32 events/ten seconds per source.
+The same finite opportunities reconsider an exact X blob/MSE clip whose current
+SDK binding arrived after its initial Play. This still requires the retained-MP4
+adapter’s complete eligibility checks; a previously refused identity is not
+automatically retried, and synthetic playing events do not authorize takeover.
 Unknown or enabled captions remain vetoes. The synchronous recheck preserves
 current rate authority and revalidates source, document and playback intent after
 resolver calls; it adds no polling or readiness timer. Source lifecycle resets

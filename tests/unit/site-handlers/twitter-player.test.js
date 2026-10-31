@@ -564,4 +564,40 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(resolve(parent)).toBeNull();
     delete video.vsc;
   });
+  describe('retained native-HLS recovery capability', () => {
+    function retained() {
+      video.src = sourceUrl;
+      property(video, 'currentSrc', sourceUrl);
+      const candidate = window.VSC.TwitterPlayer.findNativeHlsCandidate(video);
+      expect(candidate).toBeTruthy();
+      video.src = candidate.progressiveUrl;
+      property(video, 'currentSrc', candidate.progressiveUrl);
+      return candidate;
+    }
+    it('keeps a nonenumerable validator bound to the supplied MP4 and current SDK', () => {
+      const candidate = retained();
+      expect(Object.keys(candidate)).not.toContain('revalidate');
+      expect(candidate.revalidate()).toBe(true);
+      state.hasCaptions = true;
+      expect(candidate.revalidate()).toBe(false);
+    });
+    it('permits only a requested reload readiness reset without dropping capability checks', () => {
+      const candidate = retained();
+      property(video, 'currentSrc', '');
+      property(video, 'readyState', 0);
+      property(video, 'duration', NaN);
+      expect(candidate.revalidate()).toBe(false);
+      expect(candidate.revalidate(true)).toBe(true);
+      state.textTracks.tracks.push({ kind: 'captions' });
+      expect(candidate.revalidate(true)).toBe(false);
+    });
+    it('rejects changed SDK session or supplied source ownership', () => {
+      const candidate = retained();
+      state.session.id = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+      expect(candidate.revalidate()).toBe(false);
+      state.session.id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      video.src = mp4('640x360');
+      expect(candidate.revalidate()).toBe(false);
+    });
+  });
 });

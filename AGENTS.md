@@ -171,6 +171,12 @@ with direct `chrome.*` access.
     honors presentation revisions, visibility and cancellation. Preserve accepted
     rates through initialSpeed and per-media lifecycle authority without saving
     a new global preference just for opening fullscreen.
+  - `twitter-playback-health.js` + `twitter-playback-recovery.js` — iOS X
+    decoded-frame monitoring at 2.1× or faster, restricted to a current owned
+    MP4 session. A buffered, visible decoder stall may reload that exact MP4
+    twice per session while retaining time, rate, audio intent and presentation.
+    Never load the retained blob/MSE producer. Only a validated single reload
+    cycle may preserve source lifecycle authority; newer site/user intent wins.
 - `observers/`
   - `custom-webm-observer.js` — iOS-only adapter for an unambiguous expanded
     OGV decoder surface. Probe the exact supplied WebM in an off-DOM native video
@@ -458,7 +464,7 @@ with direct `chrome.*` access.
   state cancels the pending observer, listeners and ten-second deadline.
   Saved/session speeds also apply to subsequent feed clips; a failed
   source is not retried by initialization. Trusted native `playing` events
-  reconsider initial HLS eligibility at the current rate authority, bounded to
+  reconsider initial HLS or exact X blob/MSE eligibility at the current rate authority, bounded to
   32 events/ten seconds per source. Revalidate source/document/root, preferences
   and playing intent after resolver calls; unknown captions still veto takeover.
   Source lifecycle resets the budget; removal releases the listener. This adds

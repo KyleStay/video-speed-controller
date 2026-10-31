@@ -527,6 +527,15 @@ class ActionHandler {
     if (!Number.isFinite(speed)) {
       return false;
     }
+    // A newer speed command supersedes an in-flight owned decoder reload,
+    // including same-rate popup commands without a page input event.
+    try {
+      if (source !== 'init' || !window.VSC.TwitterPlaybackRecovery?.ownsTransition(video.vsc)) {
+        window.VSC.TwitterPlaybackRecovery?.cancel(video.vsc);
+      }
+    } catch {
+      // A discarded page context must not prevent the requested speed change.
+    }
     let previousPlaybackRate;
     try {
       previousPlaybackRate = video.playbackRate;

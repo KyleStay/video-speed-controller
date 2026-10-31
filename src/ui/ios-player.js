@@ -123,10 +123,13 @@ class IOSPlayer {
       });
     }
     let documentFullscreen = false;
-    const sourceReset = () => {
+    const sourceReset = (event) => {
       // A verified rendition change retains this exact clip and presentation.
       // Site replacements still invalidate every old-resource resume/scroll flag.
-      if (this.controller.safariPlayback?.ownsTransition()) {
+      if (
+        this.controller.safariPlayback?.ownsTransition() ||
+        window.VSC.TwitterPlaybackRecovery?.ownsTransition(this.controller, event.type)
+      ) {
         return;
       }
       // Feeds reuse media nodes. Presentation and scroll restoration belong to

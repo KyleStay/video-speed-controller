@@ -1977,4 +1977,130 @@ describe('X retained MediaSource MP4 playback', () => {
       expect(companionCtor).not.toHaveBeenCalled();
     });
   });
+  describe('owned companion decoder reload', () => {
+    async function readyCompanion() {
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+      original.muted = false;
+      const session = await commit();
+      const video = session.video;
+      const source = { current: MP4, ready: 4, duration: 45 };
+      Object.defineProperties(video, {
+        currentSrc: { configurable: true, get: () => source.current },
+        readyState: { configurable: true, get: () => source.ready },
+        duration: { configurable: true, get: () => source.duration },
+      });
+      video.currentTime = 18;
+      video.playbackRate = 4;
+      video.muted = false;
+      video.volume = 0.55;
+      video.getBoundingClientRect = () => ({
+        top: 0,
+        left: 0,
+        right: 320,
+        bottom: 180,
+        width: 320,
+        height: 180,
+      });
+      const c = video.vsc;
+      const load = vi.fn(() => {
+        source.current = '';
+        source.ready = 0;
+        source.duration = NaN;
+        mediaState(video).paused = true;
+        video.currentTime = 0;
+        video.playbackRate = 1;
+        video.dispatchEvent(new Event('emptied'));
+        video.dispatchEvent(new Event('loadstart'));
+      });
+      video.load = load;
+      return { session, video, c, source, load };
+    }
+    it('reloads only the owned companion and preserves audible transport values', async () => {
+      const { session, video, c, source, load } = await readyCompanion();
+      const producerObject = original.srcObject;
+      nativePlay.mockClear();
+      expect(window.VSC.TwitterPlaybackRecovery.identity(c)).toBe(session);
+      expect(window.VSC.TwitterPlaybackRecovery.reload(c)).toBe(true);
+      expect(load).toHaveBeenCalledOnce();
+      expect(video.src).toBe(MP4);
+      expect(video.currentTime).toBe(18);
+      expect(video.playbackRate).toBe(4);
+      expect(video.muted).toBe(false);
+      expect(video.volume).toBe(0.55);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(original.src).toBe(MSE);
+      expect(original.srcObject).toBe(producerObject);
+      source.current = MP4;
+      source.ready = 4;
+      source.duration = 45;
+      video.dispatchEvent(new Event('loadeddata'));
+      await Promise.resolve();
+      expect(window.VSC.TwitterPlaybackRecovery.identity(c)).toBe(session);
+      expect(window.VSC.TwitterPlaybackRecovery.ownsTransition(c)).toBe(false);
+      expect(nativePlay).toHaveBeenCalledOnce();
+    });
+    it('retains the exact companion through ready0/NaN and queued expected source events', async () => {
+      const { session, video, c, source, load } = await readyCompanion();
+      load.mockImplementationOnce(() => {
+        source.current = '';
+        source.ready = 0;
+        source.duration = NaN;
+        mediaState(video).paused = true;
+        video.playbackRate = 1;
+        setTimeout(() => {
+          video.dispatchEvent(new Event('emptied'));
+          video.dispatchEvent(new Event('loadstart'));
+          source.current = MP4;
+          source.ready = 4;
+          source.duration = 45;
+          video.dispatchEvent(new Event('loadeddata'));
+        }, 0);
+      });
+      expect(window.VSC.TwitterPlaybackRecovery.reload(c)).toBe(true);
+      expect(window.VSC.TwitterPlaybackRecovery.identity(c)).toBe(session);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(window.VSC.TwitterPlaybackRecovery.identity(c)).toBe(session);
+      expect(session.closed).toBe(false);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+    it('hands rejected companion Play back once without muting or loading the producer', async () => {
+      const { video, c } = await readyCompanion();
+      nativePlay.mockImplementationOnce(function () {
+        mediaState(this).paused = true;
+        return Promise.reject(new DOMException('Denied', 'NotAllowedError'));
+      });
+      expect(window.VSC.TwitterPlaybackRecovery.reload(c)).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(original.load).not.toHaveBeenCalled();
+      expect(original.src).toBe(MSE);
+      expect(original.currentTime).toBe(18);
+      expect(original.playbackRate).toBe(4);
+      expect(original.muted).toBe(false);
+      expect(original.volume).toBe(0.55);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(window.VSC.TwitterPlaybackRecovery.identity(c)).toBeNull();
+      expect(video.isConnected).toBe(false);
+    });
+    it('does not resume a changed SDK producer after a late reload Play settlement', async () => {
+      const { session, c } = await readyCompanion();
+      let resolve;
+      nativePlay.mockImplementationOnce(function () {
+        mediaState(this).paused = false;
+        return new Promise((r) => {
+          resolve = r;
+        });
+      });
+      expect(window.VSC.TwitterPlaybackRecovery.reload(c)).toBe(true);
+      candidate.current.mockReturnValue(false);
+      candidate.identityCurrent.mockReturnValue(false);
+      notify();
+      resolve();
+      await Promise.resolve();
+      expect(session.closed).toBe(true);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+      expect(window.VSC.TwitterPlaybackRecovery.ownsTransition(c)).toBe(false);
+    });
+  });
 });

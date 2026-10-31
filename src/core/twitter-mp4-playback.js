@@ -138,6 +138,34 @@ window.VSC = window.VSC || {};
       }
     }
 
+    recoveryCurrent(controller) {
+      try {
+        const video = controller?.video;
+        return Boolean(
+          this.committed &&
+          !this.closed &&
+          video === this.video &&
+          video.vsc === controller &&
+          !controller.disposed &&
+          !controller.iosPlayer?.nativeSession &&
+          !video.webkitDisplayingFullscreen &&
+          (!video.webkitPresentationMode || video.webkitPresentationMode === 'inline') &&
+          this.doc.pictureInPictureElement !== video &&
+          this.doc.fullscreenElement !== video &&
+          video.textTracks?.length === 0 &&
+          !(video.audioTracks?.length > 1) &&
+          !(video.videoTracks?.length > 1) &&
+          this.current()
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    recoveryFailed() {
+      this.cleanup({ site: true, playing: true });
+    }
+
     identityCurrent() {
       try {
         if (this.observer?.takeRecords().length) {
@@ -239,6 +267,23 @@ window.VSC = window.VSC || {};
           writable: descriptor?.writable ?? true,
           value: wrapper,
         });
+      }
+      for (const type of ['emptied', 'loadstart']) {
+        this.listen(
+          video,
+          type,
+          (event) => {
+            const controller = video.vsc;
+            const recovery = window.VSC.TwitterPlaybackRecovery;
+            if (
+              recovery?.isReloading(controller, this) &&
+              !recovery.acceptSourceEvent(controller, event, this)
+            ) {
+              this.cleanup({ resume: false });
+            }
+          },
+          true
+        );
       }
       this.listen(video, 'loadeddata', () => {
         this.ready = true;
@@ -473,6 +518,8 @@ window.VSC = window.VSC || {};
       if (this.closed) {
         return;
       }
+      window.VSC.TwitterPlaybackRecovery?.cancel(null, this);
+      window.VSC.TwitterPlaybackRecovery?.clearStall(this.video.vsc);
       let preferenceRevision = failed
         ? (this.controller.config.speedPreferenceRevision ?? 0)
         : this.rateRevision;

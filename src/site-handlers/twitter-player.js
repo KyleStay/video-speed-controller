@@ -198,7 +198,14 @@ window.VSC = window.VSC || {};
     return found || portal;
   }
 
-  function inspect(video, originParent, companion, identityOnly = false, restored = false) {
+  function inspect(
+    video,
+    originParent,
+    companion,
+    identityOnly = false,
+    restored = false,
+    expectedDuration
+  ) {
     const scope = scopeFor(video, originParent, restored);
     if (
       !scope ||
@@ -292,9 +299,9 @@ window.VSC = window.VSC || {};
             own(source, 'src') !== sourceUrl ||
             typeof sessionId !== 'string' ||
             !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sessionId) ||
-            !near(own(content, 'durationMs') / 1000, video.duration) ||
-            !near(own(selected, 'durationMs') / 1000, video.duration) ||
-            !near(own(source, 'playlistDurationSec'), video.duration) ||
+            !near(own(content, 'durationMs') / 1000, expectedDuration ?? video.duration) ||
+            !near(own(selected, 'durationMs') / 1000, expectedDuration ?? video.duration) ||
+            !near(own(source, 'playlistDurationSec'), expectedDuration ?? video.duration) ||
             (!identityOnly && ![props, content, selected, source, state].every(clear))
           ) {
             return null;
@@ -368,7 +375,7 @@ window.VSC = window.VSC || {};
             own(supplied, 'content') !== content ||
             own(supplied, 'downloadUrl') !== download ||
             own(media, 'id_str') !== contentId ||
-            !near(own(info, 'duration_millis') / 1000, video.duration) ||
+            !near(own(info, 'duration_millis') / 1000, expectedDuration ?? video.duration) ||
             downloadAsset?.id !== contentId ||
             downloadAsset.type !== sourceAsset.type ||
             own(media, 'video_download_url') !== download ||
@@ -448,6 +455,23 @@ window.VSC = window.VSC || {};
   }
 
   window.VSC.TwitterPlayer = {
+    // Recheck capabilities against the retained current SDK after a verified
+    // HLS rendition change. No media properties are replaced to impersonate HLS.
+    validateRetainedHls(video, originalUrl, progressiveUrl, originParent, expectedDuration) {
+      try {
+        const next = inspect(video, originParent, undefined, false, false, expectedDuration);
+        if (next === undefined) {
+          return undefined;
+        }
+        return Boolean(
+          next &&
+          window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(next.sourceUrl, originalUrl) &&
+          next.progressiveUrl === progressiveUrl
+        );
+      } catch {
+        return false;
+      }
+    },
     // undefined means no bound current SDK; null is an authoritative veto that
     // callers must preserve before considering React or HTML alternatives.
     findNativeHlsCandidate(video, originParent) {
@@ -494,11 +518,56 @@ window.VSC = window.VSC || {};
         ) {
           return null;
         }
-        return {
+        const observedDuration = video.duration;
+        const result = {
           originalUrl,
           progressiveUrl: candidate.progressiveUrl,
           mediaId: candidate.contentId,
+          revalidate(expectedReload = false) {
+            try {
+              const player = video.vsc?.iosPlayer;
+              const retainedOrigin = player?.active ? player.originParent : undefined;
+              const next = inspect(
+                video,
+                retainedOrigin,
+                undefined,
+                false,
+                false,
+                expectedReload && video.readyState < 1 ? observedDuration : undefined
+              );
+              return Boolean(
+                next &&
+                doc === video.ownerDocument &&
+                doc.documentElement === root &&
+                doc.URL === documentUrl &&
+                video.getAttribute('src') === candidate.progressiveUrl &&
+                (!video.currentSrc || video.currentSrc === candidate.progressiveUrl) &&
+                [
+                  'sdk',
+                  'api',
+                  'store',
+                  'getState',
+                  'getSnapshot',
+                  'getMediaElement',
+                  'seekTo',
+                  'subscribe',
+                  'content',
+                  'selected',
+                  'sourceUrl',
+                  'contentId',
+                  'sessionId',
+                  'progressiveUrl',
+                  'loop',
+                  'scope',
+                ].every((key) => next[key] === candidate[key])
+              );
+            } catch {
+              return false;
+            }
+          },
         };
+        Object.defineProperty(result, 'revalidate', { enumerable: false });
+        return result;
       } catch {
         return null;
       }

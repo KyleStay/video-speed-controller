@@ -135,9 +135,21 @@ window.VSC = window.VSC || {};
   // undefined: this SDK is absent; null: its current source must retain HLS.
   // Read the observed videoComponent slot directly instead of expanding the
   // generic React search into SDK objects, other playlist items or functions.
-  function playerStateCandidate(video, originParent) {
+  function playerStateCandidate(video, originParent, retained) {
     try {
-      const originalUrl = video?.currentSrc || video?.src;
+      const actualUrl = video?.currentSrc || video?.src;
+      const originalUrl = retained ? retained.originalUrl : actualUrl;
+      if (
+        retained &&
+        (video !== retained.video ||
+          video.ownerDocument !== retained.doc ||
+          retained.doc.documentElement !== retained.root ||
+          retained.doc.URL !== retained.url ||
+          video.getAttribute('src') !== retained.progressiveUrl ||
+          (video.currentSrc && video.currentSrc !== retained.progressiveUrl))
+      ) {
+        return null;
+      }
       const original = asset(originalUrl, 'hls');
       if (!original || !video.isConnected) {
         return undefined;
@@ -153,7 +165,7 @@ window.VSC = window.VSC || {};
       ) {
         return null;
       }
-      if (video.hasAttribute('src') && video.src !== originalUrl) {
+      if (video.hasAttribute('src') && video.src !== (retained?.progressiveUrl || originalUrl)) {
         return null;
       }
       const player = video.vsc?.iosPlayer;
@@ -232,6 +244,16 @@ window.VSC = window.VSC || {};
             ) {
               return null;
             }
+            if (
+              retained &&
+              (node !== retained.node ||
+                key !== retained.key ||
+                state !== retained.state ||
+                selected !== retained.selected ||
+                id !== retained.trackId)
+            ) {
+              return null;
+            }
             // X's expanded viewer omits availability on its current clear track.
             // An explicit declaration still vetoes unknown/unavailable states;
             // never evaluate an accessor to find out which state it represents.
@@ -305,7 +327,58 @@ window.VSC = window.VSC || {};
               return true;
             };
             const progressiveUrl = variantCandidate(variants, declaredOriginalUrl, original, visit);
-            return progressiveUrl ? { originalUrl, progressiveUrl, mediaId: original.id } : null;
+            if (!progressiveUrl) {
+              return null;
+            }
+            const doc = video.ownerDocument;
+            const binding = {
+              video,
+              doc,
+              root: doc.documentElement,
+              url: doc.URL,
+              node,
+              key,
+              state,
+              selected,
+              trackId: id,
+              originalUrl,
+              progressiveUrl,
+            };
+            const result = {
+              originalUrl,
+              progressiveUrl,
+              mediaId: original.id,
+              revalidate(expectedReload = false) {
+                try {
+                  const player = video.vsc?.iosPlayer;
+                  const retainedOrigin = player?.active ? player.originParent : undefined;
+                  const next = playerStateCandidate(video, retainedOrigin, binding);
+                  if (
+                    !next ||
+                    next.originalUrl !== originalUrl ||
+                    next.progressiveUrl !== progressiveUrl
+                  ) {
+                    return false;
+                  }
+                  // A newly bound modern SDK may veto the retained legacy item.
+                  return (
+                    window.VSC.TwitterPlayer?.validateRetainedHls?.(
+                      video,
+                      originalUrl,
+                      progressiveUrl,
+                      retainedOrigin,
+                      expectedReload && video.readyState < 1
+                        ? ownValue(selected, 'durationMs') / 1000
+                        : undefined
+                    ) !== false
+                  );
+                } catch {
+                  return false;
+                }
+              },
+            };
+            Object.defineProperty(result, 'revalidate', { enumerable: false });
+            return result;
           }
         }
       }
