@@ -565,6 +565,13 @@ source and intent in the next task before starting that synchronous transition.
 Metadata initialization also rechecks rendition eligibility when an earlier speed
 command already set the requested numeric rate. Matching `playbackRate` alone
 must not strand a loading native-HLS clip on its original stream above 2×.
+X can initially leave its selected track’s caption status unknown, then explicitly
+report no captions after playback starts. Later trusted native `playing` events
+recheck full rendition eligibility, bounded to 32 events/ten seconds per source.
+Unknown or enabled captions remain vetoes. The synchronous recheck preserves
+current rate authority and revalidates source, document and playback intent after
+resolver calls; it adds no polling or readiness timer. Source lifecycle resets
+the budget and controller removal releases the listener.
 Paused media is never started by this automatic path. Pending selection is bounded
 to ten seconds and cancels on input, source/poster changes, hidden/navigation
 state or disposal. Expected source

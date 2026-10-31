@@ -119,7 +119,10 @@ window.VSC = window.VSC || {};
                 controller.config?.settings?.siteDefaultSpeed === siteSpeed &&
                 controller.config?.speedPreferenceRevision === revision;
               pending.cleanup();
-              if (!valid) {
+              if (
+                !valid ||
+                (lastSpeed !== rate && siteSpeed !== rate && !hasCurrentLocalRate(controller, rate))
+              ) {
                 return;
               }
               readyInitializations.add(controller);
@@ -206,6 +209,14 @@ window.VSC = window.VSC || {};
     return true;
   }
 
+  function hasCurrentLocalRate(controller, rate) {
+    const local = controller.actionHandler?.eventManager?.getMediaRateState?.(controller.video);
+    return (
+      local?.lifecycleSpeed === rate &&
+      (local.lifecycleSpeedRevision ?? 0) === (controller.config?.speedPreferenceRevision ?? 0)
+    );
+  }
+
   function resolveCandidate(controller, rate, source) {
     if (
       source === 'external' ||
@@ -216,7 +227,8 @@ window.VSC = window.VSC || {};
         (controller.safariPlaybackFailedSource ===
           (controller.video.currentSrc || controller.video.src) ||
           (controller.config?.settings?.lastSpeed !== rate &&
-            controller.config?.settings?.siteDefaultSpeed !== rate)))
+            controller.config?.settings?.siteDefaultSpeed !== rate &&
+            !hasCurrentLocalRate(controller, rate))))
     ) {
       return null;
     }

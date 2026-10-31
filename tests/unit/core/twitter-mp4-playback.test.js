@@ -1450,6 +1450,7 @@ describe('X retained MediaSource MP4 playback', () => {
       expect(original.playbackRate).toBe(6);
       for (const [type, handler] of [
         ['play', lifecycle.handlePlay],
+        ['playing', lifecycle.handlePlayingReadiness],
         ['seeked', lifecycle.handleSeek],
         ['emptied', lifecycle.handleRateSourceReset],
         ['loadstart', lifecycle.handleRateSourceReset],

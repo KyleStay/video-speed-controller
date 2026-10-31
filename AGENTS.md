@@ -457,7 +457,12 @@ with direct `chrome.*` access.
   issuing that command. It never starts paused media; cleanup/input/source/hidden
   state cancels the pending observer, listeners and ten-second deadline.
   Saved/session speeds also apply to subsequent feed clips; a failed
-  source is not retried by initialization. Site changes always win. Teardown
+  source is not retried by initialization. Trusted native `playing` events
+  reconsider initial HLS eligibility at the current rate authority, bounded to
+  32 events/ten seconds per source. Revalidate source/document/root, preferences
+  and playing intent after resolver calls; unknown captions still veto takeover.
+  Source lifecycle resets the budget; removal releases the listener. This adds
+  no polling or readiness timers. Site changes always win. Teardown
   restores the original source only while still owned; Use site player retains
   the chosen rendition without another reload. A synchronous same-document portal move
   preserves known single-video player containers when possible; an anchor and
