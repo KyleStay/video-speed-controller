@@ -291,6 +291,7 @@ class VideoController {
       !this.actionHandler ||
       (this.video.readyState >= 1 &&
         targetSpeed === this.video.playbackRate &&
+        !window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') &&
         !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') &&
         !window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init'))
     ) {
@@ -319,6 +320,7 @@ class VideoController {
         // still needs its supplied progressive rendition for fast playback.
         if (
           currentTargetSpeed !== this.video.playbackRate ||
+          window.VSC.TwitterCaptionPlayback?.canBegin(this, currentTargetSpeed, 'init') ||
           window.VSC.SafariHLSPlayback?.canSwitch?.(this, currentTargetSpeed, 'init')
         ) {
           this.actionHandler.adjustSpeed(this.video, currentTargetSpeed, { source: 'init' });
@@ -660,6 +662,7 @@ class VideoController {
           budget.events++;
           if (
             this.safariPlaybackPending ||
+            this.twitterCaptionPending ||
             this.safariPlayback ||
             this.safariPlaybackFailedSource === source
           ) {
@@ -673,7 +676,8 @@ class VideoController {
             rate = video.playbackRate;
           const canStart = mse
             ? window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
-            : window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init');
+            : window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') ||
+              window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init');
           if (canStart) {
             const current = mediaTarget(video);
             if (
@@ -714,6 +718,7 @@ class VideoController {
       try {
         if (event.target.playbackRate === targetSpeed) {
           if (
+            window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') ||
             window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') ||
             window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
           ) {
@@ -926,7 +931,9 @@ class VideoController {
 
     // Restore the original rendition after our lifecycle listeners are gone;
     // continuing an already-playing clip must not initialize another fallback.
+    this.twitterCaptionRestore?.cleanup();
     this.safariPlaybackPending?.cleanup();
+    this.twitterCaptionPending?.cleanup();
     this.safariPlayback?.cleanup();
     window.VSC.GifPlayback?.get(this.video)?.cleanup();
 

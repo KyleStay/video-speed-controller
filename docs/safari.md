@@ -499,6 +499,27 @@ will be unavailable until the original HLS resource is restored. Labeled,
 language-tagged or populated tracks retain HLS. An unavailable rendition keeps the
 original stream; smooth playback above 2× cannot be promised in that case.
 
+Captioned X native-HLS clips have a separate bounded preparation path. It requires
+the current SDK's explicit caption declaration, the supplied same-asset MP4 and
+one finite subtitle playlist containing the complete WebVTT file. Three CORS
+requests follow only validated URLs supplied by those manifests. Unknown,
+ambiguous, protected, live, segmented or unreadable caption sources retain HLS.
+Audio encoding groups may each contain one matching rendition, with identical
+supported choice attributes and validated same-asset URLs. Multiple choices,
+different languages and unsupported audio/video selection semantics retain HLS.
+The complete file is parsed by a private native track and matched against the
+original player's cues, timing and supported placement before a fresh native
+track can accompany MP4 on the original video. Existing HLS cue identity permits
+up to 50 ms of native timestamp rounding and requires a unique match. The full
+replacement file retains its original timing with strict native parsing checks.
+Preparation has byte, cue and
+deadline limits and cancels when source, preference or playback intent changes.
+The displayed rate remains unchanged during preparation. Source, start time,
+rate and any continuing Play are applied together by a speed command; metadata
+callbacks never request Play. Handback restores the original HLS source and
+current caption selection. This route requires its own physical playback and
+caption verification; the generic source resolver's caption veto remains intact.
+
 Current X uses a blob-backed MediaSource player on some iOS sessions. Replacing
 that video's source detaches the producer and its SourceBuffers; assigning the old
 blob back does not restore them. `TwitterMP4Playback` instead pauses and retains
@@ -508,6 +529,12 @@ state, content, session, source and supplied same-asset CDN variants. It selects
 up to 720p when available. It reads no global registry, constructs no media URL
 and fetches no post data. This adapter is iOS-only and leaves generic blob/MSE
 source switching disabled.
+
+When X omits its optional countdown accessory entirely, the same current SDK
+binding may use the exact MP4 download supplied by both the player props and
+their owning metadata. Source, post, content, session and capability checks still
+apply. A declared, inherited, incomplete or protected accessory retains its veto;
+it cannot fall through to the absent-accessory route.
 
 The reported October 28 post exposed an XDS transport group inside one additional
 chrome wrapper. Recognition accepts that exact bounded layout as well as the
@@ -590,7 +617,8 @@ The same finite opportunities reconsider an exact X blob/MSE clip whose current
 SDK binding arrived after its initial Play. This still requires the retained-MP4
 adapter’s complete eligibility checks; a previously refused identity is not
 automatically retried, and synthetic playing events do not authorize takeover.
-Unknown or enabled captions remain vetoes. The synchronous recheck preserves
+Unknown captions remain vetoes. Enabled captions require the separate complete
+native-track preparation described above. The synchronous recheck preserves
 current rate authority and revalidates source, document and playback intent after
 resolver calls; it adds no polling or readiness timer. Source lifecycle resets
 the budget and controller removal releases the listener.

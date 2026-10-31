@@ -54,6 +54,19 @@ describe('Twitter owned-MP4 decoded playback recovery', () => {
     intersect(true);
   }
 
+  function wrapInAncestors(count) {
+    const ancestors = [];
+    let child = video;
+    for (let n = 0; n < count; n++) {
+      const parent = doc.createElement('div');
+      child.replaceWith(parent);
+      parent.append(child);
+      ancestors.push(parent);
+      child = parent;
+    }
+    return ancestors;
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
     frames = new Map();
@@ -432,6 +445,60 @@ describe('Twitter owned-MP4 decoded playback recovery', () => {
     await elapse(5000);
     expect(recovery.reload).not.toHaveBeenCalled();
     expect(video.requestVideoFrameCallback).not.toHaveBeenCalled();
+  });
+
+  it.each([2.1, 4])(
+    'arms through 45 visible ancestors at %s× and recovers only after decoded playback stalls',
+    async (rate) => {
+      state.rate = rate;
+      wrapInAncestors(45);
+      const scheduled = vi.spyOn(view, 'setTimeout');
+      attach();
+      expect(video.requestVideoFrameCallback).toHaveBeenCalledOnce();
+      expect(frames.size).toBe(1);
+      expect(scheduled).toHaveBeenCalledOnce();
+      expect(recovery.reload).not.toHaveBeenCalled();
+      // Initially healthy decoded playback must remain untouched even with
+      // the feed's deep, fully visible ancestry.
+      await elapse(2000, { decoded: true });
+      expect(recovery.reload).not.toHaveBeenCalled();
+      await elapse(4000);
+      expect(recovery.reload).toHaveBeenCalledExactlyOnceWith(controller);
+      expect(health.lastRecovery).toMatchObject({ status: 'requested', attempt: 1 });
+      deliverMetadata({ presentedFrames: state.decoded + 1, mediaTime: state.time });
+      deliverMetadata({ presentedFrames: state.decoded + 2, mediaTime: state.time + 0.1 });
+      expect(health.lastRecovery.status).toBe('frames-resumed');
+      expect(video.muted).toBe(false);
+    }
+  );
+
+  it.each([
+    ['opacity', '0'],
+    ['contentVisibility', 'hidden'],
+    ['display', 'none'],
+    ['visibility', 'hidden'],
+  ])('still rejects a depth-35 ancestor hidden by %s', async (property, value) => {
+    const ancestors = wrapInAncestors(45);
+    ancestors[34].style[property] = value;
+    const scheduled = vi.spyOn(view, 'setTimeout');
+    attach();
+    await elapse(5000);
+    expect(recovery.reload).not.toHaveBeenCalled();
+    expect(video.requestVideoFrameCallback).not.toHaveBeenCalled();
+    expect(scheduled).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with bounded style work when ancestry exceeds 64 nodes', async () => {
+    wrapInAncestors(80);
+    const styleReads = vi.spyOn(view, 'getComputedStyle');
+    const scheduled = vi.spyOn(view, 'setTimeout');
+    attach();
+    await elapse(5000);
+    expect(styleReads.mock.calls.length).toBeGreaterThan(0);
+    expect(styleReads.mock.calls.length).toBeLessThanOrEqual(64);
+    expect(video.requestVideoFrameCallback).not.toHaveBeenCalled();
+    expect(scheduled).not.toHaveBeenCalled();
+    expect(recovery.reload).not.toHaveBeenCalled();
   });
 
   it('also recovers a fully buffered decoder that produces neither clock nor frame progress', async () => {

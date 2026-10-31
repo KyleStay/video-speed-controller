@@ -597,6 +597,301 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.ui.refs.status.textContent).toBe('This video accepted 2×.');
   });
 
+  it('shows a pending caption speed command without claiming acceptance or failure', () => {
+    const { player, video, controller } = makeController();
+    video.playbackRate = 1;
+    controller.config.getKeyBinding = (name) => (name === 'fast' ? 4 : 0.1);
+    controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+    const setSpeed = vi.spyOn(controller.actionHandler, 'setSpeed');
+    vi.spyOn(window.VSC.TwitterCaptionPlayback, 'begin').mockImplementation((owner, rate) => {
+      owner.twitterCaptionPending = {
+        controller: owner,
+        video,
+        deferred: true,
+        rate,
+        closed: false,
+        cleanup: vi.fn(),
+      };
+      return { deferred: true };
+    });
+    const nativeHandler = vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange');
+    player.attach();
+    player.open();
+    const { speed, customSpeed, customSpeedGroup, customSpeedApply, status, normal, preferred } =
+      player.ui.refs;
+    speed.value = 'custom';
+    speed.dispatchEvent(new Event('change'));
+    customSpeed.value = '4';
+    customSpeedApply.click();
+    expect(setSpeed).toHaveReturnedWith(false);
+    expect(controller.twitterCaptionPending.rate).toBe(4);
+    expect(nativeHandler).not.toHaveBeenCalled();
+    expect(status.textContent).toMatch(/prepar|pending/i);
+    expect(status.textContent).not.toMatch(/could not use|accepted 4/i);
+    expect(video.playbackRate).toBe(1);
+    expect(speed.value).toBe('1');
+    expect(normal.getAttribute('aria-pressed')).toBe('true');
+    expect(preferred.getAttribute('aria-pressed')).toBe('false');
+    expect(customSpeedGroup.hidden).toBe(false);
+    controller.twitterCaptionPending = null;
+  });
+
+  it.each(['wrong video', 'wrong controller', 'wrong rate', 'closed', 'not deferred'])(
+    'does not hide rejection behind a caption request with %s',
+    (reason) => {
+      const { player, video, controller } = makeController();
+      video.playbackRate = 1;
+      controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+      vi.spyOn(window.VSC.TwitterCaptionPlayback, 'begin').mockImplementation((owner, rate) => {
+        const pending = {
+          controller: owner,
+          video,
+          deferred: true,
+          rate,
+          closed: false,
+          cleanup: vi.fn(),
+        };
+        if (reason === 'wrong video') {
+          pending.video = document.createElement('video');
+        } else if (reason === 'wrong controller') {
+          pending.controller = { video };
+        } else if (reason === 'wrong rate') {
+          pending.rate = 3;
+        } else if (reason === 'closed') {
+          pending.closed = true;
+        } else {
+          pending.deferred = false;
+        }
+        owner.twitterCaptionPending = pending;
+        return { deferred: true };
+      });
+      player.attach();
+      player.open();
+      const { speed, customSpeed, customSpeedGroup, customSpeedApply, status } = player.ui.refs;
+      speed.value = 'custom';
+      speed.dispatchEvent(new Event('change'));
+      customSpeed.value = '4';
+      customSpeedApply.click();
+      expect(status.textContent).toMatch(/could not use/);
+      expect(video.playbackRate).toBe(1);
+      expect(speed.value).toBe('1');
+      expect(customSpeedGroup.hidden).toBe(false);
+      controller.twitterCaptionPending = null;
+    }
+  );
+
+  describe('caption preparation status settlement', () => {
+    async function prepare() {
+      const item = makeController();
+      const { player, video, controller } = item;
+      vi.spyOn(document, 'URL', 'get').mockReturnValue('https://x.com/example/status/123');
+      video.srcObject = null;
+      video.src = 'https://video.twimg.com/amplify_video/123/pl/master.m3u8';
+      controller.config.speedPreferenceRevision = 0;
+      controller.config.settings.lastSpeed = 1.5;
+      controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+      vi.spyOn(window.VSC.TwitterMediaSource, 'findCaptionCandidate').mockReturnValue({
+        originalUrl: video.src,
+        progressiveUrl: 'https://video.twimg.com/amplify_video/123/vid/1280x720/clip.mp4',
+        duration: 120,
+        assetType: 'amplify_video',
+        mediaId: '123',
+        isCurrent: () => true,
+      });
+      const tasks = [];
+      vi.spyOn(window.VSC.TwitterCaptionSource, 'create').mockImplementation(() => {
+        let resolve, reject;
+        const promise = new Promise((yes, no) => {
+          resolve = yes;
+          reject = no;
+        });
+        const task = {
+          promise,
+          resolve,
+          reject,
+          cancel: vi.fn(() => reject(new DOMException('Cancelled', 'AbortError'))),
+        };
+        tasks.push(task);
+        return task;
+      });
+      await video.play();
+      player.attach();
+      player.open();
+      // Drain jsdom's initial fixture ratechange before creating a pending command.
+      await flushEvents();
+      expect(player.applySpeed(4)).toBe(false);
+      const pending = controller.twitterCaptionPending;
+      expect(pending?.settled).toBeInstanceOf(Promise);
+      expect(player.ui.refs.status.textContent).toBe('Preparing captions…');
+      return { ...item, tasks, pending };
+    }
+
+    it('settles a real caption fetch failure while the original keeps playing without another playing event', async () => {
+      const { player, video, controller, tasks, pending } = await prepare();
+      const playing = vi.fn();
+      video.addEventListener('playing', playing);
+      tasks[0].reject(new Error('Caption fetch failed'));
+      await pending.settled;
+      await flushEvents();
+      expect(controller.twitterCaptionPending).toBeNull();
+      expect(player.ui.refs.status.textContent).toBe(
+        'This video could not use that playback speed.'
+      );
+      expect(video.paused).toBe(false);
+      expect(video.playbackRate).toBe(1.5);
+      expect(player.ui.refs.speed.value).toBe('1.5');
+      expect(playing).not.toHaveBeenCalled();
+      video.removeEventListener('playing', playing);
+    });
+
+    it('settles a real native caption parser error and releases its preparation', async () => {
+      const { player, controller, tasks, pending } = await prepare();
+      const createElement = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation((tag, ...args) => {
+        const element = createElement(tag, ...args);
+        if (tag === 'track') {
+          Object.defineProperty(element, 'track', { value: { mode: 'disabled' } });
+        }
+        return element;
+      });
+      const createDescriptor = Object.getOwnPropertyDescriptor(window.URL, 'createObjectURL');
+      const revokeDescriptor = Object.getOwnPropertyDescriptor(window.URL, 'revokeObjectURL');
+      const revoke = vi.fn();
+      Object.defineProperty(window.URL, 'createObjectURL', {
+        configurable: true,
+        value: () => 'blob:caption-parser-fixture',
+      });
+      Object.defineProperty(window.URL, 'revokeObjectURL', { configurable: true, value: revoke });
+      vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+      try {
+        tasks[0].resolve({
+          oracle: [],
+          vttBytes: new Uint8Array(),
+          rendition: { name: 'English', language: 'en' },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(pending.parserTrack).toBeTruthy();
+        expect(pending.closed).not.toBe(true);
+        pending.parserTrack.dispatchEvent(new Event('error'));
+        await pending.settled;
+        await flushEvents();
+        expect(controller.twitterCaptionPending).toBeNull();
+        expect(player.ui.refs.status.textContent).toMatch(/could not use/);
+        expect(revoke).toHaveBeenCalledWith('blob:caption-parser-fixture');
+      } finally {
+        for (const [key, descriptor] of [
+          ['createObjectURL', createDescriptor],
+          ['revokeObjectURL', revokeDescriptor],
+        ]) {
+          if (descriptor) {
+            Object.defineProperty(window.URL, key, descriptor);
+          } else {
+            delete window.URL[key];
+          }
+        }
+      }
+    });
+
+    it('settles pause cancellation without resuming the original', async () => {
+      const { player, video, controller, pending } = await prepare();
+      const plays = video.play.mock.calls.length;
+      video.pause();
+      await pending.settled;
+      await flushEvents();
+      expect(controller.twitterCaptionPending).toBeNull();
+      expect(player.ui.refs.status.textContent).toMatch(/could not use/);
+      expect(video.paused).toBe(true);
+      expect(video.play).toHaveBeenCalledTimes(plays);
+    });
+
+    it('does not let an older cancelled request settle the newer preparing message', async () => {
+      const { player, controller, tasks, pending } = await prepare();
+      expect(player.applySpeed(3)).toBe(false);
+      const newer = controller.twitterCaptionPending;
+      expect(newer).toBeTruthy();
+      expect(newer).not.toBe(pending);
+      await pending.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toBe('Preparing captions…');
+      expect(controller.twitterCaptionPending).toBe(newer);
+      tasks[1].reject(new Error('Newer fetch failed'));
+      await newer.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toMatch(/could not use/);
+    });
+
+    it('preserves a newer playback status after preparation fails', async () => {
+      const { player, tasks, pending } = await prepare();
+      player.ui.refs.status.textContent = 'Tap Play to continue playback.';
+      tasks[0].reject(new Error('Caption fetch failed'));
+      await pending.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toBe('Tap Play to continue playback.');
+    });
+
+    it('clears only its preparing message after preparation transfers to a session', async () => {
+      const { player, video, pending } = await prepare();
+      pending.cleanup(true);
+      await pending.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toBe('');
+      expect(player.ui.refs.speed.value).toBe(String(video.playbackRate));
+      expect(video.playbackRate).toBe(1.5);
+    });
+
+    it('preserves the status of a newer accepted speed command', async () => {
+      const { player, controller, pending } = await prepare();
+      vi.spyOn(controller.actionHandler, 'setSpeed').mockImplementation((video) => {
+        video.playbackRate = 2;
+        return true;
+      });
+      expect(player.applySpeed(3)).toBe(true);
+      expect(player.ui.refs.status.textContent).toBe('This video accepted 2×.');
+      pending.cleanup();
+      await pending.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toBe('This video accepted 2×.');
+    });
+
+    it('does not change the reopened UI when the old preparation settles', async () => {
+      const { player, tasks, pending } = await prepare();
+      player.close();
+      player.open();
+      player.ui.refs.status.textContent = 'Preparing captions…';
+      tasks[0].reject(new Error('Old caption fetch failed'));
+      await pending.settled;
+      await flushEvents();
+      expect(player.ui.refs.status.textContent).toBe('Preparing captions…');
+    });
+  });
+
+  it('still reports a rejected speed command when no caption preparation owns it', () => {
+    const { player, video, controller } = makeController();
+    video.playbackRate = 1;
+    controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+    const setSpeed = vi.spyOn(controller.actionHandler, 'setSpeed');
+    vi.spyOn(window.VSC.TwitterCaptionPlayback, 'begin').mockReturnValue(null);
+    vi.spyOn(window.VSC.TwitterMP4Playback, 'begin').mockReturnValue(null);
+    vi.spyOn(window.VSC.SafariHLSPlayback, 'begin').mockReturnValue(null);
+    vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(() => {
+      throw new DOMException('Native speed rejected', 'NotSupportedError');
+    });
+    player.attach();
+    player.open();
+    const { speed, customSpeed, customSpeedGroup, customSpeedApply, status } = player.ui.refs;
+    speed.value = 'custom';
+    speed.dispatchEvent(new Event('change'));
+    customSpeed.value = '4';
+    customSpeedApply.click();
+    expect(setSpeed).toHaveReturnedWith(false);
+    expect(controller.twitterCaptionPending).toBeFalsy();
+    expect(status.textContent).toMatch(/could not use/);
+    expect(video.playbackRate).toBe(1);
+    expect(speed.value).toBe('1');
+    expect(customSpeedGroup.hidden).toBe(false);
+  });
+
   it('keeps custom speed and More exclusive and dismisses the custom sheet before the dialog', () => {
     const { player, controller } = makeController();
     controller.controlsManager = { setTouchExpanded: vi.fn() };

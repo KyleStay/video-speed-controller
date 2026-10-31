@@ -116,6 +116,91 @@ describe('ActionHandler', () => {
     }
   });
 
+  it.each(['internal', 'init'])(
+    'keeps native and displayed speed truthful while %s caption preparation is pending',
+    async (source) => {
+      const config = window.VSC.videoSpeedConfig;
+      await config.load();
+      config.settings.rememberSpeed = true;
+      config.settings.lastSpeed = 1;
+      const manager = new window.VSC.EventManager(config, null);
+      const handler = new window.VSC.ActionHandler(config, manager);
+      const video = createTestVideoWithController(config, handler);
+      handler.setSpeed(video, 1, 'init');
+      const save = vi.spyOn(config, 'save');
+      const native = vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange');
+      const changed = vi.fn();
+      video.addEventListener('ratechange', changed);
+      const pending = vi
+        .spyOn(window.VSC.TwitterCaptionPlayback, 'begin')
+        .mockReturnValue({ deferred: true });
+      try {
+        expect(handler.setSpeed(video, 4, source)).toBe(false);
+        expect(video.playbackRate).toBe(1);
+        expect(video.vsc.speedIndicator.textContent).toBe('1.00');
+        expect(native).not.toHaveBeenCalled();
+        expect(changed).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+        expect(manager.getMediaRateState(video)).toMatchObject({
+          lifecycleSpeed: 4,
+          lifecycleSpeedRevision: config.speedPreferenceRevision ?? 0,
+          acceptedSpeed: 1,
+          applyingSpeed: false,
+        });
+        expect(pending).toHaveBeenCalledWith(video.vsc, 4, source, {
+          previousSpeed: 1,
+          previousPlaybackRate: 1,
+          speedPreferenceRevision: config.speedPreferenceRevision ?? 0,
+        });
+      } finally {
+        pending.mockRestore();
+        native.mockRestore();
+        save.mockRestore();
+        video.removeEventListener('ratechange', changed);
+        video.vsc.remove();
+        manager.cleanup();
+      }
+    }
+  );
+
+  it('accumulates rapid relative choices while caption preparation retains the native 2× rate', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.rememberSpeed = true;
+    config.settings.lastSpeed = 2;
+    const manager = new window.VSC.EventManager(config, null);
+    const handler = new window.VSC.ActionHandler(config, manager);
+    const video = createTestVideoWithController(config, handler, { playbackRate: 2 });
+    handler.setSpeed(video, 2, 'init');
+    const begin = vi
+      .spyOn(window.VSC.TwitterCaptionPlayback, 'begin')
+      .mockReturnValue({ deferred: true });
+    const requested = vi
+      .spyOn(window.VSC.TwitterCaptionPlayback, 'requestedSpeed')
+      .mockImplementation(() => manager.getMediaRateState(video).lifecycleSpeed);
+    const save = vi.spyOn(config, 'save');
+    try {
+      for (let click = 0; click < 20; click++) {
+        handler.adjustSpeed(video, 0.1, { relative: true });
+      }
+      expect(begin).toHaveBeenLastCalledWith(video.vsc, 4, 'internal', expect.any(Object));
+      expect(video.playbackRate).toBe(2);
+      expect(video.vsc.speedIndicator.textContent).toBe('2.00');
+      expect(manager.getMediaRateState(video)).toMatchObject({
+        acceptedSpeed: 2,
+        lifecycleSpeed: 4,
+        applyingSpeed: false,
+      });
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      begin.mockRestore();
+      requested.mockRestore();
+      save.mockRestore();
+      video.vsc.remove();
+      manager.cleanup();
+    }
+  });
+
   describe('owned-player hardware shortcut targeting', () => {
     let eventManager;
     let actionHandler;

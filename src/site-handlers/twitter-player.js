@@ -361,12 +361,35 @@ window.VSC = window.VSC || {};
           }
           const popped = own(modern, 'poppedOutSource');
           const supplied = own(popped, 'playerProps');
+          // A current player can omit countdown UI entirely. A declared or
+          // inherited accessory still belongs to the full metadata route below.
+          const accessoryAbsent = Boolean(
+            modern &&
+            !Object.getOwnPropertyDescriptor(modern, 'timeRemainingAccessory') &&
+            !('timeRemainingAccessory' in modern)
+          );
           const media = own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media');
           const info = own(media, 'video_info');
           const variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
           const downloadAsset = asset(download, 'mp4');
           const variantCount = own(variants, 'length');
+          if (accessoryAbsent) {
+            if (
+              ![modern, popped, supplied].every(clear) ||
+              own(popped, 'hostKey') !== hostKey ||
+              own(supplied, 'src') !== sourceUrl ||
+              own(supplied, 'content') !== content ||
+              own(supplied, 'downloadUrl') !== download ||
+              downloadAsset?.id !== contentId ||
+              downloadAsset.type !== sourceAsset.type
+            ) {
+              return null;
+            }
+            result = { ...binding, progressiveUrl: download, loop, scope };
+            hook = own(hook, 'next');
+            continue;
+          }
           if (
             !modern ||
             ![modern, popped, supplied, media, info].every(clear) ||

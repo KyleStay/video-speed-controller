@@ -117,7 +117,9 @@ class TwitterPlaybackHealth {
       return null;
     }
     let ancestor = video;
-    for (let depth = 0; ancestor && depth < 24; depth++) {
+    // Observed X feed clips have 45 visible ancestors. Keep the visibility
+    // check bounded while allowing those clips to reach their document root.
+    for (let depth = 0; ancestor && depth < 64; depth++) {
       const style = this.view.getComputedStyle(ancestor);
       if (
         style.display === 'none' ||

@@ -348,6 +348,461 @@ describe('TwitterMediaSource', () => {
     return { state, track, variants };
   }
 
+  it.each(['legacy', 'captioned'])(
+    'bounds rendition reads when a %s SDK Proxy grows variants during binding',
+    (route) => {
+      const captioned = route === 'captioned';
+      property(video, 'duration', 20);
+      video.vsc = { video };
+      if (captioned) {
+        property(video, 'textTracks', [{ kind: 'captions' }, { kind: 'subtitles' }]);
+      }
+      let growing = false;
+      let bindingReads = 0;
+      const variants = [];
+      const wrap = (entry, hls = false) =>
+        new Proxy(entry, {
+          getOwnPropertyDescriptor(target, key) {
+            // Selection reads bitrate only for MP4. HLS bitrate is first read
+            // by binding, so earlier validation/selection passes stay stable.
+            if (key === 'bitrate') {
+              if (hls) {
+                growing = true;
+              }
+              if (growing) {
+                bindingReads++;
+                // Artificial cap makes the regression safe against old code;
+                // a page has no obligation to stop growing this array.
+                if (variants.length < 50) {
+                  variants.push(wrap({ type: 'video/mp4', src: progressiveUrl, bitrate: 1 }));
+                }
+              }
+            }
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+      variants.push(
+        wrap({ type: 'application/x-mpegURL', src: originalUrl }, true),
+        wrap({ type: 'video/mp4', src: progressiveUrl, bitrate: 1 })
+      );
+      playerState({}, { hasCaptions: captioned, variants });
+      const candidate = captioned
+        ? window.VSC.TwitterMediaSource.findCaptionCandidate(video)
+        : window.VSC.TwitterMediaSource.findPlayerStateCandidate(video);
+      expect(bindingReads).toBeGreaterThan(0);
+      expect(bindingReads).toBeLessThanOrEqual(8);
+      expect(candidate).toBeNull();
+    }
+  );
+
+  describe('retained logical item after its owned native-HLS to MP4 transition', () => {
+    function captureAndReplace(deltaMs = 56) {
+      property(video, 'duration', 20);
+      property(video, 'readyState', 4);
+      video.vsc = { video };
+      const initial = playerState();
+      const candidate = find();
+      expect(candidate?.progressiveUrl).toBe(initial.variants[3].src);
+      expect(typeof candidate?.revalidate).toBe('function');
+      const variants = initial.variants.map((variant) => ({ ...variant }));
+      const track = {
+        ...initial.track,
+        durationMs: 20000 + deltaMs,
+        currentVariantIndex: 3,
+        variants,
+      };
+      const state = { ...initial.state, source: { ...initial.state.source }, tracks: [track] };
+      metadata({ children: [{ props: { ref: null } }, { props: { playerState: state } }] });
+      video.src = candidate.progressiveUrl;
+      property(video, 'currentSrc', candidate.progressiveUrl);
+      property(video, 'duration', (20000 + deltaMs) / 1000);
+      return { candidate, initial, state, track, variants };
+    }
+
+    it.each([0, 56, 250, -250])(
+      'revalidates immutable SDK replacements with exact owned MP4 and duration precision change %sms',
+      (deltaMs) => {
+        const { candidate, initial, state, track, variants } = captureAndReplace(deltaMs);
+        expect(state).not.toBe(initial.state);
+        expect(track).not.toBe(initial.track);
+        expect(variants).not.toBe(initial.variants);
+        expect(variants[3]).not.toBe(initial.variants[3]);
+        expect(variants[track.currentVariantIndex].src).toBe(candidate.progressiveUrl);
+        expect(candidate.revalidate()).toBe(true);
+        expect(candidate.revalidate(true)).toBe(true);
+      }
+    );
+
+    it('never treats an initially MP4-selected SDK item as an active HLS candidate', () => {
+      const { track, variants } = playerState();
+      track.currentVariantIndex = 3;
+      video.src = variants[3].src;
+      property(video, 'currentSrc', variants[3].src);
+      expect(find()).toBeNull();
+    });
+
+    it.each([
+      ['unknown SDK captions', ({ state }) => delete state.hasCaptions],
+      [
+        'enabled SDK captions',
+        ({ state }) => {
+          state.hasCaptions = true;
+        },
+      ],
+      ['unknown selected captions', ({ track }) => delete track.hasCaptions],
+      [
+        'enabled selected captions',
+        ({ track }) => {
+          track.hasCaptions = true;
+        },
+      ],
+      [
+        'selected protection',
+        ({ track }) => {
+          track.keySystems = { protected: true };
+        },
+      ],
+      [
+        'selected live',
+        ({ track }) => {
+          track.live = true;
+        },
+      ],
+      [
+        'variant protection',
+        ({ variants }) => {
+          variants[3].encrypted = true;
+        },
+      ],
+      [
+        'new post',
+        ({ state }) => {
+          state.source.id = 'different-post';
+        },
+      ],
+      [
+        'different source position',
+        ({ state }) => {
+          state.source.index = 1;
+        },
+      ],
+      [
+        'non-tweet source',
+        ({ state }) => {
+          state.source.type = 'ad';
+        },
+      ],
+      [
+        'different source track',
+        ({ state }) => {
+          state.source.trackId = 1;
+        },
+      ],
+      [
+        'new selected track',
+        ({ state, track }) => {
+          state.currentTrackId = state.source.trackId = track.id = 1;
+        },
+      ],
+      [
+        'duplicate selected track',
+        ({ state, track }) => {
+          state.tracks.push({ ...track });
+        },
+      ],
+      [
+        'changed original HLS declaration',
+        ({ variants }) => {
+          variants[0].src += '&other=1';
+        },
+      ],
+      [
+        'removed original HLS declaration',
+        ({ track, variants }) => {
+          variants.shift();
+          track.currentVariantIndex = 2;
+        },
+      ],
+      [
+        'deleted owned MP4',
+        ({ variants }) => {
+          variants.splice(3, 1);
+        },
+      ],
+      [
+        'different selected MP4',
+        ({ track }) => {
+          track.currentVariantIndex = 1;
+        },
+      ],
+      [
+        'different provided MP4 URL',
+        ({ variants }) => {
+          variants[3].src += '?changed=1';
+        },
+      ],
+      [
+        'duplicate owned MP4 declaration',
+        ({ variants }) => {
+          variants.push({ ...variants[3] });
+        },
+      ],
+      [
+        'duplicate original HLS declaration',
+        ({ variants }) => {
+          variants.push({ ...variants[0] });
+        },
+      ],
+      [
+        'native source intent changed',
+        () => {
+          video.src = progressiveUrl;
+        },
+      ],
+      [
+        'native current source changed',
+        () => {
+          property(video, 'currentSrc', progressiveUrl);
+        },
+      ],
+      [
+        'removed video',
+        () => {
+          video.remove();
+        },
+      ],
+      [
+        'replaced controller',
+        () => {
+          video.vsc = { video };
+        },
+      ],
+      [
+        'lost controller',
+        () => {
+          delete video.vsc;
+        },
+      ],
+      [
+        'replaced React binding',
+        () => {
+          const props = parent.__reactProps$fixture;
+          delete parent.__reactProps$fixture;
+          property(parent, '__reactProps$replacement', props);
+        },
+      ],
+    ])('rejects fresh retained metadata with %s', (_reason, change) => {
+      const fixture = captureAndReplace();
+      expect(fixture.candidate.revalidate()).toBe(true);
+      // A clear older pair and the original selected object still exist; they
+      // cannot override the current SDK item's capability or identity veto.
+      parent.__reactProps$fixture.children[0] = { props: pair() };
+      change(fixture);
+      expect(fixture.candidate.revalidate()).toBe(false);
+      expect(fixture.candidate.revalidate(true)).toBe(false);
+    });
+
+    it.each([251, -251, 1000, Infinity, NaN])(
+      'rejects an SDK duration update outside the retained 250ms precision allowance: %s',
+      (deltaMs) => {
+        const fixture = captureAndReplace(deltaMs);
+        expect(fixture.candidate.revalidate()).toBe(false);
+      }
+    );
+
+    it('keeps duration tolerance anchored to the captured clip rather than accepting cumulative drift', () => {
+      const { candidate, state, track } = captureAndReplace(200);
+      expect(candidate.revalidate()).toBe(true);
+      state.tracks = [
+        { ...track, durationMs: 20400, variants: track.variants.map((v) => ({ ...v })) },
+      ];
+      property(video, 'duration', 20.4);
+      expect(candidate.revalidate()).toBe(false);
+    });
+
+    it.each([0, NaN, Infinity, 24])(
+      'rejects an unowned native duration of %s after readiness',
+      (duration) => {
+        const { candidate } = captureAndReplace();
+        property(video, 'duration', duration);
+        expect(candidate.revalidate()).toBe(false);
+        expect(candidate.revalidate(true)).toBe(false);
+      }
+    );
+
+    it.each([0, NaN])(
+      'permits a reset native duration of %s only during its explicit owned reload',
+      (duration) => {
+        const { candidate, track } = captureAndReplace();
+        property(video, 'readyState', 0);
+        property(video, 'duration', duration);
+        expect(candidate.revalidate()).toBe(false);
+        expect(candidate.revalidate(true)).toBe(true);
+        track.hasCaptions = undefined;
+        expect(candidate.revalidate(true)).toBe(false);
+      }
+    );
+
+    it.each([
+      'playerState',
+      'source',
+      'durationMs',
+      'hasCaptions',
+      'currentVariantIndex',
+      'variant URL',
+    ])('does not evaluate a fresh retained %s accessor', (field) => {
+      const { candidate, state, track, variants } = captureAndReplace();
+      expect(candidate.revalidate()).toBe(true);
+      const getter = vi.fn(() => {
+        throw Error('SDK accessor');
+      });
+      if (field === 'playerState') {
+        Object.defineProperty(parent.__reactProps$fixture.children[1].props, field, {
+          get: getter,
+        });
+      } else if (field === 'source') {
+        Object.defineProperty(state, field, { get: getter });
+      } else if (field === 'variant URL') {
+        Object.defineProperty(variants[3], 'src', { get: getter });
+      } else {
+        Object.defineProperty(track, field, { get: getter });
+      }
+      expect(candidate.revalidate()).toBe(false);
+      expect(getter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('separate complete-caption candidate', () => {
+    let fixture;
+    const captionCandidate = () => window.VSC.TwitterMediaSource.findCaptionCandidate(video);
+    beforeEach(() => {
+      fixture = playerState({}, { hasCaptions: true });
+      property(video, 'duration', 20);
+      property(video, 'textTracks', [{ kind: 'captions' }, { kind: 'subtitles' }]);
+      video.vsc = { video };
+    });
+
+    it('requires its explicit API while the ordinary progressive route retains the caption veto', () => {
+      expect(find()).toBeNull();
+      expect(window.VSC.ProgressiveMediaSource.findCandidate(video)).toBeNull();
+      const candidate = captionCandidate();
+      expect(candidate).toMatchObject({
+        originalUrl,
+        progressiveUrl: fixture.variants[3].src,
+        duration: 20,
+        assetType: 'amplify_video',
+      });
+      expect(candidate.isCurrent()).toBe(true);
+    });
+
+    it.each(['unknown', 'false', 'null', 'string'])(
+      'never treats selected caption flag %s as proof of a caption rendition',
+      (kind) => {
+        fixture.track.hasCaptions =
+          kind === 'unknown'
+            ? undefined
+            : kind === 'false'
+              ? false
+              : kind === 'null'
+                ? null
+                : 'true';
+        expect(captionCandidate()).toBeNull();
+      }
+    );
+
+    it.each([
+      'unknown SDK caption flag',
+      'DRM',
+      'encrypted variant',
+      'live',
+      'ambiguous selected',
+      'changed active HLS',
+      'initial MP4 selection',
+      'unrelated track',
+    ])('preserves the explicit caption candidate veto for %s', (reason) => {
+      if (reason === 'unknown SDK caption flag') {
+        delete fixture.state.hasCaptions;
+      } else if (reason === 'DRM') {
+        fixture.track.keySystems = { protected: true };
+      } else if (reason === 'encrypted variant') {
+        fixture.variants[3].encrypted = true;
+      } else if (reason === 'live') {
+        fixture.track.live = true;
+      } else if (reason === 'ambiguous selected') {
+        fixture.state.tracks.push({ ...fixture.track });
+      } else if (reason === 'changed active HLS') {
+        fixture.variants[0].src += '&different=1';
+      } else if (reason === 'initial MP4 selection') {
+        fixture.track.currentVariantIndex = 3;
+      } else {
+        property(video, 'textTracks', [{ kind: 'captions' }, { kind: 'metadata' }]);
+      }
+      expect(captionCandidate()).toBeNull();
+      expect(find()).toBeNull();
+    });
+
+    it('never evaluates a caption capability accessor', () => {
+      const getter = vi.fn(() => true);
+      Object.defineProperty(fixture.track, 'hasCaptions', { get: getter });
+      expect(captionCandidate()).toBeNull();
+      expect(getter).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['initial', 'clear'],
+      ['initial', 'captions'],
+      ['initial', 'protection'],
+      ['initial', 'live'],
+      ['initial', 'ambiguous'],
+      ['retained', 'clear'],
+      ['retained', 'captions'],
+      ['retained', 'protection'],
+      ['retained', 'live'],
+      ['retained', 'ambiguous'],
+    ])(
+      'does not bypass an authoritative modern SDK on the %s caption route: %s',
+      (phase, reason) => {
+        vi.spyOn(document, 'URL', 'get').mockReturnValue(
+          'https://x.com/example/status/2041611432752742401'
+        );
+        fixture.track.durationMs = 20456;
+        property(video, 'duration', 20.456);
+        for (const variant of fixture.variants.slice(1)) {
+          variant.src += '?tag=21';
+        }
+        const retained = phase === 'retained' ? captionCandidate() : null;
+        if (retained) {
+          expect(retained.isCurrent()).toBe(true);
+          video.src = retained.progressiveUrl;
+          property(video, 'currentSrc', retained.progressiveUrl);
+          fixture.track.currentVariantIndex = 3;
+        }
+        const modern = modernPlayer();
+        parent.__reactProps$fixture.children[1] = { props: { playerState: fixture.state } };
+        if (reason === 'captions') {
+          modern.state.textTracks.tracks.push({ kind: 'captions' });
+        } else if (reason === 'protection') {
+          modern.sdk.keySystems = {};
+        } else if (reason === 'live') {
+          modern.state.source.live = true;
+        } else if (reason === 'ambiguous') {
+          modern.fiber.memoizedState.next = { memoizedState: { ...modern.sdk }, next: null };
+        }
+        const validate = vi.spyOn(window.VSC.TwitterPlayer, 'validateRetainedHls');
+        if (retained) {
+          expect(retained.revalidate()).toBe(false);
+        } else {
+          expect(captionCandidate()).toBeNull();
+        }
+        expect(validate).toHaveBeenCalled();
+        if (reason !== 'protection') {
+          expect(modern.api.getState).toHaveBeenCalled();
+        }
+        expect(validate).toHaveReturnedWith(reason === 'clear');
+      }
+    );
+  });
+
   it('reads the authenticated player’s selected track without calling its API', () => {
     const { variants } = playerState();
     const load = vi.spyOn(video, 'load');

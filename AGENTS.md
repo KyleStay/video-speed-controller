@@ -162,6 +162,9 @@ with direct `chrome.*` access.
     Explicit presentation may bind one direct `<source>` child, retaining its
     node and `src`/`type`/`media` identity. Any source write ends that ownership.
     Automatic blob/MSE takeover still requires the video's `src` attribute.
+    A truly absent countdown accessory may use the exact same-asset download
+    paired in the current SDK's bound player props and metadata; a present,
+    inherited or invalid accessory never falls through to this route.
     Playing handoffs commit only after their synchronous Play request succeeds;
     pending Play/Pause generations prevent stale settlement from taking over.
     Failed handoffs restore the original local rate and interface while retaining
@@ -171,6 +174,17 @@ with direct `chrome.*` access.
     honors presentation revisions, visibility and cancellation. Preserve accepted
     rates through initialSpeed and per-media lifecycle authority without saving
     a new global preference just for opening fullscreen.
+  - `twitter-caption-source.js` + `twitter-caption-playback.js` — separate,
+    bounded native-HLS path for a captioned current X SDK item. Require its
+    supplied same-asset MP4 and one explicit, complete subtitle rendition.
+    Fetch only the three validated manifest/subtitle URLs with CORS, byte and
+    deadline limits; prepare and verify every native cue before changing the
+    original video. Match existing HLS cues uniquely within 50 ms to account
+    for native rounding; retain strict full-file timing checks and never retime
+    the replacement cues. Generic caption vetoes remain in place. Pending preparation
+    retains command intent without claiming an accepted or displayed fast rate.
+    Original load/time/rate/Play remain one coordinated command; cancellation,
+    source replacement and handback release the owned track, Blob and listeners.
   - `twitter-playback-health.js` + `twitter-playback-recovery.js` — iOS X
     decoded-frame monitoring at 2.1× or faster, restricted to a current owned
     MP4 session. A buffered, visible decoder stall may reload that exact MP4
