@@ -181,6 +181,102 @@ describe('Safari native HLS progressive playback ownership', () => {
     expect(video.load).not.toHaveBeenCalled();
   });
 
+  function exactLocalAuthority(revision = 7, localRevision = revision) {
+    controller.config = {
+      settings: { lastSpeed: 4, siteDefaultSpeed: 1 },
+      speedPreferenceRevision: revision,
+    };
+    const manager = new window.VSC.EventManager(controller.config, null);
+    controller.actionHandler = { eventManager: manager };
+    const local = manager.getOrCreateMediaRateState(video);
+    local.lifecycleSpeed = 2.5;
+    local.lifecycleSpeedRevision = localRevision;
+    return { manager, local };
+  }
+
+  it.each([undefined, 0, 7])(
+    'authorizes exact-video lifecycle2.5 independently of global4/default1 at revision %s',
+    (revision) => {
+      const { manager } = exactLocalAuthority(revision, revision);
+      if (revision === undefined) {
+        delete controller.config.speedPreferenceRevision;
+        delete manager.getMediaRateState(video).lifecycleSpeedRevision;
+      }
+      const lookup = vi.spyOn(manager, 'getMediaRateState');
+      resolver.mockClear();
+      expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 2.5, 'init')).toBe(true);
+      expect(lookup).toHaveBeenCalledExactlyOnceWith(video);
+      expect(resolver).toHaveBeenCalledOnce();
+      expect(controller.config.settings).toEqual({ lastSpeed: 4, siteDefaultSpeed: 1 });
+      expect(video.load).not.toHaveBeenCalled();
+      manager.cleanup();
+    }
+  );
+
+  it.each([
+    'stale revision',
+    'nonmatching rate',
+    'accepted only',
+    'missing state',
+    'sibling state',
+  ])('does not authorize an otherwise-unconfigured2.5 request from %s', (reason) => {
+    const { manager, local } = exactLocalAuthority();
+    if (reason === 'stale revision') {
+      local.lifecycleSpeedRevision = 6;
+    } else if (reason === 'nonmatching rate') {
+      local.lifecycleSpeed = 3;
+    } else if (reason === 'accepted only') {
+      delete local.lifecycleSpeed;
+      local.acceptedSpeed = 2.5;
+      local.acceptedSpeedRevision = 7;
+    } else {
+      manager.releaseMediaState(video);
+      if (reason === 'sibling state') {
+        const sibling = doc.createElement('video');
+        Object.assign(manager.getOrCreateMediaRateState(sibling), {
+          lifecycleSpeed: 2.5,
+          lifecycleSpeedRevision: 7,
+        });
+      }
+    }
+    const lookup = vi.spyOn(manager, 'getMediaRateState');
+    resolver.mockClear();
+    expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 2.5, 'init')).toBe(false);
+    expect(lookup).toHaveBeenCalledExactlyOnceWith(video);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(video.load).not.toHaveBeenCalled();
+    manager.cleanup();
+  });
+
+  it('does not let exact local authority bypass a failed same-source init', () => {
+    const { manager } = exactLocalAuthority();
+    controller.safariPlaybackFailedSource = HLS;
+    const lookup = vi.spyOn(manager, 'getMediaRateState');
+    resolver.mockClear();
+    expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 2.5, 'init')).toBe(false);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(resolver).not.toHaveBeenCalled();
+    manager.cleanup();
+  });
+
+  it.each(['pending', 'active'])(
+    'keeps %s suppression before local initialization authorization',
+    (reason) => {
+      const { manager } = exactLocalAuthority();
+      if (reason === 'pending') {
+        controller.safariPlaybackPending = { cleanup: vi.fn() };
+      } else {
+        controller.safariPlayback = { ownsSource: () => true, cleanup: vi.fn() };
+      }
+      const lookup = vi.spyOn(manager, 'getMediaRateState');
+      resolver.mockClear();
+      expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 2.5, 'init')).toBe(false);
+      expect(lookup).not.toHaveBeenCalled();
+      expect(resolver).not.toHaveBeenCalled();
+      manager.cleanup();
+    }
+  );
+
   it('settles the original site play promise before loading the saved-speed rendition', async () => {
     controller.config = { settings: { lastSpeed: 3 } };
     state.rate = 3;

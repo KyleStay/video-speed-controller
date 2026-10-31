@@ -116,7 +116,38 @@ window.VSC = window.VSC || {};
       : null;
   }
 
-  function nativeSafe(video, doc, originalUrl, identityOnly = false) {
+  function sourceChild(video, current) {
+    if (video.hasAttribute('src') || video.src || video.children.length > 32) {
+      return null;
+    }
+    const sources = Array.from(video.children).filter((child) => child.localName === 'source');
+    if (sources.length !== 1 || sources[0].src !== current) {
+      return null;
+    }
+    const node = sources[0];
+    return {
+      node,
+      attributes: ['src', 'type', 'media'].map((key) => node.getAttribute(key)),
+      properties: [node.src, node.type, node.media],
+    };
+  }
+
+  function assignedSourceCurrent(video, current, binding) {
+    if (!binding) {
+      return video.hasAttribute('src') && video.src === current;
+    }
+    const next = sourceChild(video, current);
+    return Boolean(
+      next &&
+      next.node === binding.node &&
+      next.node.parentNode === video &&
+      next.node.ownerDocument === video.ownerDocument &&
+      next.attributes.every((value, index) => value === binding.attributes[index]) &&
+      next.properties.every((value, index) => value === binding.properties[index])
+    );
+  }
+
+  function nativeSafe(video, doc, originalUrl, identityOnly = false, sourceBinding = null) {
     const page = new URL(doc.URL);
     const current = video.currentSrc || video.src;
     const blob = new URL(current);
@@ -130,8 +161,7 @@ window.VSC = window.VSC || {};
       blob.origin === page.origin &&
       blob.href === current &&
       (!originalUrl || originalUrl === current) &&
-      video.hasAttribute('src') &&
-      video.src === current &&
+      assignedSourceCurrent(video, current, sourceBinding) &&
       // Seeking the retained producer can temporarily drop decoded readiness.
       // Its loaded metadata and exact SDK/source identity still permit handback.
       video.readyState >= (identityOnly ? 1 : 2) &&
@@ -329,6 +359,7 @@ window.VSC = window.VSC || {};
           const variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
           const downloadAsset = asset(download, 'mp4');
+          const variantCount = own(variants, 'length');
           if (
             !modern ||
             ![modern, popped, supplied, media, info].every(clear) ||
@@ -342,14 +373,21 @@ window.VSC = window.VSC || {};
             downloadAsset.type !== sourceAsset.type ||
             own(media, 'video_download_url') !== download ||
             !Array.isArray(variants) ||
-            variants.length > 8
+            !Number.isSafeInteger(variantCount) ||
+            variantCount < 0 ||
+            variantCount > 8
           ) {
             return null;
           }
+          // Snapshot entries before their page-owned descriptors can mutate the
+          // array. Neither validation nor ranking may follow a growing length.
+          const variantEntries = [];
+          for (let variant = 0; variant < variantCount; variant++) {
+            variantEntries.push(own(variants, String(variant)));
+          }
           let matchedHls = false;
           let best;
-          for (let variant = 0; variant < variants.length; variant++) {
-            const item = own(variants, String(variant));
+          for (const item of variantEntries) {
             if (!clear(item)) {
               return null;
             }
@@ -388,7 +426,12 @@ window.VSC = window.VSC || {};
               best = ranked;
             }
           }
-          if (!matchedHls || !best || (result && result.sdk !== sdk)) {
+          if (
+            own(variants, 'length') !== variantCount ||
+            !matchedHls ||
+            !best ||
+            (result && result.sdk !== sdk)
+          ) {
             return null;
           }
           result = {
@@ -401,17 +444,78 @@ window.VSC = window.VSC || {};
         hook = own(hook, 'next');
       }
     }
-    return result || null;
+    return result;
   }
 
   window.VSC.TwitterPlayer = {
-    resolve(video, originParent) {
+    // undefined means no bound current SDK; null is an authoritative veto that
+    // callers must preserve before considering React or HTML alternatives.
+    findNativeHlsCandidate(video, originParent) {
       try {
         const doc = video?.ownerDocument;
-        if (!doc || !nativeSafe(video, doc)) {
+        const originalUrl = video?.currentSrc || video?.src;
+        const documentUrl = doc?.URL;
+        const root = doc?.documentElement;
+        if (
+          !doc ||
+          !asset(originalUrl, 'hls') ||
+          !window.VSC.EventManager.isTwitterHost(new URL(doc.URL).hostname)
+        ) {
+          return undefined;
+        }
+        const candidate = inspect(video, originParent);
+        if (!candidate) {
+          return candidate;
+        }
+        if (
+          video.localName !== 'video' ||
+          !video.isConnected ||
+          doc !== window.document ||
+          doc.URL !== documentUrl ||
+          doc.documentElement !== root ||
+          video.ownerDocument !== doc ||
+          (video.currentSrc || video.src) !== originalUrl ||
+          (video.hasAttribute('src')
+            ? video.src !== originalUrl
+            : video.children.length > 32 ||
+              !Array.from(video.children).some(
+                (child) => child.localName === 'source' && child.src === originalUrl
+              )) ||
+          video.readyState < 1 ||
+          !Number.isFinite(video.duration) ||
+          video.duration <= 0 ||
+          !Number.isFinite(video.currentTime) ||
+          video.srcObject ||
+          video.mediaKeys ||
+          video.webkitKeys ||
+          video.audioTracks?.length > 1 ||
+          video.videoTracks?.length > 1 ||
+          !window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(candidate.sourceUrl, originalUrl)
+        ) {
+          return null;
+        }
+        return {
+          originalUrl,
+          progressiveUrl: candidate.progressiveUrl,
+          mediaId: candidate.contentId,
+        };
+      } catch {
+        return null;
+      }
+    },
+    resolve(video, originParent, { allowSourceChild = false } = {}) {
+      try {
+        const doc = video?.ownerDocument;
+        if (!doc) {
           return null;
         }
         const originalUrl = video.currentSrc || video.src;
+        // Child-source MSE stays with the site except for explicit presentation.
+        // Retain the exact node and its representation throughout the session.
+        const sourceBinding = allowSourceChild ? sourceChild(video, originalUrl) : null;
+        if (!nativeSafe(video, doc, originalUrl, false, sourceBinding)) {
+          return null;
+        }
         const root = doc.documentElement;
         const documentUrl = doc.URL;
         const initial = inspect(video, originParent);
@@ -422,6 +526,7 @@ window.VSC = window.VSC || {};
         let companion;
         return {
           originalUrl,
+          sourceNode: sourceBinding?.node,
           progressiveUrl: initial.progressiveUrl,
           sourceUrl: initial.sourceUrl,
           contentId: initial.contentId,
@@ -454,7 +559,7 @@ window.VSC = window.VSC || {};
               if (
                 doc.documentElement !== root ||
                 doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl) ||
+                !nativeSafe(video, doc, originalUrl, false, sourceBinding) ||
                 initial.scope.getRootNode() !== scopeRoot
               ) {
                 return false;
@@ -490,7 +595,7 @@ window.VSC = window.VSC || {};
               if (
                 doc.documentElement !== root ||
                 doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl, true) ||
+                !nativeSafe(video, doc, originalUrl, true, sourceBinding) ||
                 initial.scope.getRootNode() !== scopeRoot ||
                 (companion && companion.ownerDocument !== doc)
               ) {

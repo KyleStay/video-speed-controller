@@ -54,7 +54,8 @@ advertising, analytics, or StayTech backend.
   Inline and fullscreen controls use borderless icons with accessible labels and
   full-size touch targets; speed and time remain visible. The original video stays in use. For eligible native HLS videos, speeds above 2× can select the
   site’s matching MP4 rendition to avoid Safari's choppy HLS fast playback,
-  preserving your position and play/pause state. Supported metadata includes
+  preserving your position and play/pause state. Saved speeds recheck eligible
+  renditions during playback startup. Supported metadata includes
   X/Twitter, HTML source alternatives, Video.js/Brightcove and JW Player. Labeled or populated caption
   tracks retain HLS; Safari’s empty caption placeholder may be dropped. See
   [Safari playback limits](docs/safari.md#playback-above-2).

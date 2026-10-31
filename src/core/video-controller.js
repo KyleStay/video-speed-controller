@@ -590,8 +590,8 @@ class VideoController {
    * @private
    */
   setupEventHandlers() {
-    const mediaEventAction = (event) => {
-      const local = this.actionHandler.eventManager?.getMediaRateState?.(event.target);
+    const mediaTarget = (media) => {
+      const local = this.actionHandler.eventManager?.getMediaRateState?.(media);
       const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
       const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
       const targetSpeed = Math.min(
@@ -604,6 +604,97 @@ class VideoController {
             : this.getTargetSpeed()
         )
       );
+      return { local, speedPreferenceRevision, targetSpeed };
+    };
+    const mediaEventAction = (event, hlsReadinessOnly = false) => {
+      const { local, speedPreferenceRevision, targetSpeed } = mediaTarget(event.target);
+      if (hlsReadinessOnly) {
+        try {
+          const video = event.target;
+          const doc = video.ownerDocument;
+          const source = video.currentSrc || video.src;
+          if (
+            this.disposed ||
+            video !== this.video ||
+            video.vsc !== this ||
+            video.localName !== 'video' ||
+            !video.isConnected ||
+            video.readyState < 2 ||
+            video.paused ||
+            video.ended ||
+            doc.visibilityState === 'hidden' ||
+            !Number.isFinite(video.duration) ||
+            video.duration <= 0 ||
+            video.srcObject ||
+            video.mediaKeys ||
+            video.webkitKeys ||
+            targetSpeed <= 2 ||
+            typeof source !== 'string' ||
+            source.length > 4096 ||
+            !/\.m3u8(?:[?#]|$)/i.test(source)
+          ) {
+            return;
+          }
+          const parsed = new URL(source, doc.baseURI);
+          if (!['https:', 'http:'].includes(parsed.protocol) || !/\.m3u8$/i.test(parsed.pathname)) {
+            return;
+          }
+          const now = doc.defaultView.performance.now();
+          let budget = this.hlsPlayingReadiness;
+          if (!budget || budget.source !== source || budget.document !== doc) {
+            budget = this.hlsPlayingReadiness = { source, document: doc, started: now, events: 0 };
+          }
+          if (budget.events >= 32 || now - budget.started >= 10000) {
+            return;
+          }
+          budget.events++;
+          if (
+            this.safariPlaybackPending ||
+            this.safariPlayback ||
+            this.safariPlaybackFailedSource === source
+          ) {
+            return;
+          }
+          const root = doc.documentElement,
+            url = doc.URL;
+          const src = video.getAttribute('src'),
+            poster = video.getAttribute('poster');
+          const srcObject = video.srcObject,
+            rate = video.playbackRate;
+          if (window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init')) {
+            const current = mediaTarget(video);
+            if (
+              this.disposed ||
+              video.vsc !== this ||
+              !video.isConnected ||
+              video.ownerDocument !== doc ||
+              doc.documentElement !== root ||
+              doc.URL !== url ||
+              doc.visibilityState === 'hidden' ||
+              video.paused ||
+              video.ended ||
+              video.readyState < 2 ||
+              !Number.isFinite(video.duration) ||
+              video.duration <= 0 ||
+              video.mediaKeys ||
+              video.webkitKeys ||
+              (video.currentSrc || video.src) !== source ||
+              video.srcObject !== srcObject ||
+              video.getAttribute('src') !== src ||
+              video.getAttribute('poster') !== poster ||
+              video.playbackRate !== rate ||
+              current.targetSpeed !== targetSpeed ||
+              current.speedPreferenceRevision !== speedPreferenceRevision
+            ) {
+              return;
+            }
+            this.actionHandler.adjustSpeed(video, targetSpeed, { source: 'init' });
+          }
+        } catch {
+          // Inaccessible page state retains the site's player and source.
+        }
+        return;
+      }
       // Resuming/seeking must not retry a source's refused request or renew
       // cooldown, dispatch synthetic events and flash an already-correct UI.
       try {
@@ -638,6 +729,20 @@ class VideoController {
 
     // Bind event handlers
     this.handlePlay = mediaEventAction.bind(this);
+    this.handlePlayingReadiness = (event) => {
+      try {
+        if (
+          !event.isTrusted ||
+          event.target !== this.video ||
+          !window.VSC.SafariHLSPlayback?.matches?.(this.video)
+        ) {
+          return;
+        }
+        mediaEventAction(event, true);
+      } catch {
+        /* A discarded media context retains its own source. */
+      }
+    };
     // Don't restore speed on seeked if the video hasn't loaded data yet —
     // the player may still be initializing.
     this.handleSeek = (event) => {
@@ -649,8 +754,10 @@ class VideoController {
 
     // Add essential event listeners for speed restoration
     this.video.addEventListener('play', this.handlePlay);
+    this.video.addEventListener('playing', this.handlePlayingReadiness);
     this.video.addEventListener('seeked', this.handleSeek);
     this.handleRateSourceReset = () => {
+      this.hlsPlayingReadiness = null;
       if (!this.safariPlayback?.ownsTransition()) {
         this.actionHandler.eventManager?.releaseMediaState?.(this.video);
       }
@@ -677,6 +784,20 @@ class VideoController {
    * @private
    */
   setupMutationObserver() {
+    this.handleSourceVisibility = () => {
+      if (this.disposed) {
+        return;
+      }
+      this.div.classList.toggle(
+        'vsc-nosource',
+        !this.video.src && !this.video.currentSrc && this.video.readyState < 2
+      );
+    };
+    // A <source> child can become playable without changing the video's src
+    // attribute. Reconcile readiness as well as explicit attribute writes.
+    for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+      this.video.addEventListener(event, this.handleSourceVisibility);
+    }
     this.targetObserver = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (
@@ -684,12 +805,7 @@ class VideoController {
           (mutation.attributeName === 'src' || mutation.attributeName === 'currentSrc')
         ) {
           window.VSC.logger.debug('Mutation of A/V element detected');
-          const controller = this.div;
-          if (!mutation.target.src && !mutation.target.currentSrc) {
-            controller.classList.add('vsc-nosource');
-          } else {
-            controller.classList.remove('vsc-nosource');
-          }
+          this.handleSourceVisibility();
         }
       });
     });
@@ -729,6 +845,11 @@ class VideoController {
     if (this.handlePlay) {
       this.video.removeEventListener('play', this.handlePlay);
     }
+    if (this.handlePlayingReadiness) {
+      this.video.removeEventListener('playing', this.handlePlayingReadiness);
+      this.handlePlayingReadiness = null;
+    }
+    this.hlsPlayingReadiness = null;
     if (this.handleSeek) {
       this.video.removeEventListener('seeked', this.handleSeek);
     }
@@ -755,6 +876,12 @@ class VideoController {
     }
 
     // Disconnect mutation observer
+    if (this.handleSourceVisibility) {
+      for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+        this.video.removeEventListener(event, this.handleSourceVisibility);
+      }
+      this.handleSourceVisibility = null;
+    }
     if (this.targetObserver) {
       this.targetObserver.disconnect();
     }

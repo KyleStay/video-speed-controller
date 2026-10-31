@@ -640,7 +640,10 @@ class ActionHandler {
 
     // A same-video format change resumes only in this command's call stack.
     // Its asynchronous callbacks never start playback or revive a stale source.
-    playbackTransition?.finish();
+    if (playbackTransition?.finish({ speedCommand: true }) === false) {
+      this.config.settings.lastSpeed = previousSpeed;
+      return false;
+    }
 
     // 5. Update UI indicator
     const speedIndicator = video.vsc?.speedIndicator;

@@ -45,6 +45,8 @@ describe('TwitterMediaSource', () => {
     video.src = originalUrl;
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   it('resolves the recorded children.props pair without altering media or fetching', () => {
     metadata({ children: { props: pair() } });
     const load = vi.spyOn(video, 'load');
@@ -95,6 +97,225 @@ describe('TwitterMediaSource', () => {
       ],
     });
     expect(find()?.progressiveUrl).toBe(variants[3].url);
+  });
+
+  function modernPlayer(bindSdk = true) {
+    // The current SDK's observed parent props are also recorded in
+    // twitter-player.test.js: its source/download pair and accessory variants
+    // describe the same media. This is separate from the older playerState slot.
+    const content = {
+      contentId: '2041611432752742400',
+      contentType: 'video',
+      sourceType: 'tweet',
+      sourceId: '2041611432752742401',
+      tweetId: '2041611432752742401',
+      durationMs: 20400,
+      mediaAssetUrl: originalUrl,
+    };
+    const variants = publicVariants().map((entry) => ({
+      ...entry,
+      url: entry.url === publicHls ? originalUrl : `${entry.url}?tag=21`,
+    }));
+    const props = {
+      downloadUrl: progressiveUrl,
+      poppedOutSource: {
+        hostKey: `${content.sourceId}:${content.contentId}`,
+        playerProps: { content, ...pair() },
+      },
+      timeRemainingAccessory: {
+        props: {
+          media: {
+            id_str: content.contentId,
+            video_download_url: progressiveUrl,
+            video_info: { duration_millis: content.durationMs, variants },
+          },
+        },
+      },
+    };
+    metadata({ children: [null, null, null, { props }] });
+    const state = {
+      content,
+      source: { kind: 'hls', src: originalUrl, playlistDurationSec: 20.4 },
+      session: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+      textTracks: { tracks: [] },
+      playback: { shouldLoop: true },
+    };
+    const api = {
+      getMediaElement: vi.fn(() => video),
+      getState: vi.fn(() => state),
+      seekTo: vi.fn(),
+    };
+    const store = { getSnapshot: vi.fn(() => state), subscribe: vi.fn(() => vi.fn()) };
+    const sdk = { controller: { api }, element: video, store, src: originalUrl };
+    const fiber = {
+      memoizedState: { memoizedState: sdk, next: null },
+      memoizedProps: { content, hostKey: props.poppedOutSource.hostKey, src: originalUrl },
+      return: { memoizedState: null, memoizedProps: props, return: null },
+    };
+    if (bindSdk) {
+      vi.spyOn(document, 'URL', 'get').mockReturnValue(
+        'https://x.com/example/status/2041611432752742401'
+      );
+      property(video, 'readyState', 4);
+      property(video, 'duration', 20.456);
+      property(parent, '__reactFiber$fixture', fiber);
+    }
+    return { props, variants, state, api, store, sdk, fiber };
+  }
+
+  it.each(['', '&variant_version=1'])(
+    'resolves the observed modern native-HLS source with suffix %j',
+    (suffix) => {
+      const actual = originalUrl + suffix;
+      property(video, 'currentSrc', actual);
+      video.src = actual;
+      const { variants } = modernPlayer();
+      const load = vi.spyOn(video, 'load');
+      const play = vi.spyOn(video, 'play');
+      expect(window.VSC.TwitterMediaSource.findPlayerStateCandidate(video)?.originalUrl).toBe(
+        actual
+      );
+      expect(find()).toEqual({
+        originalUrl: actual,
+        progressiveUrl: variants[3].url,
+        mediaId: '2041611432752742400',
+      });
+      expect(video.currentSrc).toBe(actual);
+      expect(video.src).toBe(actual);
+      expect(load).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not grant the modern suffix exception without a bound current SDK', () => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    modernPlayer(false);
+    expect(find()).toBeNull();
+  });
+
+  it.each([
+    '&variant_version=2',
+    '&variant_version=1&variant_version=1',
+    '&variant_version=1&audio=alternate',
+    '&variant_version=1&signature=other',
+  ])('retains modern native HLS for an unrecognized source suffix %s', (suffix) => {
+    const actual = originalUrl + suffix;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    modernPlayer();
+    expect(find()).toBeNull();
+  });
+
+  it('does not accept another asset through the modern native-HLS suffix route', () => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { props, variants } = modernPlayer();
+    props.downloadUrl = progressiveUrl.replace('2041611432752742400', '999');
+    props.poppedOutSource.playerProps.downloadUrl = props.downloadUrl;
+    props.timeRemainingAccessory.props.media.video_download_url = props.downloadUrl;
+    for (const variant of variants.slice(1)) {
+      variant.url = variant.url.replace('2041611432752742400', '999');
+    }
+    expect(find()).toBeNull();
+  });
+
+  it.each([
+    ['declared HLS', ({ props }) => (props.poppedOutSource.playerProps.src += '&other=1')],
+    [
+      'content HLS',
+      ({ props }) => (props.poppedOutSource.playerProps.content.mediaAssetUrl += '&other=1'),
+    ],
+    ['content ID', ({ props }) => (props.poppedOutSource.playerProps.content.contentId = '999')],
+    [
+      'accessory media ID',
+      ({ props }) => (props.timeRemainingAccessory.props.media.id_str = '999'),
+    ],
+    [
+      'supplied download',
+      ({ props }) => (props.poppedOutSource.playerProps.downloadUrl += '&other=1'),
+    ],
+    [
+      'accessory download',
+      ({ props }) => (props.timeRemainingAccessory.props.media.video_download_url += '&other=1'),
+    ],
+    ['missing HLS variant', ({ variants }) => variants.shift()],
+    [
+      'mixed MP4 assets',
+      ({ variants }) => (variants[1].url = variants[1].url.replace('2041611432752742400', '999')),
+    ],
+    ['modern captions', ({ props }) => (props.hasCaptions = true)],
+    [
+      'content protection',
+      ({ props }) => (props.poppedOutSource.playerProps.content.keySystems = {}),
+    ],
+    ['accessory live', ({ props }) => (props.timeRemainingAccessory.props.media.live = true)],
+    ['variant protection', ({ variants }) => (variants[1].encrypted = true)],
+  ])('retains modern native HLS for %s', (_name, change) => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    change(modernPlayer());
+    expect(find()).toBeNull();
+  });
+
+  it.each(['poppedOutSource', 'hasCaptions'])('does not evaluate a modern %s accessor', (key) => {
+    const actual = `${originalUrl}&variant_version=1`;
+    property(video, 'currentSrc', actual);
+    video.src = actual;
+    const { props } = modernPlayer();
+    const getter = vi.fn(() => {
+      throw new Error('Page metadata getter');
+    });
+    Object.defineProperty(props, key, { get: getter });
+    expect(find()).toBeNull();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it.each(['captions', 'protection'])(
+    'does not bypass an authoritative SDK %s veto through modern suffix metadata',
+    (veto) => {
+      const actual = `${originalUrl}&variant_version=1`;
+      property(video, 'currentSrc', actual);
+      video.src = actual;
+      const { props } = modernPlayer();
+      const { state } = playerState(
+        veto === 'captions' ? { hasCaptions: true } : {},
+        veto === 'protection' ? { keySystems: { protected: true } } : {}
+      );
+      metadata({ children: [null, { props: { playerState: state } }, null, { props }] });
+      expect(find()).toBeNull();
+    }
+  );
+
+  it.each([
+    ['SDK captions', ({ state }) => (state.hasCaptions = true)],
+    ['SDK text tracks', ({ state }) => state.textTracks.tracks.push({ kind: 'captions' })],
+    ['SDK protection', ({ sdk }) => (sdk.keySystems = {})],
+    ['SDK live source', ({ state }) => (state.source.live = true)],
+    [
+      'SDK media identity',
+      ({ api }) => api.getMediaElement.mockReturnValue(document.createElement('video')),
+    ],
+    ['SDK session identity', ({ state }) => (state.session.id = 'invalid')],
+    ['SDK source identity', ({ state }) => (state.source.src += '&other=1')],
+  ])('does not bypass modern %s through clear React or HTML fallback', (_name, change) => {
+    const fixture = modernPlayer();
+    change(fixture);
+    // Exact active URLs ensure fallback would succeed if the SDK veto were lost.
+    for (const [src, type] of [
+      [originalUrl, 'application/x-mpegURL'],
+      [progressiveUrl, 'video/mp4'],
+    ]) {
+      const source = document.createElement('source');
+      source.src = src;
+      source.type = type;
+      video.append(source);
+    }
+    expect(find()).toBeNull();
+    expect(window.VSC.ProgressiveMediaSource.findCandidate(video)).toBeNull();
   });
 
   function playerState(overrides = {}, trackOverrides = {}) {

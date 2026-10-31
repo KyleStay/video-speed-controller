@@ -6,6 +6,7 @@ window.VSC = window.VSC || {};
   const players = new WeakMap();
   const active = new Set();
   const failed = new WeakMap();
+  const recoveryRequests = new WeakMap();
   const identityKeys = [
     'originalUrl',
     'sourceUrl',
@@ -48,7 +49,8 @@ window.VSC = window.VSC || {};
     }
     const candidate = window.VSC.TwitterPlayer?.resolve(
       controller.video,
-      controller.iosPlayer?.active ? controller.iosPlayer.originParent : null
+      controller.iosPlayer?.active ? controller.iosPlayer.originParent : null,
+      { allowSourceChild: source === 'presentation' }
     );
     const previous = failed.get(controller.video);
     return source === 'init' &&
@@ -75,6 +77,7 @@ window.VSC = window.VSC || {};
           ? (localRate.lifecycleSpeedRevision ?? controller.config.speedPreferenceRevision ?? 0)
           : (controller.config.speedPreferenceRevision ?? 0);
       this.time = this.original.currentTime;
+      this.originalRate = this.original.playbackRate;
       this.playing = !this.original.paused && !this.original.ended;
       this.video = this.doc.createElement('video');
       this.listeners = [];
@@ -84,6 +87,8 @@ window.VSC = window.VSC || {};
       this.committing = false;
       this.finished = false;
       this.ready = false;
+      this.playReady = false;
+      this.playGeneration = 0;
       this.originalPlay = this.original.play;
       this.originalPause = this.original.pause;
     }
@@ -171,11 +176,21 @@ window.VSC = window.VSC || {};
       video.volume = this.original.volume;
       video.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;';
       const yieldToSite = () => this.cleanup({ resume: false });
-      this.observer = new this.view.MutationObserver(yieldToSite);
+      this.observer = new this.view.MutationObserver(() => {
+        this.originalIntentChanged = true;
+        yieldToSite();
+      });
       this.observer.observe(this.original, {
         attributes: true,
         attributeFilter: ['src', 'poster'],
+        childList: Boolean(this.candidate.sourceNode),
       });
+      if (this.candidate.sourceNode) {
+        this.observer.observe(this.candidate.sourceNode, {
+          attributes: true,
+          attributeFilter: ['src', 'type', 'media'],
+        });
+      }
       const unsubscribe = this.candidate.subscribe(() => {
         if (!this.originCurrent()) {
           this.cleanup({ resume: this.identityCurrent() });
@@ -206,7 +221,16 @@ window.VSC = window.VSC || {};
             return originalMethod.apply(this, args);
           }
           session.playing = name === 'play';
-          return session.video[name](...args);
+          if (name === 'play') {
+            return session.requestPlay(args);
+          }
+          session.playGeneration++;
+          session.playReady = true;
+          const result = session.video.pause(...args);
+          if (session.ready && session.finished) {
+            session.commit();
+          }
+          return result;
         };
         this.methods.set(name, { descriptor, wrapper });
         Object.defineProperty(this.original, name, {
@@ -267,39 +291,84 @@ window.VSC = window.VSC || {};
       });
     }
 
-    finish() {
-      if (this.closed || this.finished) {
-        return;
+    finish({ speedCommand = false } = {}) {
+      if (this.closed) {
+        return false;
+      }
+      // Reopening presentation is not another speed write. Keep a newer site
+      // rate distinguishable from the command we may need to roll back.
+      if (!this.finished || speedCommand) {
+        try {
+          this.appliedOriginalRate = this.original.playbackRate;
+        } catch {
+          this.abort();
+          return false;
+        }
+      }
+      if (this.finished) {
+        return true;
       }
       this.finished = true;
       if (!this.current()) {
         this.cleanup({ resume: false });
-        return;
+        return false;
       }
       // Both pause and the new play request occur in the speed command's
       // stack. Metadata callbacks only attach presentation; they never play.
       this.originalPause.call(this.original);
       if (!this.current()) {
         this.cleanup({ resume: this.identityCurrent() });
-        return;
+        return false;
       }
       if (this.playing) {
-        this.video.play()?.then(
-          () => {
-            if (this.closed) {
-              this.video.pause();
-            }
-          },
-          () => this.abort()
-        );
+        this.requestPlay();
+      } else {
+        this.playReady = true;
       }
       if (this.ready) {
         this.commit();
       }
+      return !this.closed;
+    }
+
+    requestPlay(args = []) {
+      const generation = ++this.playGeneration;
+      this.playReady = false;
+      const accepted = () => {
+        if (this.closed) {
+          try {
+            this.video.pause();
+          } catch {
+            /* A late Play cannot revive a released companion. */
+          }
+        } else if (generation === this.playGeneration && this.current()) {
+          this.playReady = true;
+          if (this.ready && this.finished) {
+            this.commit();
+          }
+        }
+      };
+      const rejected = (error) => {
+        if (!this.closed && generation === this.playGeneration) {
+          window.VSC.logger?.debug?.(`X companion Play rejected: ${error?.name || 'Error'}`);
+          this.abort();
+        }
+      };
+      try {
+        const result = this.video.play(...args);
+        if (typeof result?.then === 'function') {
+          result.then(accepted, rejected);
+        } else {
+          accepted();
+        }
+        return result;
+      } catch (error) {
+        rejected(error);
+      }
     }
 
     commit() {
-      if (this.closed || this.committed || !this.current()) {
+      if (this.closed || this.committed || !this.playReady || !this.current()) {
         return;
       }
       try {
@@ -380,7 +449,7 @@ window.VSC = window.VSC || {};
         return;
       }
       suppressAutomatic(this);
-      this.cleanup();
+      this.cleanup({ failed: true });
       try {
         if (this.presentation && this.candidate.identityCurrent?.()) {
           const player = this.original.vsc?.iosPlayer;
@@ -394,11 +463,19 @@ window.VSC = window.VSC || {};
       }
     }
 
-    cleanup({ resume = true, reinitialize = true, site = false, playing: priorPlaying } = {}) {
+    cleanup({
+      resume = true,
+      reinitialize = true,
+      site = false,
+      playing: priorPlaying,
+      failed = false,
+    } = {}) {
       if (this.closed) {
         return;
       }
-      let preferenceRevision = this.rateRevision;
+      let preferenceRevision = failed
+        ? (this.controller.config.speedPreferenceRevision ?? 0)
+        : this.rateRevision;
       const sameProducer = this.identityCurrent();
       let current = sameProducer && this.ownsNativeSource();
       // A handback is final for automatic initialization on this clip. A later
@@ -412,7 +489,11 @@ window.VSC = window.VSC || {};
         playing =
           this.finished && (priorPlaying ?? (this.committed ? !this.video.paused : this.playing));
         // load() resets the decoder's rate; snapshot playback before disposal.
-        rate = this.video.playbackRate;
+        rate = failed
+          ? this.original.playbackRate === this.appliedOriginalRate
+            ? this.originalRate
+            : this.original.playbackRate
+          : this.video.playbackRate;
         const localRate = this.controller.actionHandler.eventManager?.getMediaRateState?.(
           this.video
         );
@@ -433,7 +514,6 @@ window.VSC = window.VSC || {};
       players.delete(this.video);
       for (const release of [
         () => this.view.clearTimeout(this.deadline),
-        () => this.observer?.disconnect(),
         () => this.nativeObserver?.disconnect(),
       ]) {
         try {
@@ -496,9 +576,16 @@ window.VSC = window.VSC || {};
       // The original source was never replaced or loaded. Revalidate after
       // reentrant controller teardown before seeking/resuming that producer.
       try {
-        const stillSame = () =>
-          (this.candidate.identityCurrent?.() ?? this.candidate.current()) &&
-          this.original.isConnected;
+        const stillSame = () => {
+          if (this.observer?.takeRecords().length) {
+            this.originalIntentChanged = true;
+          }
+          return (
+            !this.originalIntentChanged &&
+            (this.candidate.identityCurrent?.() ?? this.candidate.current()) &&
+            this.original.isConnected
+          );
+        };
         const sameOrigin = sameProducer && stillSame();
         if (sameOrigin && current && resume) {
           try {
@@ -511,6 +598,15 @@ window.VSC = window.VSC || {};
           } catch {
             /* Restore the interface even when a page transport method fails. */
           }
+          if (failed) {
+            const state = this.controller.actionHandler.eventManager?.getOrCreateMediaRateState?.(
+              this.original
+            );
+            if (state) {
+              state.lifecycleSpeed = state.acceptedSpeed = this.original.playbackRate;
+              state.lifecycleSpeedRevision = state.acceptedSpeedRevision = preferenceRevision;
+            }
+          }
         }
         if (sameOrigin && current && resume && playing && !this.doc.hidden && stillSame()) {
           const state = this.controller.actionHandler.eventManager?.getOrCreateMediaRateState?.(
@@ -521,7 +617,35 @@ window.VSC = window.VSC || {};
             state.lifecycleSpeedRevision = state.acceptedSpeedRevision = preferenceRevision;
           }
           try {
-            this.originalPlay.call(this.original)?.catch?.(() => {});
+            const request = {};
+            recoveryRequests.set(this.original, request);
+            const reportFailure = (error) => {
+              if (
+                error?.name !== 'AbortError' &&
+                recoveryRequests.get(this.original) === request &&
+                this.original.paused &&
+                stillSame() &&
+                this.original.ownerDocument === this.doc &&
+                this.doc.documentElement === this.root &&
+                this.doc.URL === this.url
+              ) {
+                this.original.vsc?.controlsManager?.inlinePlayer?.error(
+                  'Playback could not start.'
+                );
+              }
+              if (recoveryRequests.get(this.original) === request) {
+                recoveryRequests.delete(this.original);
+              }
+            };
+            try {
+              this.originalPlay.call(this.original)?.then?.(() => {
+                if (recoveryRequests.get(this.original) === request) {
+                  recoveryRequests.delete(this.original);
+                }
+              }, reportFailure);
+            } catch (error) {
+              reportFailure(error);
+            }
           } catch {
             /* A refused resume must not strand the original interface. */
           }
@@ -550,8 +674,20 @@ window.VSC = window.VSC || {};
             initialSpeed,
           });
         }
+        if (failed && sameOrigin && current && resume && stillSame()) {
+          const shadow = this.original.vsc?.div?.shadowRoot;
+          if (shadow) {
+            window.VSC.ShadowDOMManager.updateSpeedDisplay(shadow, this.original.playbackRate);
+          }
+        }
       } catch {
         /* A replaced/detached page player retains its latest intent. */
+      } finally {
+        try {
+          this.observer?.disconnect();
+        } catch {
+          /* Release the original observer after reentrant handback checks. */
+        }
       }
     }
   }
@@ -599,7 +735,7 @@ window.VSC = window.VSC || {};
         if (options.play) {
           session.playing = true;
           if (session.finished) {
-            session.video.play()?.catch?.(() => session.abort());
+            session.requestPlay();
           }
         }
         session.finish();
@@ -611,6 +747,7 @@ window.VSC = window.VSC || {};
     },
     isRetained: (video) => originals.get(video)?.committed === true,
     controllerRemoved(video) {
+      recoveryRequests.delete(video);
       const original = originals.get(video);
       if (original && !original.committing) {
         original.cleanup({ resume: false, reinitialize: false });
@@ -646,6 +783,9 @@ window.VSC = window.VSC || {};
     begin(controller, rate, source = 'internal') {
       let session;
       try {
+        if (controller?.video) {
+          recoveryRequests.delete(controller.video);
+        }
         if (!controller || players.has(controller.video) || source === 'external') {
           return null;
         }

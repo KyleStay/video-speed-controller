@@ -139,6 +139,9 @@ with direct `chrome.*` access.
     real fps while the video plays, snaps to a common rate, caches it on
     `controller.detectedFps`, then stops (zero steady-state cost). Frame-step
     uses `detectedFps`, falling back to the binding's configurable fps value.
+    Reconcile source visibility on `loadeddata`, `loadstart` and `emptied`:
+    a child `<source>` can become ready without a video `src` attribute mutation.
+    Removal releases these listeners with the source observer.
   - `safari-hls-playback.js` — bounded, same-video HLS→MP4 transitions for
     iOS native-HLS playback above 2×. `progressive-media-source.js` resolves same-item
     HTML alternatives and recognized Video.js/Brightcove/JW Player metadata;
@@ -156,6 +159,13 @@ with direct `chrome.*` access.
     captions, DRM, live and ambiguity veto takeover. Handback seeks/resumes the
     unchanged original only while that identity and companion source remain
     owned. Metadata callbacks attach presentation, never request Play.
+    Explicit presentation may bind one direct `<source>` child, retaining its
+    node and `src`/`type`/`media` identity. Any source write ends that ownership.
+    Automatic blob/MSE takeover still requires the video's `src` attribute.
+    Playing handoffs commit only after their synchronous Play request succeeds;
+    pending Play/Pause generations prevent stale settlement from taking over.
+    Failed handoffs restore the original local rate and interface while retaining
+    the saved preference; recovery errors belong only to the current request.
     Intercept X blob presentation before any original-node portal; unsupported
     streams stay inline with an explicit Use site player escape. Pending entry
     honors presentation revisions, visibility and cancellation. Preserve accepted
@@ -447,7 +457,12 @@ with direct `chrome.*` access.
   issuing that command. It never starts paused media; cleanup/input/source/hidden
   state cancels the pending observer, listeners and ten-second deadline.
   Saved/session speeds also apply to subsequent feed clips; a failed
-  source is not retried by initialization. Site changes always win. Teardown
+  source is not retried by initialization. Trusted native `playing` events
+  reconsider initial HLS eligibility at the current rate authority, bounded to
+  32 events/ten seconds per source. Revalidate source/document/root, preferences
+  and playing intent after resolver calls; unknown captions still veto takeover.
+  Source lifecycle resets the budget; removal releases the listener. This adds
+  no polling or readiness timers. Site changes always win. Teardown
   restores the original source only while still owned; Use site player retains
   the chosen rendition without another reload. A synchronous same-document portal move
   preserves known single-video player containers when possible; an anchor and

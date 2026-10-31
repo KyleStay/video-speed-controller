@@ -17,11 +17,14 @@ describe('X retained MediaSource MP4 playback', () => {
     return state.get(video);
   };
   const begin = (rate = 4, source = 'internal') => api().begin(controller, rate, source);
-  const loaded = (session) => session.video.dispatchEvent(new Event('loadeddata'));
-  const commit = () => {
+  const loaded = async (session) => {
+    session.video.dispatchEvent(new Event('loadeddata'));
+    await Promise.resolve();
+  };
+  const commit = async () => {
     const session = begin();
     session.finish();
-    loaded(session);
+    await loaded(session);
     return session;
   };
   const attachedPlayer = ({ realClose = false } = {}) => {
@@ -64,6 +67,8 @@ describe('X retained MediaSource MP4 playback', () => {
   };
 
   beforeEach(() => {
+    // Stop the real loader observer; this suite owns its mock controllers.
+    window.VSC_controller?.mutationObserver?.stop();
     vi.useFakeTimers();
     uiPlayers = [];
     presentationRevision = window.VSC.IOSPlayer.presentationRevision;
@@ -103,13 +108,13 @@ describe('X retained MediaSource MP4 playback', () => {
     original.volume = 0.4;
     Object.defineProperty(original, 'currentSrc', { configurable: true, get: () => original.src });
     Object.defineProperty(original, 'srcObject', { configurable: true, writable: true, value: {} });
-    originalPlay = vi.fn(() => {
-      mediaState(original).paused = false;
+    originalPlay = vi.fn(function () {
+      mediaState(this).paused = false;
       return Promise.resolve();
     });
     original.play = originalPlay;
-    original.pause = vi.fn(() => {
-      mediaState(original).paused = true;
+    original.pause = vi.fn(function () {
+      mediaState(this).paused = true;
     });
     original.load = vi.fn();
     mediaState(original).paused = false;
@@ -120,10 +125,12 @@ describe('X retained MediaSource MP4 playback', () => {
       config: { settings: { enabled: true } },
       actionHandler: {},
       iosPlayer: { active: false },
-      remove: vi.fn(() => {
-        controller.disposed = true;
-        delete original.vsc;
-        api().controllerRemoved(original);
+      remove: vi.fn(function () {
+        this.disposed = true;
+        if (this.video.vsc === this) {
+          delete this.video.vsc;
+        }
+        api().controllerRemoved(this.video);
       }),
     };
     original.vsc = controller;
@@ -186,6 +193,156 @@ describe('X retained MediaSource MP4 playback', () => {
     document.body.replaceChildren();
   });
 
+  describe('presentation-only source-child binding', () => {
+    let source;
+
+    beforeEach(() => {
+      original.removeAttribute('src');
+      source = document.createElement('source');
+      source.src = MSE;
+      source.type = 'video/mp4';
+      original.append(source);
+      Object.defineProperty(original, 'currentSrc', { configurable: true, get: () => MSE });
+      candidate.sourceNode = source;
+      candidate.current.mockImplementation(() => source.parentNode === original);
+      candidate.identityCurrent.mockImplementation(() => source.parentNode === original);
+      window.VSC.TwitterPlayer.resolve.mockImplementation((_video, _parent, options) =>
+        options?.allowSourceChild ? candidate : null
+      );
+    });
+
+    it('allows explicit presentation while leaving init and ordinary speed commands with the site', async () => {
+      expect(api().canBegin(controller, 4)).toBe(false);
+      expect(begin(4, 'init')).toBeNull();
+      expect(begin(4)).toBeNull();
+      expect(api().open(controller, { automatic: true })).toBe(false);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(api().open(controller)).toBe(true);
+      const session = api().getPending(original);
+      expect(window.VSC.TwitterPlayer.resolve).toHaveBeenLastCalledWith(original, null, {
+        allowSourceChild: true,
+      });
+      expect(original.hasAttribute('src')).toBe(false);
+      expect(original.firstElementChild).toBe(source);
+      expect(source.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+      await loaded(session);
+      expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      session.video.currentTime = 18;
+      session.cleanup();
+      expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(18);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.firstElementChild).toBe(source);
+      expect(source.src).toBe(MSE);
+      expectReleased(session);
+    });
+
+    it.each(['replacement', 'remove-reinsert', 'duplicate', 'src', 'type', 'media', 'video-src'])(
+      'does not resume after an intervening %s write even when the representation is restored',
+      async (kind) => {
+        const session = begin(4, 'presentation');
+        session.finish();
+        await loaded(session);
+        if (kind === 'replacement') {
+          source.replaceWith(source.cloneNode());
+        } else if (kind === 'remove-reinsert') {
+          source.remove();
+          original.append(source);
+        } else if (kind === 'duplicate') {
+          const duplicate = source.cloneNode();
+          original.append(duplicate);
+          duplicate.remove();
+        } else if (kind === 'video-src') {
+          original.src = MSE;
+          original.removeAttribute('src');
+        } else {
+          const initial = source.getAttribute(kind);
+          source.setAttribute(kind, kind === 'src' ? 'blob:https://x.com/other' : 'other');
+          if (initial === null) {
+            source.removeAttribute(kind);
+          } else {
+            source.setAttribute(kind, initial);
+          }
+        }
+        // Consume pending records synchronously, before observer delivery.
+        session.cleanup();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
+        expectReleased(session);
+      }
+    );
+
+    it('cancels from a selected-child mutation delivered before metadata', async () => {
+      const session = begin(4, 'presentation');
+      session.finish();
+      source.type = 'video/webm';
+      source.type = 'video/mp4';
+      await Promise.resolve();
+      await loaded(session);
+      expect(companionCtor).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(session.originalIntentChanged).toBe(true);
+      expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
+      expectReleased(session);
+    });
+
+    it('detects a transient source write during subscription before starting playback', () => {
+      candidate.subscribe.mockImplementationOnce(() => {
+        source.media = 'other';
+        source.removeAttribute('media');
+        return unsubscribe;
+      });
+      const session = begin(4, 'presentation');
+      expect(session).toBeNull();
+      expect(original.pause).not.toHaveBeenCalled();
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('detects restored child writes from reentrant companion teardown before handback', async () => {
+      const session = begin(4, 'presentation');
+      session.finish();
+      await loaded(session);
+      session.video.vsc.remove.mockImplementationOnce(() => {
+        source.type = 'video/webm';
+        source.type = 'video/mp4';
+      });
+      session.cleanup();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expectReleased(session);
+    });
+
+    it('disconnects the bounded child observer and releases it after handback', async () => {
+      const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+      const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+      const session = begin(4, 'presentation');
+      const observer = session.observer;
+      expect(observe).toHaveBeenCalledWith(original, {
+        attributes: true,
+        attributeFilter: ['src', 'poster'],
+        childList: true,
+      });
+      expect(observe).toHaveBeenCalledWith(source, {
+        attributes: true,
+        attributeFilter: ['src', 'type', 'media'],
+      });
+      session.finish();
+      await loaded(session);
+      session.cleanup();
+      expect(disconnect.mock.instances).toContain(observer);
+      source.type = 'video/webm';
+      await Promise.resolve();
+      expect(observer.takeRecords()).toEqual([]);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expectReleased(session);
+    });
+  });
+
   it('keeps one pending probe for repeated fast speeds and cancels at 2×', () => {
     const session = begin(3);
     expect(session).toBeTruthy();
@@ -222,24 +379,24 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('requests companion Play in the speed command, never from loadeddata', () => {
+  it('requests companion Play in the speed command, never from loadeddata', async () => {
     const session = begin();
-    loaded(session);
+    await loaded(session);
     expect(nativePlay).not.toHaveBeenCalled();
     session.finish();
     expect(nativePlay).toHaveBeenCalledOnce();
     expect(nativePlay.mock.instances[0]).toBe(session.video);
-    loaded(session);
+    await loaded(session);
     session.finish();
     expect(nativePlay).toHaveBeenCalledOnce();
     expect(controller.remove).toHaveBeenCalledOnce();
     expect(api().isRetained(original)).toBe(true);
   });
 
-  it('commits separate controls without unloading or replacing original MSE identity', () => {
+  it('commits separate controls without unloading or replacing original MSE identity', async () => {
     const sourceObject = original.srcObject;
     const sourceWrite = vi.spyOn(original, 'setAttribute');
-    const session = commit();
+    const session = await commit();
     expect(original.isConnected).toBe(true);
     expect(original.src).toBe(MSE);
     expect(original.srcObject).toBe(sourceObject);
@@ -261,9 +418,9 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(session.video.playbackRate).toBe(6);
   });
 
-  it('never autoplays an originally paused clip', () => {
+  it('never autoplays an originally paused clip', async () => {
     mediaState(original).paused = true;
-    const session = commit();
+    const session = await commit();
     expect(nativePlay).not.toHaveBeenCalled();
     expect(session.video.paused).toBe(true);
     session.cleanup();
@@ -295,8 +452,8 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('forwards explicit site Play and Pause to the companion while retaining original media', () => {
-    const session = commit();
+  it('forwards explicit site Play and Pause to the companion while retaining original media', async () => {
+    const session = await commit();
     nativePlay.mockClear();
     nativePause.mockClear();
     original.pause();
@@ -309,8 +466,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(original.src).toBe(MSE);
   });
 
-  it('restores time, accepted rate and controls on Use site player without native source mutation', () => {
-    const session = commit();
+  it('restores time, accepted rate and controls on Use site player without native source mutation', async () => {
+    const session = await commit();
     session.video.currentTime = 18.25;
     session.video.playbackRate = 3;
     session.cleanup({ site: true });
@@ -329,7 +486,7 @@ describe('X retained MediaSource MP4 playback', () => {
   it.each(['source', 'subscription', 'encrypted', 'pagehide', 'seek', 'captured-play'])(
     'hands back safely on %s changes',
     async (kind) => {
-      const session = commit();
+      const session = await commit();
       if (kind === 'source') {
         original.src = 'blob:https://x.com/replacement';
       }
@@ -349,7 +506,7 @@ describe('X retained MediaSource MP4 playback', () => {
         original.dispatchEvent(new Event('seeking'));
       }
       if (kind === 'captured-play') {
-        originalPlay();
+        originalPlay.call(original);
         original.dispatchEvent(new Event('playing'));
         originalPlay.mockClear();
       }
@@ -361,22 +518,22 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('ignores an original playing event queued before the pause', () => {
-    const session = commit();
+  it('ignores an original playing event queued before the pause', async () => {
+    const session = await commit();
     original.dispatchEvent(new Event('playing'));
     expect(api().get(session.video)).toBe(session);
     expect(original.paused).toBe(true);
   });
 
-  it('does not let companion speed commands recursively create another probe', () => {
-    const session = commit();
+  it('does not let companion speed commands recursively create another probe', async () => {
+    const session = await commit();
     expect(api().begin(session.video.vsc, 8, 'internal')).toBeNull();
     expect(window.VSC.TwitterPlayer.resolve).toHaveBeenCalledOnce();
     expect(document.querySelectorAll('video')).toHaveLength(2);
   });
 
-  it('retains ownership on a subscription update that still identifies the same clip', () => {
-    const session = commit();
+  it('retains ownership on a subscription update that still identifies the same clip', async () => {
+    const session = await commit();
     notify();
     expect(api().get(session.video)).toBe(session);
     expect(unsubscribe).not.toHaveBeenCalled();
@@ -384,10 +541,10 @@ describe('X retained MediaSource MP4 playback', () => {
 
   it.each(['subscription', 'track-add', 'track-change', 'encrypted'])(
     'preserves same-clip progress and playing intent on a %s capability veto',
-    (kind) => {
+    async (kind) => {
       const tracks = new EventTarget();
       Object.defineProperty(original, 'textTracks', { configurable: true, value: tracks });
-      const session = commit();
+      const session = await commit();
       session.video.currentTime = 31.75;
       candidate.current.mockReturnValue(false);
       if (kind === 'subscription') {
@@ -407,8 +564,8 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('immediately hands back a same-clip encrypted event before MediaKeys appears', () => {
-    const session = commit();
+  it('immediately hands back a same-clip encrypted event before MediaKeys appears', async () => {
+    const session = await commit();
     session.video.currentTime = 26;
     expect(candidate.current()).toBe(true);
     original.dispatchEvent(new Event('encrypted'));
@@ -417,8 +574,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('keeps a paused clip paused when captions force same-clip handback', () => {
-    const session = commit();
+  it('keeps a paused clip paused when captions force same-clip handback', async () => {
+    const session = await commit();
     session.video.pause();
     session.video.currentTime = 22;
     candidate.current.mockReturnValue(false);
@@ -429,8 +586,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it.each([true, false])('honors a fullscreen-close playing snapshot of %s', (playing) => {
-    const session = commit();
+  it.each([true, false])('honors a fullscreen-close playing snapshot of %s', async (playing) => {
+    const session = await commit();
     session.video.currentTime = 17;
     session.video.pause();
     session.cleanup({ site: true, playing });
@@ -440,8 +597,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('does not let an explicit playing snapshot resume a newer original source', () => {
-    const session = commit();
+  it('does not let an explicit playing snapshot resume a newer original source', async () => {
+    const session = await commit();
     original.src = 'blob:https://x.com/new-item';
     session.cleanup({ site: true, playing: true });
     expect(candidate.api.seekTo).not.toHaveBeenCalled();
@@ -519,8 +676,8 @@ describe('X retained MediaSource MP4 playback', () => {
 
   it.each(['captured-play', 'companion-removal'])(
     'does not automatically recapture a clip during reentrant %s handback',
-    (kind) => {
-      const session = commit();
+    async (kind) => {
+      const session = await commit();
       let replacement;
       let automatic;
       const eligible = [];
@@ -540,7 +697,7 @@ describe('X retained MediaSource MP4 playback', () => {
         }
       });
       if (kind === 'captured-play') {
-        originalPlay();
+        originalPlay.call(original);
         original.dispatchEvent(new Event('playing'));
       } else {
         session.video.remove();
@@ -587,7 +744,7 @@ describe('X retained MediaSource MP4 playback', () => {
   it.each(['src', 'currentSrc', 'srcObject', 'mediaKeys', 'webkitKeys', 'throwing-currentSrc'])(
     'restores only original controls when the companion loses %s ownership',
     async (kind) => {
-      const session = commit();
+      const session = await commit();
       session.video.currentTime = 99;
       if (kind === 'src') {
         session.video.src = 'https://video.twimg.com/ext_tw_video/999/pu/vid/other.mp4';
@@ -616,35 +773,35 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it.each(['', MP4])('accepts an owned companion currentSrc of %s', (currentSrc) => {
-    const session = commit();
+  it.each(['', MP4])('accepts an owned companion currentSrc of %s', async (currentSrc) => {
+    const session = await commit();
     Object.defineProperty(session.video, 'currentSrc', { configurable: true, value: currentSrc });
     session.video.dispatchEvent(new Event('loadstart'));
     expect(api().get(session.video)).toBe(session);
     expect(unsubscribe).not.toHaveBeenCalled();
   });
 
-  it('cleans up and restores original controls when companion construction fails', () => {
+  it('cleans up and restores original controls when companion construction fails', async () => {
     companionCtor.mockImplementationOnce(() => {
       throw new Error('Page player changed');
     });
-    const session = commit();
+    const session = await commit();
     expect(window.VSC_controller.onVideoFound).toHaveBeenCalledOnce();
     expect(originalPlay).toHaveBeenCalledOnce();
     expectReleased(session);
   });
 
-  it('cancels original removal while pending but retains it during UI transfer', () => {
+  it('cancels original removal while pending but retains it during UI transfer', async () => {
     const session = begin();
     api().controllerRemoved(original);
-    loaded(session);
+    await loaded(session);
     session.finish();
     expect(companionCtor).not.toHaveBeenCalled();
     expectReleased(session);
   });
 
-  it('releases companion removal exactly once and clears listeners and subscriptions', () => {
-    const session = commit();
+  it('releases companion removal exactly once and clears listeners and subscriptions', async () => {
+    const session = await commit();
     api().controllerRemoved(session.video);
     api().controllerRemoved(session.video);
     session.video.dispatchEvent(new Event('error'));
@@ -652,8 +809,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('releases a removed original even after its controller was transferred', () => {
-    const session = commit();
+  it('releases a removed original even after its controller was transferred', async () => {
+    const session = await commit();
     expect(original.vsc).toBeUndefined();
     original.remove();
     api().mediaRemoved(original);
@@ -663,8 +820,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('hands back to the retained original when only the companion is removed', () => {
-    const session = commit();
+  it('hands back to the retained original when only the companion is removed', async () => {
+    const session = await commit();
     session.video.currentTime = 24;
     session.video.remove();
     api().mediaRemoved(session.video);
@@ -676,8 +833,8 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('does not dispose a companion during a connected presentation move', () => {
-    const session = commit();
+  it('does not dispose a companion during a connected presentation move', async () => {
+    const session = await commit();
     const portal = document.createElement('div');
     document.body.append(portal);
     portal.append(session.video);
@@ -686,20 +843,20 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(unsubscribe).not.toHaveBeenCalled();
   });
 
-  it('cleanupAll releases all state without reattaching original controls', () => {
-    const session = commit();
+  it('cleanupAll releases all state without reattaching original controls', async () => {
+    const session = await commit();
     api().cleanupAll();
     expect(window.VSC_controller.onVideoFound).not.toHaveBeenCalled();
     expectReleased(session);
   });
 
-  it('preserves accepted rate and volume before decoder load resets them during teardown', () => {
+  it('preserves accepted rate and volume before decoder load resets them during teardown', async () => {
     vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(function () {
       this.playbackRate = this.defaultPlaybackRate;
       this.muted = false;
       this.volume = 1;
     });
-    const session = commit();
+    const session = await commit();
     session.video.currentTime = 27.5;
     session.video.playbackRate = 4;
     session.video.muted = true;
@@ -717,8 +874,8 @@ describe('X retained MediaSource MP4 playback', () => {
 
   it.each(['currentTime', 'playbackRate'])(
     'releases resources and restores controls when companion %s throws',
-    (property) => {
-      const session = commit();
+    async (property) => {
+      const session = await commit();
       Object.defineProperty(session.video, property, {
         configurable: true,
         get() {
@@ -733,8 +890,8 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('does not seek or play a source replaced during companion controller teardown', () => {
-    const session = commit();
+  it('does not seek or play a source replaced during companion controller teardown', async () => {
+    const session = await commit();
     session.video.vsc.remove.mockImplementation(() => {
       original.src = 'blob:https://x.com/recycled';
     });
@@ -745,12 +902,12 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('does not resurrect a session disposed synchronously by original Pause', () => {
+  it('does not resurrect a session disposed synchronously by original Pause', async () => {
     const pause = original.pause;
     pause.mockImplementation(() => api().controllerRemoved(original));
     const session = begin();
     session.finish();
-    loaded(session);
+    await loaded(session);
     expect(nativePlay).not.toHaveBeenCalled();
     expect(companionCtor).not.toHaveBeenCalled();
     expectReleased(session);
@@ -795,74 +952,86 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('transfers an already owned fullscreen presentation to the companion once', () => {
+  it('transfers an already owned fullscreen presentation to the companion once', async () => {
     controller.iosPlayer.active = true;
     controller.iosPlayer.originParent = original.parentElement;
-    const session = commit();
-    expect(window.VSC.TwitterPlayer.resolve).toHaveBeenCalledWith(original, original.parentElement);
+    const session = await commit();
+    expect(window.VSC.TwitterPlayer.resolve).toHaveBeenCalledWith(
+      original,
+      original.parentElement,
+      {
+        allowSourceChild: false,
+      }
+    );
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
-    loaded(session);
+    await loaded(session);
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
   });
 
-  it('stays inline when the user closes fullscreen while MP4 is loading', () => {
+  it('stays inline when the user closes fullscreen while MP4 is loading', async () => {
     controller.iosPlayer.active = true;
     controller.iosPlayer.originParent = original.parentElement;
     const session = begin();
     session.finish();
     controller.iosPlayer.active = false;
-    loaded(session);
+    await loaded(session);
     expect(api().get(session.video)).toBe(session);
     expect(session.video.vsc.iosPlayer.open).not.toHaveBeenCalled();
   });
 
-  it('transfers fullscreen newly opened while MP4 is loading', () => {
+  it('transfers fullscreen newly opened while MP4 is loading', async () => {
     const session = begin();
     session.finish();
     controller.iosPlayer.active = true;
     controller.iosPlayer.originParent = original.parentElement;
-    loaded(session);
+    await loaded(session);
     expect(api().get(session.video)).toBe(session);
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
   });
 
-  it.each([1, 2])('opens a paused %s× presentation through a separate native video', (rate) => {
-    original.playbackRate = rate;
-    mediaState(original).paused = true;
-    const parent = original.parentElement;
-    const sourceObject = original.srcObject;
-    expect(api().open(controller)).toBe(true);
-    const session = api().getPending(original);
-    expect(session).toBeTruthy();
-    expect(original.parentElement).toBe(parent);
-    expect(original.src).toBe(MSE);
-    expect(original.srcObject).toBe(sourceObject);
-    expect(original.load).not.toHaveBeenCalled();
-    expect(nativePlay).not.toHaveBeenCalled();
-    loaded(session);
-    expect(api().getPending(original)).toBeNull();
-    expect(original.parentElement).toBe(parent);
-    expect(original.isConnected).toBe(true);
-    expect(session.video.playbackRate).toBe(rate);
-    expect(session.video.paused).toBe(true);
-    expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith();
-    expect(nativePlay).not.toHaveBeenCalled();
-  });
+  it.each([1, 2])(
+    'opens a paused %s× presentation through a separate native video',
+    async (rate) => {
+      original.playbackRate = rate;
+      mediaState(original).paused = true;
+      const parent = original.parentElement;
+      const sourceObject = original.srcObject;
+      expect(api().open(controller)).toBe(true);
+      const session = api().getPending(original);
+      expect(session).toBeTruthy();
+      expect(original.parentElement).toBe(parent);
+      expect(original.src).toBe(MSE);
+      expect(original.srcObject).toBe(sourceObject);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(nativePlay).not.toHaveBeenCalled();
+      await loaded(session);
+      expect(api().getPending(original)).toBeNull();
+      expect(original.parentElement).toBe(parent);
+      expect(original.isConnected).toBe(true);
+      expect(session.video.playbackRate).toBe(rate);
+      expect(session.video.paused).toBe(true);
+      expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith();
+      expect(nativePlay).not.toHaveBeenCalled();
+    }
+  );
 
-  it.each([1, 2])('requests Play for an explicit %s× presentation in the entry stack', (rate) => {
-    original.playbackRate = rate;
-    mediaState(original).paused = true;
-    expect(api().open(controller, { play: true })).toBe(true);
-    const session = api().getPending(original);
-    expect(nativePlay).toHaveBeenCalledOnce();
-    expect(nativePlay.mock.instances[0]).toBe(session.video);
-    expect(companionCtor).not.toHaveBeenCalled();
-    loaded(session);
-    expect(nativePlay).toHaveBeenCalledOnce();
-    expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith();
-  });
+  it.each([1, 2])(
+    'requests Play for an explicit %s× presentation in the entry stack',
+    async (rate) => {
+      original.playbackRate = rate;
+      mediaState(original).paused = true;
+      expect(api().open(controller, { play: true })).toBe(true);
+      const session = api().getPending(original);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(nativePlay.mock.instances[0]).toBe(session.video);
+      expect(companionCtor).not.toHaveBeenCalled();
+      await loaded(session);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledExactlyOnceWith();
+    }
+  );
 
-  it('reuses pending presentation opens without resetting time or pause intent', () => {
+  it('reuses pending presentation opens without resetting time or pause intent', async () => {
     mediaState(original).paused = true;
     expect(api().open(controller, { play: true })).toBe(true);
     const session = api().getPending(original);
@@ -875,11 +1044,11 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(session.video.paused).toBe(true);
     expect(nativePlay).not.toHaveBeenCalled();
     expect(candidate.subscribe).toHaveBeenCalledOnce();
-    loaded(session);
+    await loaded(session);
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
   });
 
-  it('joins an existing fast probe for presentation without creating another decoder', () => {
+  it('joins an existing fast probe for presentation without creating another decoder', async () => {
     const session = begin(4);
     original.playbackRate = 4;
     session.finish();
@@ -891,13 +1060,13 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(session.video.playbackRate).toBe(4);
     expect(candidate.subscribe).toHaveBeenCalledOnce();
     expect(nativePlay).not.toHaveBeenCalled();
-    loaded(session);
+    await loaded(session);
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
   });
 
   it.each(['desktop', 'foreign-host', 'direct-source', 'companion'])(
     'returns outside-scope for a %s presentation',
-    (kind) => {
+    async (kind) => {
       let target = controller;
       if (kind === 'desktop') {
         window.VSC.IOSPlayer.isSupported.mockReturnValue(false);
@@ -906,7 +1075,7 @@ describe('X retained MediaSource MP4 playback', () => {
       } else if (kind === 'direct-source') {
         original.src = MP4;
       } else {
-        const session = commit();
+        const session = await commit();
         target = session.video.vsc;
       }
       expect(api().open(target)).toBeNull();
@@ -1039,11 +1208,11 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
-  it('keeps committed presentation source, time and rate across visibility suspension', () => {
+  it('keeps committed presentation source, time and rate across visibility suspension', async () => {
     const player = attachedPlayer();
     expect(player.open({ play: true })).toBe(true);
     const session = api().getPending(original);
-    loaded(session);
+    await loaded(session);
     session.video.currentTime = 28;
     session.video.playbackRate = 4;
     const source = session.video.src;
@@ -1063,13 +1232,13 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(nativePlay).toHaveBeenCalledOnce();
   });
 
-  it('cancels only the matching pending presentation and cannot attach after cancellation', () => {
+  it('cancels only the matching pending presentation and cannot attach after cancellation', async () => {
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
     api().cancelPresentation(document.createElement('video'));
     expect(api().getPending(original)).toBe(session);
     api().cancelPresentation(original);
-    loaded(session);
+    await loaded(session);
     expect(companionCtor).not.toHaveBeenCalled();
     expect(api().getPending(original)).toBeNull();
     expectReleased(session);
@@ -1082,42 +1251,42 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(unsubscribe).not.toHaveBeenCalled();
   });
 
-  it('retains a presentation while transferring through original controller close', () => {
+  it('retains a presentation while transferring through original controller close', async () => {
     const remove = controller.remove.getMockImplementation();
     controller.remove.mockImplementation(() => {
       api().cancelPresentation(original);
-      remove();
+      remove.call(controller);
     });
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
-    loaded(session);
+    await loaded(session);
     expect(api().get(session.video)).toBe(session);
     expect(api().getPending(original)).toBeNull();
     expect(session.video.vsc.iosPlayer.open).toHaveBeenCalledOnce();
     expect(unsubscribe).not.toHaveBeenCalled();
   });
 
-  it('does not reopen a stale pending presentation after a newer presentation revision', () => {
+  it('does not reopen a stale pending presentation after a newer presentation revision', async () => {
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
     window.VSC.IOSPlayer.presentationRevision++;
-    loaded(session);
+    await loaded(session);
     expect(session.video.vsc.iosPlayer.open).not.toHaveBeenCalled();
     expect(nativePlay).toHaveBeenCalledOnce();
   });
 
-  it('releases hidden pending presentation without opening UI or resuming', () => {
+  it('releases hidden pending presentation without opening UI or resuming', async () => {
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
     vi.mocked(Object.getOwnPropertyDescriptor(document, 'hidden').get).mockReturnValue(true);
     document.dispatchEvent(new Event('visibilitychange'));
-    loaded(session);
+    await loaded(session);
     expect(companionCtor).not.toHaveBeenCalled();
     expect(originalPlay).not.toHaveBeenCalled();
     expectReleased(session);
   });
 
-  it('seeds companion rate authority before construction without writing the saved preference', () => {
+  it('seeds companion rate authority before construction without writing the saved preference', async () => {
     const rateState = {};
     controller.config.settings.lastSpeed = 7;
     controller.config.speedPreferenceRevision = 19;
@@ -1133,7 +1302,7 @@ describe('X retained MediaSource MP4 playback', () => {
     });
     expect(api().open(controller)).toBe(true);
     const session = api().getPending(original);
-    loaded(session);
+    await loaded(session);
     expect(construction).toEqual({
       initialSpeed: 2,
       authority: {
@@ -1167,7 +1336,7 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(shell.config.settings.lastSpeed).toBe(7);
   });
 
-  it('seeds restored original authority before Play and reinitialization without preference writes', () => {
+  it('seeds restored original authority before Play and reinitialization without preference writes', async () => {
     const rates = new WeakMap();
     const local = (video) => {
       if (!rates.has(video)) {
@@ -1179,7 +1348,7 @@ describe('X retained MediaSource MP4 playback', () => {
     controller.config.speedPreferenceRevision = 19;
     controller.config.save = vi.fn();
     controller.actionHandler.eventManager = { getOrCreateMediaRateState: vi.fn(local) };
-    const session = commit();
+    const session = await commit();
     session.video.playbackRate = 3.5;
     session.video.currentTime = 21;
     const expected = {
@@ -1215,7 +1384,7 @@ describe('X retained MediaSource MP4 playback', () => {
 
   it.each(['pending', 'active', 'active-new-command'])(
     'does not promote stale rate authority after an external preference change while %s',
-    (phase) => {
+    async (phase) => {
       const states = new WeakMap();
       const local = (video) => {
         if (!states.has(video)) {
@@ -1236,7 +1405,7 @@ describe('X retained MediaSource MP4 playback', () => {
       const session = begin(4, 'init');
       session.finish();
       if (phase !== 'pending') {
-        loaded(session);
+        await loaded(session);
       }
       const retainedRate = phase === 'active-new-command' ? 5 : 4;
       const retainedRevision = phase === 'active-new-command' ? 2 : 1;
@@ -1252,7 +1421,7 @@ describe('X retained MediaSource MP4 playback', () => {
       controller.config.settings.lastSpeed = 6;
       controller.config.speedPreferenceRevision = retainedRevision + 1;
       if (phase === 'pending') {
-        loaded(session);
+        await loaded(session);
       }
       expect(local(session.video)).toMatchObject({
         lifecycleSpeed: retainedRate,
@@ -1281,6 +1450,7 @@ describe('X retained MediaSource MP4 playback', () => {
       expect(original.playbackRate).toBe(6);
       for (const [type, handler] of [
         ['play', lifecycle.handlePlay],
+        ['playing', lifecycle.handlePlayingReadiness],
         ['seeked', lifecycle.handleSeek],
         ['emptied', lifecycle.handleRateSourceReset],
         ['loadstart', lifecycle.handleRateSourceReset],
@@ -1292,7 +1462,7 @@ describe('X retained MediaSource MP4 playback', () => {
     }
   );
 
-  it('keeps matching original authority through repeated pending presentation requests', () => {
+  it('keeps matching original authority through repeated pending presentation requests', async () => {
     const states = new WeakMap();
     const local = (video) => {
       if (!states.has(video)) {
@@ -1315,12 +1485,12 @@ describe('X retained MediaSource MP4 playback', () => {
     expect(api().open(controller)).toBe(true);
     expect(api().getPending(original)).toBe(session);
     expect(session.video.playbackRate).toBe(2);
-    loaded(session);
+    await loaded(session);
     expect(local(session.video)).toMatchObject({ lifecycleSpeed: 2, lifecycleSpeedRevision: 1 });
     expect(controller.config.settings.lastSpeed).toBe(7);
   });
 
-  it('updates pending authority revision for a new explicit speed command', () => {
+  it('updates pending authority revision for a new explicit speed command', async () => {
     const states = new WeakMap();
     controller.actionHandler.eventManager = {
       getMediaRateState: vi.fn((video) => states.get(video)),
@@ -1336,11 +1506,475 @@ describe('X retained MediaSource MP4 playback', () => {
     session.finish();
     controller.config.speedPreferenceRevision = 2;
     expect(begin(5)).toBe(session);
-    loaded(session);
+    await loaded(session);
     expect(session.video.playbackRate).toBe(5);
     expect(states.get(session.video)).toMatchObject({
       lifecycleSpeed: 5,
       lifecycleSpeedRevision: 2,
+    });
+  });
+
+  describe('pending companion Play acceptance', () => {
+    const deferNextPlay = ({ startsPlaying = false } = {}) => {
+      const pending = {};
+      nativePlay.mockImplementationOnce(function () {
+        if (startsPlaying) {
+          mediaState(this).paused = false;
+        }
+        return new Promise((resolve, reject) => {
+          Object.assign(pending, { resolve, reject });
+        });
+      });
+      return pending;
+    };
+    const installRateState = () => {
+      const rates = new WeakMap();
+      const local = (video) => {
+        if (!rates.has(video)) {
+          rates.set(video, {});
+        }
+        return rates.get(video);
+      };
+      controller.config.settings.lastSpeed = 4;
+      controller.config.speedPreferenceRevision = 3;
+      controller.config.save = vi.fn();
+      controller.actionHandler.eventManager = {
+        getMediaRateState: vi.fn((video) => rates.get(video)),
+        getOrCreateMediaRateState: vi.fn(local),
+      };
+      Object.assign(local(original), {
+        lifecycleSpeed: 4,
+        acceptedSpeed: 4,
+        lifecycleSpeedRevision: 3,
+        acceptedSpeedRevision: 3,
+      });
+      return local;
+    };
+
+    it.each([
+      [2.1, false],
+      [4, false],
+      [2.1, true],
+      [4, true],
+    ])('waits for %s× Play acceptance while retaining mute=%s intent', async (rate, muted) => {
+      original.muted = muted;
+      const pending = deferNextPlay({ startsPlaying: true });
+      const session = begin(rate, 'init');
+      session.finish();
+      session.video.dispatchEvent(new Event('loadeddata'));
+      expect(api().getPending(original)).toBe(session);
+      expect(controller.remove).not.toHaveBeenCalled();
+      expect(companionCtor).not.toHaveBeenCalled();
+      expect(original.vsc).toBe(controller);
+      expect(session.video.muted).toBe(muted);
+      expect(original.load).not.toHaveBeenCalled();
+      pending.resolve();
+      await Promise.resolve();
+      expect(api().getPending(original)).toBeNull();
+      expect(api().isRetained(original)).toBe(true);
+      expect(controller.remove).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(session.video.playbackRate).toBe(rate);
+      expect(session.video.muted).toBe(muted);
+    });
+
+    it.each([false, true])(
+      'recovers a refused audible Play after ready=%s without committing',
+      async (ready) => {
+        const local = installRateState();
+        original.muted = false;
+        const element = document.createElement('div');
+        const shadow = element.attachShadow({ mode: 'open' });
+        controller.div = element;
+        const display = vi
+          .spyOn(window.VSC.ShadowDOMManager, 'updateSpeedDisplay')
+          .mockImplementation(() => {});
+        const pending = deferNextPlay();
+        const session = begin(4, 'init');
+        // ActionHandler starts a transition before applying its native rate write.
+        original.playbackRate = 4;
+        session.finish();
+        if (ready) {
+          session.video.dispatchEvent(new Event('loadeddata'));
+        }
+        expect(controller.remove).not.toHaveBeenCalled();
+        pending.reject(new DOMException('Fresh gesture required', 'NotAllowedError'));
+        await Promise.resolve();
+        expectReleased(session);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original.paused).toBe(false);
+        expect(original.muted).toBe(false);
+        expect(original.playbackRate).toBe(1);
+        expect(original.currentTime).toBe(12.5);
+        expect(original.src).toBe(MSE);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(controller.remove).not.toHaveBeenCalled();
+        expect(local(original)).toMatchObject({
+          lifecycleSpeed: 1,
+          acceptedSpeed: 1,
+          lifecycleSpeedRevision: 3,
+          acceptedSpeedRevision: 3,
+        });
+        expect(display).toHaveBeenCalledExactlyOnceWith(shadow, 1);
+        expect(controller.config.settings.lastSpeed).toBe(4);
+        expect(controller.config.save).not.toHaveBeenCalled();
+        expect(api().canBegin(controller, 4, 'init')).toBe(false);
+      }
+    );
+
+    it('releases a synchronous Play exception and restores the prior producer rate', () => {
+      original.muted = false;
+      nativePlay.mockImplementationOnce(() => {
+        throw new DOMException('Fresh gesture required', 'NotAllowedError');
+      });
+      const session = begin(4, 'init');
+      original.playbackRate = 4;
+      expect(() => session.finish()).not.toThrow();
+      expectReleased(session);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.playbackRate).toBe(1);
+      expect(original.muted).toBe(false);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('keeps the readiness deadline while Play never settles', async () => {
+      deferNextPlay();
+      const session = begin(4, 'init');
+      session.finish();
+      session.video.dispatchEvent(new Event('loadeddata'));
+      expect(controller.remove).not.toHaveBeenCalled();
+      expect(api().getPending(original)).toBe(session);
+      await vi.advanceTimersByTimeAsync(10000);
+      expectReleased(session);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.paused).toBe(false);
+      expect(companionCtor).not.toHaveBeenCalled();
+    });
+
+    it('honors Pause while Play is pending and ignores its later rejection', async () => {
+      const pending = deferNextPlay({ startsPlaying: true });
+      const session = begin();
+      session.finish();
+      session.video.dispatchEvent(new Event('loadeddata'));
+      original.pause();
+      expect(session.video.paused).toBe(true);
+      pending.reject(new DOMException('Play interrupted by Pause', 'AbortError'));
+      await Promise.resolve();
+      expect(api().get(session.video)).toBe(session);
+      expect(session.video.paused).toBe(true);
+      expect(originalPlay).not.toHaveBeenCalled();
+      session.cleanup();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expectReleased(session);
+    });
+
+    it('ignores an old rejection while a newer explicit Play is pending', async () => {
+      const first = deferNextPlay();
+      const session = begin();
+      session.finish();
+      session.video.dispatchEvent(new Event('loadeddata'));
+      const second = deferNextPlay({ startsPlaying: true });
+      original.play();
+      first.reject(new DOMException('Superseded Play', 'AbortError'));
+      await Promise.resolve();
+      expect(api().getPending(original)).toBe(session);
+      expect(controller.remove).not.toHaveBeenCalled();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      second.resolve();
+      await Promise.resolve();
+      expect(api().isRetained(original)).toBe(true);
+      expect(companionCtor).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+    });
+
+    it.each(['resolve', 'reject'])(
+      'ignores stale %s after a new session replaces the pending one',
+      async (settlement) => {
+        const pending = deferNextPlay();
+        const first = begin();
+        first.finish();
+        first.cleanup({ resume: false });
+        expectReleased(first);
+        mediaState(original).paused = false;
+        const second = begin(4, 'internal');
+        second.finish();
+        await loaded(second);
+        const releaseCount = unsubscribe.mock.calls.length;
+        pending[settlement](new DOMException('Old Play settled', 'AbortError'));
+        await Promise.resolve();
+        expect(api().get(second.video)).toBe(second);
+        expect(second.video.paused).toBe(false);
+        expect(unsubscribe).toHaveBeenCalledTimes(releaseCount);
+        expect(originalPlay).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['src', 'identity'])(
+      'does not recover or redraw a newer producer after pending rejection changes %s',
+      async (change) => {
+        const pending = deferNextPlay();
+        const session = begin();
+        session.finish();
+        session.video.dispatchEvent(new Event('loadeddata'));
+        const display = vi
+          .spyOn(window.VSC.ShadowDOMManager, 'updateSpeedDisplay')
+          .mockImplementation(() => {});
+        if (change === 'src') {
+          original.src = 'blob:https://x.com/new-item';
+        } else {
+          candidate.current.mockReturnValue(false);
+          candidate.identityCurrent.mockReturnValue(false);
+        }
+        pending.reject(new DOMException('Play refused', 'NotAllowedError'));
+        await Promise.resolve();
+        expectReleased(session);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(display).not.toHaveBeenCalled();
+        expect(companionCtor).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([false, true])(
+      'reports refused original recovery only while its source remains current: %s',
+      async (replaced) => {
+        const pending = deferNextPlay();
+        const error = vi.fn();
+        controller.controlsManager = { inlinePlayer: { error } };
+        originalPlay.mockRejectedValueOnce(
+          new DOMException('Original needs Play', 'NotAllowedError')
+        );
+        const session = begin();
+        session.finish();
+        pending.reject(new DOMException('Companion needs Play', 'NotAllowedError'));
+        await Promise.resolve();
+        if (replaced) {
+          original.src = 'blob:https://x.com/new-item';
+        }
+        await Promise.resolve();
+        expectReleased(session);
+        if (replaced) {
+          expect(error).not.toHaveBeenCalled();
+        } else {
+          expect(error).toHaveBeenCalledExactlyOnceWith('Playback could not start.');
+        }
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(nativePlay).toHaveBeenCalledOnce();
+        expect(original.paused).toBe(true);
+      }
+    );
+
+    it('keeps an intentional Pause silent when original recovery Play is interrupted', async () => {
+      const pending = deferNextPlay();
+      const error = vi.fn();
+      controller.controlsManager = { inlinePlayer: { error } };
+      let rejectRecovery;
+      originalPlay.mockImplementationOnce(function () {
+        mediaState(this).paused = false;
+        return new Promise((resolve, reject) => {
+          rejectRecovery = reject;
+        });
+      });
+      const session = begin();
+      session.finish();
+      pending.reject(new DOMException('Companion needs Play', 'NotAllowedError'));
+      await Promise.resolve();
+      expectReleased(session);
+      expect(original.paused).toBe(false);
+      original.pause();
+      rejectRecovery(new DOMException('Recovery interrupted by Pause', 'AbortError'));
+      await Promise.resolve();
+      expect(error).not.toHaveBeenCalled();
+      expect(original.paused).toBe(true);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(original.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(original.currentTime).toBe(12.5);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it('restores local rate authority after failure even when the producer should remain paused', () => {
+      const local = installRateState();
+      mediaState(original).paused = true;
+      const session = begin(4, 'internal');
+      original.playbackRate = 4;
+      session.finish();
+      session.video.dispatchEvent(new Event('error'));
+      expectReleased(session);
+      expect(original.paused).toBe(true);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.playbackRate).toBe(1);
+      expect(local(original)).toMatchObject({
+        lifecycleSpeed: 1,
+        acceptedSpeed: 1,
+        lifecycleSpeedRevision: 3,
+        acceptedSpeedRevision: 3,
+      });
+      expect(controller.config.settings.lastSpeed).toBe(4);
+    });
+
+    it('preserves a newer site rate when a pending companion fails', async () => {
+      const pending = deferNextPlay();
+      const session = begin();
+      original.playbackRate = 4;
+      session.finish();
+      original.playbackRate = 2;
+      pending.reject(new DOMException('Play refused', 'NotAllowedError'));
+      await Promise.resolve();
+      expectReleased(session);
+      expect(original.playbackRate).toBe(2);
+      expect(originalPlay).toHaveBeenCalledOnce();
+    });
+
+    it('rejects an actual ActionHandler speed command after synchronous companion Play failure', () => {
+      const local = installRateState();
+      controller.config.settings.lastSpeed = 1;
+      controller.config.settings.rememberSpeed = true;
+      controller.actionHandler.eventManager.refreshCoolDown = vi.fn();
+      const handler = new window.VSC.ActionHandler(
+        controller.config,
+        controller.actionHandler.eventManager
+      );
+      controller.actionHandler = handler;
+      const element = document.createElement('div');
+      const shadow = element.attachShadow({ mode: 'open' });
+      controller.div = element;
+      controller.speedIndicator = document.createElement('span');
+      const display = vi
+        .spyOn(window.VSC.ShadowDOMManager, 'updateSpeedDisplay')
+        .mockImplementation(() => {});
+      vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(
+        (video, rate) => {
+          video.playbackRate = rate;
+        }
+      );
+      const started = vi.spyOn(api(), 'begin');
+      nativePlay.mockImplementationOnce(() => {
+        throw new DOMException('Fresh gesture required', 'NotAllowedError');
+      });
+      expect(handler.setSpeed(original, 4, 'internal')).toBe(false);
+      const session = started.mock.results[0].value;
+      expectReleased(session);
+      expect(original.playbackRate).toBe(1);
+      expect(controller.config.settings.lastSpeed).toBe(1);
+      expect(controller.config.save).not.toHaveBeenCalled();
+      expect(display).toHaveBeenCalledExactlyOnceWith(shadow, 1);
+      expect(local(original)).toMatchObject({ lifecycleSpeed: 1, acceptedSpeed: 1 });
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('does not roll back a newer site rate after reopening a pending presentation', async () => {
+      const pending = deferNextPlay();
+      const session = begin(4);
+      original.playbackRate = 4;
+      session.finish({ speedCommand: true });
+      session.video.dispatchEvent(new Event('loadeddata'));
+      original.playbackRate = 2;
+      expect(api().open(controller)).toBe(true);
+      expect(api().getPending(original)).toBe(session);
+      pending.reject(new DOMException('Play refused', 'NotAllowedError'));
+      await Promise.resolve();
+      expectReleased(session);
+      expect(original.playbackRate).toBe(2);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('updates the applied-rate snapshot for a newer explicit speed command', async () => {
+      const pending = deferNextPlay();
+      const session = begin(4);
+      original.playbackRate = 4;
+      session.finish({ speedCommand: true });
+      expect(begin(6)).toBe(session);
+      original.playbackRate = 6;
+      session.finish({ speedCommand: true });
+      pending.reject(new DOMException('Play refused', 'NotAllowedError'));
+      await Promise.resolve();
+      expectReleased(session);
+      expect(original.playbackRate).toBe(1);
+      expect(originalPlay).toHaveBeenCalledOnce();
+    });
+
+    it.each(['begin', 'command', 'playing'])(
+      'ignores an original recovery rejection after newer same-source %s intent',
+      async (newer) => {
+        const pending = deferNextPlay();
+        const error = vi.fn();
+        controller.controlsManager = { inlinePlayer: { error } };
+        let rejectRecovery;
+        originalPlay.mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              rejectRecovery = reject;
+            })
+        );
+        const first = begin();
+        first.finish();
+        pending.reject(new DOMException('Companion needs Play', 'NotAllowedError'));
+        await Promise.resolve();
+        expectReleased(first);
+        expect(original.paused).toBe(true);
+        let second;
+        if (newer === 'begin') {
+          second = begin(4, 'internal');
+          second.finish();
+        } else if (newer === 'command') {
+          controller.config.settings.lastSpeed = 1;
+          const handler = new window.VSC.ActionHandler(controller.config, null);
+          controller.actionHandler = handler;
+          vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(
+            (video, rate) => {
+              video.playbackRate = rate;
+            }
+          );
+          expect(handler.setSpeed(original, 2, 'internal')).toBe(true);
+        } else {
+          mediaState(original).paused = false;
+          original.dispatchEvent(new Event('playing'));
+        }
+        rejectRecovery(new DOMException('Old recovery refused', 'NotAllowedError'));
+        await Promise.resolve();
+        expect(error).not.toHaveBeenCalled();
+        if (second) {
+          expect(api().getPending(original)).toBe(second);
+          expect(unsubscribe).toHaveBeenCalledOnce();
+        }
+        expect(original.src).toBe(MSE);
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['closed', 'finished'])(
+      'does not read a replaced rate getter during a %s finish no-op',
+      (phase) => {
+        const session = begin();
+        session.finish();
+        if (phase === 'closed') {
+          session.cleanup({ resume: false });
+        }
+        const getter = vi.fn(() => {
+          throw new Error('Page getter replaced');
+        });
+        Object.defineProperty(original, 'playbackRate', { configurable: true, get: getter });
+        expect(() => session.finish()).not.toThrow();
+        expect(getter).not.toHaveBeenCalled();
+      }
+    );
+
+    it('releases a first finish with an inaccessible rate getter', () => {
+      const session = begin();
+      Object.defineProperty(original, 'playbackRate', {
+        configurable: true,
+        get() {
+          throw new Error('Page getter replaced');
+        },
+      });
+      expect(() => session.finish({ speedCommand: true })).not.toThrow();
+      expectReleased(session);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(companionCtor).not.toHaveBeenCalled();
     });
   });
 });
