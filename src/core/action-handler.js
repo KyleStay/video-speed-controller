@@ -473,8 +473,14 @@ class ActionHandler {
     // Calculate target speed
     let targetSpeed;
     if (relative) {
-      // For relative changes, add to current speed
-      const currentSpeed = video.playbackRate < 0.1 ? 0.0 : video.playbackRate;
+      // Repeated speed input advances the same pending caption command even
+      // while native playback waits for its complete track to be prepared.
+      const pendingSpeed =
+        source !== 'external' && source !== 'init'
+          ? window.VSC.TwitterCaptionPlayback?.requestedSpeed?.(video.vsc)
+          : null;
+      const baseSpeed = Number.isFinite(pendingSpeed) ? pendingSpeed : video.playbackRate;
+      const currentSpeed = baseSpeed < 0.1 ? 0.0 : baseSpeed;
       targetSpeed = currentSpeed + value;
 
       // Snap to 1.0x when crossing the 1.0 boundary
@@ -527,6 +533,15 @@ class ActionHandler {
     if (!Number.isFinite(speed)) {
       return false;
     }
+    // A newer speed command supersedes an in-flight owned decoder reload,
+    // including same-rate popup commands without a page input event.
+    try {
+      if (source !== 'init' || !window.VSC.TwitterPlaybackRecovery?.ownsTransition(video.vsc)) {
+        window.VSC.TwitterPlaybackRecovery?.cancel(video.vsc);
+      }
+    } catch {
+      // A discarded page context must not prevent the requested speed change.
+    }
     let previousPlaybackRate;
     try {
       previousPlaybackRate = video.playbackRate;
@@ -564,8 +579,23 @@ class ActionHandler {
     let playbackTransition;
     try {
       playbackTransition =
+        window.VSC.TwitterCaptionPlayback?.begin(video.vsc, numericSpeed, source, {
+          previousSpeed,
+          previousPlaybackRate,
+          speedPreferenceRevision,
+        }) ||
         window.VSC.TwitterMP4Playback?.begin(video.vsc, numericSpeed, source) ||
         window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
+      if (playbackTransition?.deferred) {
+        // Preparing the complete native caption track has not accepted a new
+        // media rate yet. Retain only local command intent; leave the displayed
+        // and accepted rate unchanged until the coordinated source command.
+        if (mediaRateState) {
+          mediaRateState.lifecycleSpeed = numericSpeed;
+          mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+        }
+        return false;
+      }
       window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
       const acceptedSpeed = video.playbackRate;
       if (!Number.isFinite(acceptedSpeed) || acceptedSpeed <= 0) {

@@ -114,6 +114,210 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(pause).not.toHaveBeenCalled();
   });
 
+  describe('current SDK with no countdown accessory', () => {
+    let accessory;
+
+    beforeEach(() => {
+      accessory = modern.timeRemainingAccessory;
+      delete modern.timeRemainingAccessory;
+    });
+
+    it('resolves the observed explicit child-source presentation from the exact bound download', () => {
+      video.removeAttribute('src');
+      const source = document.createElement('source');
+      source.src = blob;
+      video.append(source);
+      const load = vi.spyOn(video, 'load');
+      const play = vi.spyOn(video, 'play');
+      const pause = vi.spyOn(video, 'pause');
+      expect(resolve()).toBeNull();
+      const candidate = window.VSC.TwitterPlayer.resolve(video, null, { allowSourceChild: true });
+      expect(candidate).toMatchObject({
+        originalUrl: blob,
+        sourceNode: source,
+        progressiveUrl: modern.downloadUrl,
+        sdk,
+        api,
+        store,
+      });
+      expect(candidate.current()).toBe(true);
+      expect(candidate.identityCurrent()).toBe(true);
+      expect(video.hasAttribute('src')).toBe(false);
+      expect(source.src).toBe(blob);
+      expect(load).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(api.seekTo).not.toHaveBeenCalled();
+      expect(store.subscribe).not.toHaveBeenCalled();
+    });
+
+    it.each(['undefined', 'null', 'empty', 'missing-variants', 'protected-media', 'stale-hls'])(
+      'does not bypass a declared %s accessory',
+      (kind) => {
+        modern.timeRemainingAccessory = accessory;
+        if (kind === 'undefined') {
+          modern.timeRemainingAccessory = undefined;
+        } else if (kind === 'null') {
+          modern.timeRemainingAccessory = null;
+        } else if (kind === 'empty') {
+          modern.timeRemainingAccessory = {};
+        } else if (kind === 'missing-variants') {
+          delete accessory.props.media.video_info.variants;
+        } else if (kind === 'protected-media') {
+          accessory.props.media.hasCaptions = true;
+        } else {
+          accessory.props.media.video_info.variants[0].url += '&stale=1';
+        }
+        expect(resolve()).toBeNull();
+      }
+    );
+
+    it.each(['undefined', 'null', 'valid', 'accessor'])(
+      'rejects an inherited %s accessory without invoking it',
+      (kind) => {
+        const getter = vi.fn(() => accessory);
+        const prototype = {};
+        if (kind === 'accessor') {
+          Object.defineProperty(prototype, 'timeRemainingAccessory', { get: getter });
+        } else {
+          prototype.timeRemainingAccessory =
+            kind === 'valid' ? accessory : kind === 'null' ? null : undefined;
+        }
+        Object.setPrototypeOf(modern, prototype);
+        expect(resolve()).toBeNull();
+        expect(getter).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects a declared accessory getter without invoking it', () => {
+      const getter = vi.fn(() => accessory);
+      Object.defineProperty(modern, 'timeRemainingAccessory', { get: getter, configurable: true });
+      expect(resolve()).toBeNull();
+      expect(getter).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'missing-download',
+      'foreign-asset',
+      'foreign-host',
+      'foreign-type',
+      'host-key',
+      'source',
+      'content',
+      'download-pair',
+    ])('requires every bound current download field after %s changes', (kind) => {
+      const supplied = modern.poppedOutSource.playerProps;
+      if (kind === 'missing-download') {
+        delete modern.downloadUrl;
+        delete supplied.downloadUrl;
+      } else if (kind === 'foreign-asset') {
+        modern.downloadUrl = mp4('1920x1080').replace(contentId, '999');
+        supplied.downloadUrl = modern.downloadUrl;
+      } else if (kind === 'foreign-host') {
+        modern.downloadUrl = mp4('1920x1080').replace('video.twimg.com', 'example.com');
+        supplied.downloadUrl = modern.downloadUrl;
+      } else if (kind === 'foreign-type') {
+        modern.downloadUrl = mp4('1920x1080').replace('amplify_video', 'ext_tw_video');
+        supplied.downloadUrl = modern.downloadUrl;
+      } else if (kind === 'host-key') {
+        modern.poppedOutSource.hostKey = 'other';
+      } else if (kind === 'source') {
+        supplied.src = `${sourceUrl}&other=1`;
+      } else if (kind === 'content') {
+        supplied.content = { ...content };
+      } else {
+        supplied.downloadUrl = mp4('640x360');
+      }
+      expect(resolve()).toBeNull();
+    });
+
+    it.each(['sdk', 'controller', 'state', 'content', 'source', 'modern', 'popped', 'supplied'])(
+      'retains the caption capability veto on %s',
+      (role) => {
+        const target = {
+          sdk,
+          controller: sdk.controller,
+          state,
+          content,
+          source: state.source,
+          modern,
+          popped: modern.poppedOutSource,
+          supplied: modern.poppedOutSource.playerProps,
+        }[role];
+        target.hasCaptions = true;
+        expect(resolve()).toBeNull();
+      }
+    );
+
+    it.each(['alternateAudioTracks', 'alternateVideoTracks', 'captionTracks'])(
+      'retains the alternate-track veto for %s',
+      (key) => {
+        modern.poppedOutSource.playerProps[key] = [{}];
+        expect(resolve()).toBeNull();
+      }
+    );
+
+    it.each(['sdk-captions', 'native-caption', 'drm', 'live', 'ambiguous-sdk'])(
+      'retains the original %s safeguard',
+      (kind) => {
+        if (kind === 'sdk-captions') {
+          state.textTracks.tracks.push({ kind: 'captions' });
+        } else if (kind === 'native-caption') {
+          video.append(document.createElement('track'));
+        } else if (kind === 'drm') {
+          content.keySystems = {};
+        } else if (kind === 'live') {
+          state.source.live = true;
+        } else {
+          hooks[10].memoizedState = { ...sdk };
+        }
+        expect(resolve()).toBeNull();
+      }
+    );
+
+    it('keeps native-HLS recovery bound to the same SDK download and capability checks', () => {
+      video.src = sourceUrl;
+      property(video, 'currentSrc', sourceUrl);
+      const candidate = window.VSC.TwitterPlayer.findNativeHlsCandidate(video);
+      expect(candidate).toMatchObject({
+        originalUrl: sourceUrl,
+        progressiveUrl: modern.downloadUrl,
+      });
+      video.src = modern.downloadUrl;
+      property(video, 'currentSrc', modern.downloadUrl);
+      expect(candidate.revalidate()).toBe(true);
+      state.textTracks.tracks.push({ kind: 'captions' });
+      expect(candidate.revalidate()).toBe(false);
+    });
+
+    it('invalidates continued ownership when a declared bad accessory arrives', () => {
+      const candidate = resolve();
+      expect(candidate.current()).toBe(true);
+      modern.timeRemainingAccessory = null;
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(true);
+    });
+
+    it.each(['session', 'content', 'sdk', 'download'])(
+      'revalidates the retained current %s identity',
+      (kind) => {
+        const candidate = resolve();
+        if (kind === 'session') {
+          state.session.id = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+        } else if (kind === 'content') {
+          state.content = { ...content };
+        } else if (kind === 'sdk') {
+          hooks[11].memoizedState = { ...sdk };
+        } else {
+          modern.downloadUrl = mp4('640x360');
+          modern.poppedOutSource.playerProps.downloadUrl = modern.downloadUrl;
+        }
+        expect(candidate.current()).toBe(false);
+        expect(candidate.identityCurrent()).toBe(kind === 'download');
+      }
+    );
+  });
+
   describe('explicit presentation with one direct source child', () => {
     let source;
     const presentation = () =>
@@ -563,5 +767,41 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(candidate.current()).toBe(false);
     expect(resolve(parent)).toBeNull();
     delete video.vsc;
+  });
+  describe('retained native-HLS recovery capability', () => {
+    function retained() {
+      video.src = sourceUrl;
+      property(video, 'currentSrc', sourceUrl);
+      const candidate = window.VSC.TwitterPlayer.findNativeHlsCandidate(video);
+      expect(candidate).toBeTruthy();
+      video.src = candidate.progressiveUrl;
+      property(video, 'currentSrc', candidate.progressiveUrl);
+      return candidate;
+    }
+    it('keeps a nonenumerable validator bound to the supplied MP4 and current SDK', () => {
+      const candidate = retained();
+      expect(Object.keys(candidate)).not.toContain('revalidate');
+      expect(candidate.revalidate()).toBe(true);
+      state.hasCaptions = true;
+      expect(candidate.revalidate()).toBe(false);
+    });
+    it('permits only a requested reload readiness reset without dropping capability checks', () => {
+      const candidate = retained();
+      property(video, 'currentSrc', '');
+      property(video, 'readyState', 0);
+      property(video, 'duration', NaN);
+      expect(candidate.revalidate()).toBe(false);
+      expect(candidate.revalidate(true)).toBe(true);
+      state.textTracks.tracks.push({ kind: 'captions' });
+      expect(candidate.revalidate(true)).toBe(false);
+    });
+    it('rejects changed SDK session or supplied source ownership', () => {
+      const candidate = retained();
+      state.session.id = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+      expect(candidate.revalidate()).toBe(false);
+      state.session.id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      video.src = mp4('640x360');
+      expect(candidate.revalidate()).toBe(false);
+    });
   });
 });

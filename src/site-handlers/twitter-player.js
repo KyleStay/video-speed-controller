@@ -198,7 +198,14 @@ window.VSC = window.VSC || {};
     return found || portal;
   }
 
-  function inspect(video, originParent, companion, identityOnly = false, restored = false) {
+  function inspect(
+    video,
+    originParent,
+    companion,
+    identityOnly = false,
+    restored = false,
+    expectedDuration
+  ) {
     const scope = scopeFor(video, originParent, restored);
     if (
       !scope ||
@@ -292,9 +299,9 @@ window.VSC = window.VSC || {};
             own(source, 'src') !== sourceUrl ||
             typeof sessionId !== 'string' ||
             !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sessionId) ||
-            !near(own(content, 'durationMs') / 1000, video.duration) ||
-            !near(own(selected, 'durationMs') / 1000, video.duration) ||
-            !near(own(source, 'playlistDurationSec'), video.duration) ||
+            !near(own(content, 'durationMs') / 1000, expectedDuration ?? video.duration) ||
+            !near(own(selected, 'durationMs') / 1000, expectedDuration ?? video.duration) ||
+            !near(own(source, 'playlistDurationSec'), expectedDuration ?? video.duration) ||
             (!identityOnly && ![props, content, selected, source, state].every(clear))
           ) {
             return null;
@@ -354,12 +361,35 @@ window.VSC = window.VSC || {};
           }
           const popped = own(modern, 'poppedOutSource');
           const supplied = own(popped, 'playerProps');
+          // A current player can omit countdown UI entirely. A declared or
+          // inherited accessory still belongs to the full metadata route below.
+          const accessoryAbsent = Boolean(
+            modern &&
+            !Object.getOwnPropertyDescriptor(modern, 'timeRemainingAccessory') &&
+            !('timeRemainingAccessory' in modern)
+          );
           const media = own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media');
           const info = own(media, 'video_info');
           const variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
           const downloadAsset = asset(download, 'mp4');
           const variantCount = own(variants, 'length');
+          if (accessoryAbsent) {
+            if (
+              ![modern, popped, supplied].every(clear) ||
+              own(popped, 'hostKey') !== hostKey ||
+              own(supplied, 'src') !== sourceUrl ||
+              own(supplied, 'content') !== content ||
+              own(supplied, 'downloadUrl') !== download ||
+              downloadAsset?.id !== contentId ||
+              downloadAsset.type !== sourceAsset.type
+            ) {
+              return null;
+            }
+            result = { ...binding, progressiveUrl: download, loop, scope };
+            hook = own(hook, 'next');
+            continue;
+          }
           if (
             !modern ||
             ![modern, popped, supplied, media, info].every(clear) ||
@@ -368,7 +398,7 @@ window.VSC = window.VSC || {};
             own(supplied, 'content') !== content ||
             own(supplied, 'downloadUrl') !== download ||
             own(media, 'id_str') !== contentId ||
-            !near(own(info, 'duration_millis') / 1000, video.duration) ||
+            !near(own(info, 'duration_millis') / 1000, expectedDuration ?? video.duration) ||
             downloadAsset?.id !== contentId ||
             downloadAsset.type !== sourceAsset.type ||
             own(media, 'video_download_url') !== download ||
@@ -448,6 +478,23 @@ window.VSC = window.VSC || {};
   }
 
   window.VSC.TwitterPlayer = {
+    // Recheck capabilities against the retained current SDK after a verified
+    // HLS rendition change. No media properties are replaced to impersonate HLS.
+    validateRetainedHls(video, originalUrl, progressiveUrl, originParent, expectedDuration) {
+      try {
+        const next = inspect(video, originParent, undefined, false, false, expectedDuration);
+        if (next === undefined) {
+          return undefined;
+        }
+        return Boolean(
+          next &&
+          window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(next.sourceUrl, originalUrl) &&
+          next.progressiveUrl === progressiveUrl
+        );
+      } catch {
+        return false;
+      }
+    },
     // undefined means no bound current SDK; null is an authoritative veto that
     // callers must preserve before considering React or HTML alternatives.
     findNativeHlsCandidate(video, originParent) {
@@ -494,11 +541,56 @@ window.VSC = window.VSC || {};
         ) {
           return null;
         }
-        return {
+        const observedDuration = video.duration;
+        const result = {
           originalUrl,
           progressiveUrl: candidate.progressiveUrl,
           mediaId: candidate.contentId,
+          revalidate(expectedReload = false) {
+            try {
+              const player = video.vsc?.iosPlayer;
+              const retainedOrigin = player?.active ? player.originParent : undefined;
+              const next = inspect(
+                video,
+                retainedOrigin,
+                undefined,
+                false,
+                false,
+                expectedReload && video.readyState < 1 ? observedDuration : undefined
+              );
+              return Boolean(
+                next &&
+                doc === video.ownerDocument &&
+                doc.documentElement === root &&
+                doc.URL === documentUrl &&
+                video.getAttribute('src') === candidate.progressiveUrl &&
+                (!video.currentSrc || video.currentSrc === candidate.progressiveUrl) &&
+                [
+                  'sdk',
+                  'api',
+                  'store',
+                  'getState',
+                  'getSnapshot',
+                  'getMediaElement',
+                  'seekTo',
+                  'subscribe',
+                  'content',
+                  'selected',
+                  'sourceUrl',
+                  'contentId',
+                  'sessionId',
+                  'progressiveUrl',
+                  'loop',
+                  'scope',
+                ].every((key) => next[key] === candidate[key])
+              );
+            } catch {
+              return false;
+            }
+          },
         };
+        Object.defineProperty(result, 'revalidate', { enumerable: false });
+        return result;
       } catch {
         return null;
       }

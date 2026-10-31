@@ -135,9 +135,40 @@ window.VSC = window.VSC || {};
   // undefined: this SDK is absent; null: its current source must retain HLS.
   // Read the observed videoComponent slot directly instead of expanding the
   // generic React search into SDK objects, other playlist items or functions.
-  function playerStateCandidate(video, originParent) {
+  function playerStateCandidate(
+    video,
+    originParent,
+    retained,
+    expectedReload = false,
+    captioned = false,
+    preparing = false,
+    allowDisposed = false,
+    pendingHls = false,
+    restoring = false
+  ) {
     try {
-      const originalUrl = video?.currentSrc || video?.src;
+      const actualUrl = video?.currentSrc || video?.src;
+      const originalUrl = retained ? retained.originalUrl : actualUrl;
+      if (
+        retained &&
+        (video !== retained.video ||
+          (video.vsc !== retained.controller &&
+            !(allowDisposed && retained.controller?.disposed && video.vsc === undefined)) ||
+          (video.vsc?.disposed && !allowDisposed) ||
+          video.ownerDocument !== retained.doc ||
+          retained.doc.documentElement !== retained.root ||
+          retained.doc.URL !== retained.url ||
+          (preparing
+            ? video.getAttribute('src') !== retained.originalAttribute ||
+              (actualUrl !== originalUrl &&
+                !(restoring && video.currentSrc === retained.progressiveUrl))
+            : video.getAttribute('src') !== retained.progressiveUrl ||
+              (video.currentSrc &&
+                video.currentSrc !== retained.progressiveUrl &&
+                !(captioned && pendingHls && video.currentSrc === originalUrl))))
+      ) {
+        return null;
+      }
       const original = asset(originalUrl, 'hls');
       if (!original || !video.isConnected) {
         return undefined;
@@ -153,7 +184,10 @@ window.VSC = window.VSC || {};
       ) {
         return null;
       }
-      if (video.hasAttribute('src') && video.src !== originalUrl) {
+      if (
+        video.hasAttribute('src') &&
+        video.src !== ((!preparing && retained?.progressiveUrl) || originalUrl)
+      ) {
         return null;
       }
       const player = video.vsc?.iosPlayer;
@@ -208,7 +242,9 @@ window.VSC = window.VSC || {};
               ownValue(source, 'trackId') !== id ||
               !Array.isArray(tracks) ||
               ownValue(tracks, 'length') > 8 ||
-              ownValue(state, 'hasCaptions') !== false
+              (captioned
+                ? typeof ownValue(state, 'hasCaptions') !== 'boolean'
+                : ownValue(state, 'hasCaptions') !== false)
             ) {
               return null;
             }
@@ -226,11 +262,39 @@ window.VSC = window.VSC || {};
             if (
               !selected ||
               ownValue(selected, 'contentType') !== 'media_entity' ||
-              ownValue(selected, 'hasCaptions') !== false ||
-              !Number.isFinite(ownValue(selected, 'durationMs')) ||
-              ownValue(selected, 'durationMs') <= 0
+              ownValue(selected, 'hasCaptions') !== captioned
             ) {
               return null;
+            }
+            const durationMs = ownValue(selected, 'durationMs');
+            if (!Number.isFinite(durationMs) || durationMs <= 0) {
+              return null;
+            }
+            if (
+              retained &&
+              (node !== retained.node ||
+                key !== retained.key ||
+                id !== retained.trackId ||
+                ownValue(source, 'id') !== retained.sourceId ||
+                ownValue(source, 'index') !== retained.sourceIndex)
+            ) {
+              return null;
+            }
+            if (retained) {
+              const nativeDuration = video.duration;
+              const loading =
+                expectedReload &&
+                video.readyState < 1 &&
+                (Number.isNaN(nativeDuration) || nativeDuration === 0);
+              if (
+                Math.abs(durationMs - retained.durationMs) > 250 ||
+                (!loading &&
+                  (!Number.isFinite(nativeDuration) ||
+                    nativeDuration <= 0 ||
+                    Math.abs(nativeDuration * 1000 - durationMs) > 250))
+              ) {
+                return null;
+              }
             }
             // X's expanded viewer omits availability on its current clear track.
             // An explicit declaration still vetoes unknown/unavailable states;
@@ -249,6 +313,7 @@ window.VSC = window.VSC || {};
               'drm',
               'key_systems',
               'keySystems',
+              'encrypted',
               'licenseUrl',
               'license_url',
               'ssai',
@@ -256,6 +321,17 @@ window.VSC = window.VSC || {};
               'vmapUrl',
               'generateDrmTokenCallback',
             ];
+            if (captioned) {
+              protectedKeys.push('isProtected', 'isLive', 'isAd', 'isAdvertisement', 'preroll');
+              for (const value of [state, source]) {
+                for (const key of protectedKeys) {
+                  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+                  if (descriptor && (descriptor.get || descriptor.set || descriptor.value)) {
+                    return null;
+                  }
+                }
+              }
+            }
             for (const key of protectedKeys) {
               const descriptor = Object.getOwnPropertyDescriptor(selected, key);
               if (descriptor && (descriptor.get || descriptor.set || descriptor.value)) {
@@ -263,11 +339,73 @@ window.VSC = window.VSC || {};
               }
             }
             const variants = ownValue(selected, 'variants');
-            if (!Array.isArray(variants) || ownValue(variants, 'length') > 8) {
+            const variantCount = ownValue(variants, 'length');
+            if (
+              !Array.isArray(variants) ||
+              !Number.isSafeInteger(variantCount) ||
+              variantCount < 0 ||
+              variantCount > 8
+            ) {
               return null;
             }
-            for (let index = 0; index < ownValue(variants, 'length'); index++) {
-              const variant = ownValue(variants, String(index));
+            // Snapshot identities before reading page-owned variant descriptors.
+            // Neither a Proxy nor an SDK update may grow a loop's work budget.
+            const entries = [];
+            for (let index = 0; index < variantCount; index++) {
+              entries.push(ownValue(variants, String(index)));
+            }
+            const keys = ['content_type', 'type', 'url', 'src', 'bitrate'];
+            const readFields = (entry) => {
+              const values = [];
+              for (const key of keys) {
+                const descriptor =
+                  entry && typeof entry === 'object'
+                    ? Object.getOwnPropertyDescriptor(entry, key)
+                    : undefined;
+                if (descriptor && !Object.hasOwn(descriptor, 'value')) {
+                  return null;
+                }
+                values.push(descriptor?.value);
+              }
+              return values;
+            };
+            const fields = [];
+            for (let index = 0; index < variantCount; index++) {
+              const values = readFields(entries[index]);
+              if (!values) {
+                return null;
+              }
+              fields.push(values);
+            }
+            const unchanged = () => {
+              if (
+                ownValue(selected, 'variants') !== variants ||
+                ownValue(variants, 'length') !== variantCount
+              ) {
+                return false;
+              }
+              for (let index = 0; index < variantCount; index++) {
+                if (ownValue(variants, String(index)) !== entries[index]) {
+                  return false;
+                }
+                const values = readFields(entries[index]);
+                if (
+                  !values ||
+                  !values.every((value, field) => Object.is(value, fields[index][field]))
+                ) {
+                  return false;
+                }
+              }
+              return (
+                ownValue(variants, 'length') === variantCount &&
+                entries.every((entry, index) => ownValue(variants, String(index)) === entry)
+              );
+            };
+            if (!unchanged()) {
+              return null;
+            }
+            for (let index = 0; index < variantCount; index++) {
+              const variant = entries[index];
               if (!variant || typeof variant !== 'object') {
                 continue;
               }
@@ -278,23 +416,33 @@ window.VSC = window.VSC || {};
                 }
               }
             }
+            const snapshot = fields.map((value, index) =>
+              entries[index] && typeof entries[index] === 'object'
+                ? { type: value[0] ?? value[1], src: value[2] ?? value[3], bitrate: value[4] }
+                : entries[index]
+            );
             const indexDescriptor = Object.getOwnPropertyDescriptor(
               selected,
               'currentVariantIndex'
             );
-            let declaredOriginalUrl = originalUrl;
+            let declaredOriginalUrl = retained?.declaredOriginalUrl || originalUrl;
             if (indexDescriptor) {
               const index = indexDescriptor.value;
-              const declared = ownValue(ownValue(variants, String(index)), 'src');
-              if (
-                !Number.isSafeInteger(index) ||
-                index < 0 ||
-                index >= ownValue(variants, 'length') ||
-                !currentPlayerHlsMatches(declared, originalUrl)
-              ) {
+              if (!Number.isSafeInteger(index) || index < 0 || index >= variantCount) {
                 return null;
               }
-              declaredOriginalUrl = declared;
+              const declared = fields[index]?.[3];
+              if (!(
+                currentPlayerHlsMatches(declared, originalUrl) ||
+                (retained && (!preparing || restoring) && declared === retained.progressiveUrl)
+              )) {
+                return null;
+              }
+              if (!retained) {
+                declaredOriginalUrl = declared;
+              }
+            } else if (retained?.hasVariantIndex) {
+              return null;
             }
             const visited = new Set();
             const visit = (value) => {
@@ -304,8 +452,157 @@ window.VSC = window.VSC || {};
               visited.add(value);
               return true;
             };
-            const progressiveUrl = variantCandidate(variants, declaredOriginalUrl, original, visit);
-            return progressiveUrl ? { originalUrl, progressiveUrl, mediaId: original.id } : null;
+            const progressiveUrl = variantCandidate(snapshot, declaredOriginalUrl, original, visit);
+            if (!progressiveUrl) {
+              return null;
+            }
+            // X replaces SDK objects and selects its MP4 after our same-clip
+            // handoff. Bind primitive rendition contents, not those objects.
+            const variantBindings = [];
+            for (let index = 0; index < variantCount; index++) {
+              const variant = snapshot[index];
+              const bitrate = ownValue(variant, 'bitrate');
+              const type = ownValue(variant, 'type');
+              const url = ownValue(variant, 'src');
+              if (
+                (type !== undefined && typeof type !== 'string') ||
+                (url !== undefined && typeof url !== 'string')
+              ) {
+                return null;
+              }
+              variantBindings.push([
+                type,
+                url,
+                Number.isFinite(bitrate) && bitrate > 0 ? bitrate : 0,
+              ]);
+            }
+            if (!unchanged()) {
+              return null;
+            }
+            if (
+              variantBindings.filter((entry) => entry[1] === declaredOriginalUrl).length !== 1 ||
+              variantBindings.filter((entry) => entry[1] === progressiveUrl).length !== 1 ||
+              (retained &&
+                (variantBindings.length !== retained.variantBindings.length ||
+                  !variantBindings.every((entry, index) =>
+                    entry.every((value, field) => value === retained.variantBindings[index][field])
+                  )))
+            ) {
+              return null;
+            }
+            const doc = video.ownerDocument;
+            if (
+              captioned &&
+              window.VSC.TwitterPlayer?.validateRetainedHls?.(
+                video,
+                originalUrl,
+                progressiveUrl,
+                originParent,
+                expectedReload && video.readyState < 1 ? durationMs / 1000 : undefined
+              ) !== undefined
+            ) {
+              return null;
+            }
+            const binding = {
+              video,
+              controller: video.vsc,
+              doc,
+              root: doc.documentElement,
+              url: doc.URL,
+              node,
+              key,
+              trackId: id,
+              sourceId: ownValue(source, 'id'),
+              sourceIndex: ownValue(source, 'index'),
+              durationMs,
+              declaredOriginalUrl,
+              hasVariantIndex: Boolean(indexDescriptor),
+              variantBindings,
+              originalUrl,
+              progressiveUrl,
+              originalAttribute: video.getAttribute('src'),
+            };
+            const result = {
+              originalUrl,
+              progressiveUrl,
+              mediaId: original.id,
+              revalidate(expectedReload = false, allowDisposed = false, pendingHls = false) {
+                try {
+                  const player = video.vsc?.iosPlayer;
+                  const retainedOrigin = player?.active ? player.originParent : undefined;
+                  const next = playerStateCandidate(
+                    video,
+                    retainedOrigin,
+                    binding,
+                    expectedReload,
+                    captioned,
+                    false,
+                    captioned && allowDisposed,
+                    captioned && pendingHls
+                  );
+                  if (
+                    !next ||
+                    next.originalUrl !== originalUrl ||
+                    next.progressiveUrl !== progressiveUrl
+                  ) {
+                    return false;
+                  }
+                  // A newly bound modern SDK may veto the retained legacy item.
+                  return captioned
+                    ? window.VSC.TwitterPlayer?.validateRetainedHls?.(
+                        video,
+                        originalUrl,
+                        progressiveUrl,
+                        retainedOrigin,
+                        expectedReload && video.readyState < 1 ? durationMs / 1000 : undefined
+                      ) === undefined
+                    : window.VSC.TwitterPlayer?.validateRetainedHls?.(
+                        video,
+                        originalUrl,
+                        progressiveUrl,
+                        retainedOrigin,
+                        expectedReload && video.readyState < 1 ? durationMs / 1000 : undefined
+                      ) !== false;
+                } catch {
+                  return false;
+                }
+              },
+            };
+            Object.defineProperty(result, 'revalidate', { enumerable: false });
+            if (captioned) {
+              result.assetType = original.type;
+              result.duration = durationMs / 1000;
+              result.isCurrent = () => {
+                const player = video.vsc?.iosPlayer;
+                const origin = player?.active ? player.originParent : undefined;
+                const next = playerStateCandidate(video, origin, binding, false, true, true);
+                return Boolean(
+                  next && next.originalUrl === originalUrl && next.progressiveUrl === progressiveUrl
+                );
+              };
+              result.restoreCurrent = (transition = false) => {
+                const player = video.vsc?.iosPlayer || binding.controller?.iosPlayer;
+                const origin = player?.active ? player.originParent : undefined;
+                const next = playerStateCandidate(
+                  video,
+                  origin,
+                  binding,
+                  transition,
+                  true,
+                  true,
+                  true,
+                  false,
+                  transition
+                );
+                return Boolean(
+                  next && next.originalUrl === originalUrl && next.progressiveUrl === progressiveUrl
+                );
+              };
+            }
+            if (!unchanged()) {
+              return null;
+            }
+            return result;
           }
         }
       }
@@ -317,6 +614,36 @@ window.VSC = window.VSC || {};
 
   window.VSC.TwitterMediaSource = {
     matchesCurrentPlayerHls: currentPlayerHlsMatches,
+    findCaptionCandidate(video, originParent) {
+      try {
+        const tracks = Array.from(video.textTracks || []);
+        if (
+          tracks.length !== 2 ||
+          tracks.filter((t) => t.kind === 'captions').length !== 1 ||
+          tracks.filter((t) => t.kind === 'subtitles').length !== 1 ||
+          video.querySelectorAll('track').length ||
+          !Number.isFinite(video.duration) ||
+          video.duration <= 0
+        ) {
+          return null;
+        }
+        const current = video.currentSrc || video.src;
+        const sources = Array.from(video.children).filter((child) => child.localName === 'source');
+        if (
+          video.hasAttribute('src')
+            ? video.src !== current
+            : sources.length !== 1 || sources[0].src !== current
+        ) {
+          return null;
+        }
+        const candidate = playerStateCandidate(video, originParent, undefined, false, true);
+        return candidate && Math.abs(candidate.duration - video.duration) <= 0.25
+          ? candidate
+          : null;
+      } catch {
+        return null;
+      }
+    },
     findPlayerStateCandidate(video, originParent) {
       const legacy = playerStateCandidate(video, originParent);
       if (legacy === null) {

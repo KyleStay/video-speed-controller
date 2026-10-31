@@ -142,7 +142,7 @@ window.VSC = window.VSC || {};
     }
   }
 
-  function eligible(controller) {
+  function eligible(controller, expectedReload = false) {
     const video = controller?.video;
     const doc = video?.ownerDocument;
     if (
@@ -150,9 +150,8 @@ window.VSC = window.VSC || {};
       controller.disposed ||
       !video.isConnected ||
       video.vsc !== controller ||
-      video.readyState < 1 ||
-      !Number.isFinite(video.duration) ||
-      video.duration <= 0 ||
+      (!expectedReload &&
+        (video.readyState < 1 || !Number.isFinite(video.duration) || video.duration <= 0)) ||
       !Number.isFinite(video.currentTime) ||
       video.srcObject ||
       video.mediaKeys ||
@@ -355,6 +354,32 @@ window.VSC = window.VSC || {};
       }
     }
 
+    recoveryCurrent(controller) {
+      try {
+        return Boolean(
+          controller === this.controller &&
+          !this.pending &&
+          !this.closed &&
+          window.VSC.EventManager.isTwitterHost(new URL(this.doc.URL).hostname) &&
+          eligible(controller, window.VSC.TwitterPlaybackRecovery?.isReloading(controller, this)) &&
+          eligibleTracks(this.video, this.candidate) &&
+          typeof this.candidate.revalidate === 'function' &&
+          this.candidate.revalidate(
+            window.VSC.TwitterPlaybackRecovery?.isReloading(controller, this)
+          ) &&
+          this.ownsSource()
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    recoveryFailed(controller) {
+      controller.iosPlayer?.restoreSitePlayer();
+      this.cleanup({ restore: false });
+      controller.controlsManager?.inlinePlayer?.error('Playback could not restart.');
+    }
+
     ownsTransition() {
       return this.pending && this.ownsSource();
     }
@@ -379,7 +404,14 @@ window.VSC = window.VSC || {};
         this.listen(
           this.video,
           type,
-          () => {
+          (event) => {
+            const recovery = window.VSC.TwitterPlaybackRecovery;
+            if (
+              recovery?.isReloading(this.controller, this) &&
+              recovery.acceptSourceEvent(this.controller, event, this)
+            ) {
+              return;
+            }
             if (!this.pending || this.sourceEvents.has(type) || !this.ownsSource()) {
               cancel();
             } else {
@@ -466,6 +498,8 @@ window.VSC = window.VSC || {};
       if (this.closed) {
         return;
       }
+      window.VSC.TwitterPlaybackRecovery?.cancel(null, this);
+      window.VSC.TwitterPlaybackRecovery?.clearStall(this.controller);
       let owned = false;
       try {
         owned = restore && this.ownsSource();
