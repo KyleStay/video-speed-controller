@@ -399,4 +399,84 @@ describe('owned X MP4 playback recovery', () => {
     expect(window.VSC.TwitterPlaybackRecovery.ownsTransition(controller)).toBe(false);
     controller.controlsManager.inlinePlayer = null;
   });
+  it.each(['refs', 'read', 'write'])(
+    'finishes real HLS cleanup despite a throwing warning %s',
+    (failure) => {
+      const inline = controller.controlsManager.inlinePlayer;
+      const status = document.createElement('span');
+      status.textContent = 'Playback is still stalled. Try the site player.';
+      const bad = {};
+      Object.defineProperty(bad, 'textContent', {
+        get() {
+          if (failure === 'read') {
+            throw new Error('Discarded text');
+          }
+          return 'Playback is still stalled. Try the site player.';
+        },
+        set() {
+          throw new Error('Discarded text');
+        },
+      });
+      controller.controlsManager.inlinePlayer =
+        failure === 'refs'
+          ? {
+              get refs() {
+                throw new Error('Discarded refs');
+              },
+            }
+          : { refs: { status: bad } };
+      controller.iosPlayer.ui = { refs: { status } };
+      const disconnect = vi.spyOn(session.observer, 'disconnect');
+      try {
+        expect(() => session.cleanup()).not.toThrow();
+        expect(session.closed).toBe(true);
+        expect(session.listeners).toHaveLength(0);
+        expect(session.deadline).toBeNull();
+        expect(disconnect).toHaveBeenCalled();
+        expect(controller.safariPlayback).toBeNull();
+        expect(video.src).toBe(HLS);
+        expect(video.load).toHaveBeenCalledOnce();
+        expect(status.textContent).toBe('');
+      } finally {
+        controller.controlsManager.inlinePlayer = inline;
+      }
+    }
+  );
+
+  it.each(['refs', 'read', 'write'])(
+    'reports on the remaining surface when warning %s is inaccessible',
+    (failure) => {
+      const inline = controller.controlsManager.inlinePlayer;
+      const status = document.createElement('span');
+      const bad = {};
+      Object.defineProperty(bad, 'textContent', {
+        get() {
+          if (failure === 'read') {
+            throw new Error('Discarded text');
+          }
+          return '';
+        },
+        set() {
+          throw new Error('Discarded text');
+        },
+      });
+      controller.controlsManager.inlinePlayer =
+        failure === 'refs'
+          ? {
+              get refs() {
+                throw new Error('Discarded refs');
+              },
+            }
+          : { refs: { status: bad } };
+      controller.iosPlayer.ui = { refs: { status } };
+      try {
+        expect(() => window.VSC.TwitterPlaybackRecovery.reportStall(controller)).not.toThrow();
+        expect(status.textContent).toBe('Playback is still stalled. Try the site player.');
+        expect(() => window.VSC.TwitterPlaybackRecovery.clearStall(controller)).not.toThrow();
+        expect(status.textContent).toBe('');
+      } finally {
+        controller.controlsManager.inlinePlayer = inline;
+      }
+    }
+  );
 });

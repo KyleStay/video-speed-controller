@@ -87,30 +87,47 @@ window.VSC = window.VSC || {};
     }
   }
 
+  const STALL_MESSAGE = 'Playback is still stalled. Try the site player.';
+
+  function updateWarning(controller, report) {
+    // Resolve independently: one inaccessible surface cannot block either the
+    // other owned message or the caller's playback teardown.
+    for (const surface of [
+      () => controller?.controlsManager?.inlinePlayer?.refs?.status,
+      () => controller?.iosPlayer?.ui?.refs?.status,
+    ]) {
+      let node, text;
+      try {
+        node = surface();
+      } catch {
+        continue;
+      }
+      if (!node) {
+        continue;
+      }
+      try {
+        text = node.textContent;
+      } catch {
+        continue;
+      }
+      if (report ? !text || text === STALL_MESSAGE : text === STALL_MESSAGE) {
+        try {
+          node.textContent = report ? STALL_MESSAGE : '';
+        } catch {
+          /* A discarded warning surface must not interrupt playback cleanup. */
+        }
+      }
+    }
+  }
+
   window.VSC.TwitterPlaybackRecovery = {
     reportStall(controller) {
-      if (!this.identity(controller)) {
-        return;
-      }
-      const message = 'Playback is still stalled. Try the site player.';
-      for (const node of [
-        controller.controlsManager?.inlinePlayer?.refs?.status,
-        controller.iosPlayer?.ui?.refs?.status,
-      ]) {
-        if (node && (!node.textContent || node.textContent === message)) {
-          node.textContent = message;
-        }
+      if (this.identity(controller)) {
+        updateWarning(controller, true);
       }
     },
     clearStall(controller) {
-      for (const node of [
-        controller?.controlsManager?.inlinePlayer?.refs?.status,
-        controller?.iosPlayer?.ui?.refs?.status,
-      ]) {
-        if (node?.textContent === 'Playback is still stalled. Try the site player.') {
-          node.textContent = '';
-        }
-      }
+      updateWarning(controller, false);
     },
     identity(controller) {
       try {

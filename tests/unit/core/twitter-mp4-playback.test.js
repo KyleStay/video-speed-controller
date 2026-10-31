@@ -2103,4 +2103,27 @@ describe('X retained MediaSource MP4 playback', () => {
       expect(window.VSC.TwitterPlaybackRecovery.ownsTransition(c)).toBe(false);
     });
   });
+  it('releases the real companion decoder and listeners when warning refs throw', async () => {
+    const session = await commit();
+    const c = session.video.vsc;
+    c.controlsManager = {
+      inlinePlayer: {
+        get refs() {
+          throw new Error('Discarded refs');
+        },
+      },
+    };
+    const load = vi.spyOn(session.video, 'load');
+    const removed = vi.spyOn(session.video, 'removeEventListener');
+    load.mockClear();
+    expect(() => session.cleanup({ resume: false })).not.toThrow();
+    expect(session.closed).toBe(true);
+    expectReleased(session);
+    for (const type of ['loadeddata', 'error', 'emptied', 'loadstart']) {
+      expect(removed.mock.calls.some(([name]) => name === type)).toBe(true);
+    }
+    expect(load).toHaveBeenCalledOnce();
+    expect(session.video.hasAttribute('src')).toBe(false);
+    expect(original.load).not.toHaveBeenCalled();
+  });
 });
