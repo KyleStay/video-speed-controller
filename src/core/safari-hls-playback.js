@@ -4,6 +4,32 @@ window.VSC = window.VSC || {};
 (function () {
   const readyInitializations = new WeakSet();
 
+  function isXNativeHls(controller) {
+    try {
+      const video = controller?.video;
+      if (
+        !video?.isConnected ||
+        controller.disposed ||
+        video.vsc !== controller ||
+        video.srcObject ||
+        !Number.isFinite(video.duration) ||
+        video.duration <= 0 ||
+        !window.VSC.SafariHLSPlayback.matches(video) ||
+        !window.VSC.EventManager.isTwitterHost(new URL(video.ownerDocument.URL).hostname)
+      ) {
+        return null;
+      }
+      const url = new URL(video.currentSrc || video.src);
+      return ['http:', 'https:'].includes(url.protocol) && /\.m3u8$/i.test(url.pathname);
+    } catch {
+      return null;
+    }
+  }
+
+  function deferXInitialization(controller, rate, source) {
+    return source === 'init' && rate > 2 && isXNativeHls(controller) ? { deferred: true } : null;
+  }
+
   // Joining an already-requested play promise does not restart playback. Wait
   // for it to settle before load() can reject the site's original play request.
   function deferInitialization(controller, rate, candidate) {
@@ -21,10 +47,13 @@ window.VSC = window.VSC || {};
     const lastSpeed = settings?.lastSpeed;
     const siteSpeed = settings?.siteDefaultSpeed;
     const revision = controller.config?.speedPreferenceRevision;
+    const rememberSpeed = settings?.rememberSpeed;
+    const targetSpeed = controller.getTargetSpeed?.();
     const listeners = [];
     let closed = false;
-    let timer;
+    let timer, observer;
     const pending = {
+      deferred: true,
       cleanup() {
         if (closed) {
           return;
@@ -53,39 +82,39 @@ window.VSC = window.VSC || {};
       },
     };
     controller.safariPlaybackPending = pending;
-    const observer = new view.MutationObserver(pending.cleanup);
-    observer.observe(video, { attributes: true, attributeFilter: ['src', 'poster'] });
-    const listen = (target, type, handler, options) => {
-      target.addEventListener(type, handler, options);
-      listeners.push(() => target.removeEventListener(type, handler, options));
-    };
-    for (const type of ['emptied', 'loadstart', 'pause', 'encrypted']) {
-      listen(video, type, pending.cleanup, true);
-    }
-    listen(view, 'pagehide', pending.cleanup);
-    listen(doc, 'visibilitychange', () => {
-      if (doc.visibilityState === 'hidden') {
-        pending.cleanup();
-      }
-    });
-    for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
-      listen(
-        view,
-        type,
-        (event) => {
-          if (event.isTrusted) {
-            pending.cleanup();
-          }
-        },
-        { capture: true, passive: true }
-      );
-    }
-    timer = view.setTimeout(pending.cleanup, 10000);
     try {
+      observer = new view.MutationObserver(pending.cleanup);
+      observer.observe(video, { attributes: true, attributeFilter: ['src', 'poster'] });
+      const listen = (target, type, handler, options) => {
+        target.addEventListener(type, handler, options);
+        listeners.push(() => target.removeEventListener(type, handler, options));
+      };
+      for (const type of ['emptied', 'loadstart', 'pause', 'encrypted']) {
+        listen(video, type, pending.cleanup, true);
+      }
+      listen(view, 'pagehide', pending.cleanup);
+      listen(doc, 'visibilitychange', () => {
+        if (doc.visibilityState === 'hidden') {
+          pending.cleanup();
+        }
+      });
+      for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
+        listen(
+          view,
+          type,
+          (event) => {
+            if (event.isTrusted) {
+              pending.cleanup();
+            }
+          },
+          { capture: true, passive: true }
+        );
+      }
+      timer = view.setTimeout(pending.cleanup, 10000);
       const playback = video.play();
       if (!playback?.then) {
         pending.cleanup();
-        return;
+        return pending;
       }
       playback
         .then(() => {
@@ -117,11 +146,13 @@ window.VSC = window.VSC || {};
                 (video.currentSrc || video.src) === candidate.originalUrl &&
                 controller.config?.settings?.lastSpeed === lastSpeed &&
                 controller.config?.settings?.siteDefaultSpeed === siteSpeed &&
-                controller.config?.speedPreferenceRevision === revision;
+                controller.config?.speedPreferenceRevision === revision &&
+                controller.config?.settings?.rememberSpeed === rememberSpeed &&
+                controller.getTargetSpeed?.() === targetSpeed;
               pending.cleanup();
               if (
                 !valid ||
-                (lastSpeed !== rate && siteSpeed !== rate && !hasCurrentLocalRate(controller, rate))
+                (lastSpeed !== rate && siteSpeed !== rate && !hasCurrentInitRate(controller, rate))
               ) {
                 return;
               }
@@ -140,6 +171,7 @@ window.VSC = window.VSC || {};
     } catch {
       pending.cleanup();
     }
+    return pending;
   }
 
   function eligible(controller) {
@@ -209,11 +241,13 @@ window.VSC = window.VSC || {};
     return true;
   }
 
-  function hasCurrentLocalRate(controller, rate) {
+  function hasCurrentInitRate(controller, rate) {
     const local = controller.actionHandler?.eventManager?.getMediaRateState?.(controller.video);
     return (
-      local?.lifecycleSpeed === rate &&
-      (local.lifecycleSpeedRevision ?? 0) === (controller.config?.speedPreferenceRevision ?? 0)
+      (local?.lifecycleSpeed === rate &&
+        (local.lifecycleSpeedRevision ?? 0) ===
+          (controller.config?.speedPreferenceRevision ?? 0)) ||
+      (isXNativeHls(controller) && controller.getTargetSpeed?.() === rate)
     );
   }
 
@@ -221,14 +255,15 @@ window.VSC = window.VSC || {};
     if (
       source === 'external' ||
       !Number.isFinite(rate) ||
-      rate <= 2 ||
+      rate <= 0 ||
+      (rate <= 2 && !isXNativeHls(controller)) ||
       !eligible(controller) ||
       (source === 'init' &&
         (controller.safariPlaybackFailedSource ===
           (controller.video.currentSrc || controller.video.src) ||
           (controller.config?.settings?.lastSpeed !== rate &&
             controller.config?.settings?.siteDefaultSpeed !== rate &&
-            !hasCurrentLocalRate(controller, rate))))
+            !hasCurrentInitRate(controller, rate))))
     ) {
       return null;
     }
@@ -787,7 +822,7 @@ window.VSC = window.VSC || {};
         if (source !== 'init') {
           controller?.safariPlaybackPending?.cleanup();
         } else if (controller?.safariPlaybackPending) {
-          return null;
+          return controller.safariPlaybackPending;
         }
         const existing = controller?.safariPlayback;
         if (source !== 'init') {
@@ -802,11 +837,19 @@ window.VSC = window.VSC || {};
         existing?.cleanup({ restore: false });
         const candidate = resolveCandidate(controller, rate, source);
         if (!candidate) {
-          return null;
+          return deferXInitialization(controller, rate, source);
         }
-        if (source === 'init' && !readyInitializations.has(controller)) {
-          deferInitialization(controller, rate, candidate);
-          return null;
+        if (
+          source === 'init' &&
+          !readyInitializations.has(controller) &&
+          (!isXNativeHls(controller) ||
+            controller.video.paused !== true ||
+            controller.video.autoplay !== false)
+        ) {
+          return (
+            deferInitialization(controller, rate, candidate) ||
+            deferXInitialization(controller, rate, source)
+          );
         }
         if (source !== 'init') {
           controller.safariPlaybackFailedSource = null;

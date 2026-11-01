@@ -21,7 +21,8 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     resolver,
     order,
     visibility,
-    added;
+    added,
+    previousURL;
   const emit = (type) => video.dispatchEvent(new Event(type));
   const nativePlaying = () => {
     const listener = controller.handlePlayingReadiness;
@@ -43,6 +44,8 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
   beforeEach(async () => {
     installChromeMock();
     resetMockStorage();
+    previousURL = document.URL;
+    globalThis.jsdom.reconfigure({ url: 'https://x.com/example/status/12345' });
     dom = createMockDOM();
     dom.container.dataset.testid = 'videoComponent';
     config = new window.VSC.VideoSpeedConfig();
@@ -130,7 +133,9 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     controller = new window.VSC.VideoController(video, dom.container, config, action);
     expect(resolver).toHaveReturnedWith(null);
     expect(controller.safariPlaybackPending).toBeFalsy();
-    expect(video.playbackRate).toBe(4);
+    expect(video.playbackRate).toBe(1);
+    expect(Number(controller.speedIndicator.textContent)).toBe(1);
+    expect(manager.getMediaRateState(video)).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
     expect(video.load).not.toHaveBeenCalled();
     video.readyState = 2;
     action.adjustSpeed.mockClear();
@@ -150,6 +155,106 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     cleanupChromeMock();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    globalThis.jsdom.reconfigure({ url: previousURL });
+  });
+
+  it.each([1, 0.5, 2, 4])(
+    'prefers supplied MP4 before paused first Play at rate %s and on the next feed clip',
+    async (rate) => {
+      controller.remove();
+      manager.releaseMediaState(video);
+      config.settings.lastSpeed = rate === 1 ? null : rate;
+      video.readyState = 0;
+      video.paused = true;
+      video.autoplay = false;
+      selected.hasCaptions = false;
+      controller = new window.VSC.VideoController(video, dom.container, config, action);
+      video.readyState = 1;
+      emit('loadedmetadata');
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(rate);
+      expect(video.paused).toBe(true);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.load).toHaveBeenCalledOnce();
+      video.currentSrc = MP4;
+      video.readyState = 4;
+      emit('loadeddata');
+      await video.play();
+      emit('play');
+      expect(order.find(([type]) => type === 'play')[1]).toBe(MP4);
+      controller.safariPlayback.cleanup({ restore: false });
+      const nextHLS = HLS.replace('/12345/', '/67890/'),
+        nextMP4 = MP4.replace('/12345/', '/67890/');
+      video.src = video.currentSrc = nextHLS;
+      video.playbackRate = 1;
+      selected.variants = [
+        { src: nextHLS, type: 'application/x-mpegURL' },
+        { src: nextMP4, type: 'video/mp4' },
+      ];
+      emit('emptied');
+      emit('loadstart');
+      video.readyState = 2;
+      video.paused = false;
+      nativePlaying();
+      await flush();
+      expect(video.src).toBe(nextMP4);
+      expect(video.playbackRate).toBe(rate);
+      expect(config.settings.lastSpeed).toBe(rate === 1 ? null : rate);
+      expect(config.save).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not load an explicitly paused autoplay video until its native playing opportunity', async () => {
+    controller.remove();
+    manager.releaseMediaState(video);
+    config.settings.lastSpeed = null;
+    video.readyState = 0;
+    video.paused = true;
+    video.autoplay = true;
+    selected.hasCaptions = false;
+    controller = new window.VSC.VideoController(video, dom.container, config, action);
+    video.readyState = 1;
+    emit('loadedmetadata');
+    expect(video.src).toBe(HLS);
+    expect(video.autoplay).toBe(true);
+    expect(video.paused).toBe(true);
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.load).not.toHaveBeenCalled();
+    video.readyState = 2;
+    video.paused = false;
+    nativePlaying();
+    await flush();
+    expect(video.src).toBe(MP4);
+    expect(video.playbackRate).toBe(1);
+  });
+
+  it('retains a paused loadedmetadata rate then switches only on eligible native playing', async () => {
+    controller.remove();
+    manager.releaseMediaState(video);
+    video.readyState = 0;
+    video.paused = true;
+    video.autoplay = true;
+    selected.hasCaptions = false;
+    controller = new window.VSC.VideoController(video, dom.container, config, action);
+    video.readyState = 1;
+    emit('loadedmetadata');
+    expect(video.playbackRate).toBe(1);
+    expect(Number(controller.speedIndicator.textContent)).toBe(1);
+    expect(controller.safariPlaybackPending).toBeFalsy();
+    expect(video.load).not.toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    expect(manager.getMediaRateState(video)).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+    video.readyState = 2;
+    video.paused = false;
+    nativePlaying();
+    await flush();
+    expect(video.src).toBe(MP4);
+    expect(video.playbackRate).toBe(4);
+    expect(Number(controller.speedIndicator.textContent)).toBe(4);
+    expect(video.load).toHaveBeenCalledOnce();
+    expect(
+      order.filter(([type, rate, source]) => type === 'rate' && rate === 4 && source === HLS)
+    ).toEqual([]);
   });
 
   it('keeps early unknown captions vetoed, then uses a later native playing opportunity after explicit false', async () => {
@@ -297,7 +402,7 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     'blob',
     'overlong',
     'non-string',
-    'slower target',
+    'slower other-provider target',
   ])('skips nonqualifying %s media without an SDK probe or budget consumption', async (reason) => {
     selected.hasCaptions = false;
     if (reason === 'pause') {
@@ -325,6 +430,7 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
         },
       };
     } else {
+      globalThis.jsdom.reconfigure({ url: 'https://example.com/video' });
       config.speedPreferenceRevision++;
       config.settings.lastSpeed = 2;
     }

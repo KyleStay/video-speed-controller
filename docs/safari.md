@@ -323,6 +323,24 @@ baseline. This single simulator pair establishes no universal smoothness or
 improvement claim. See the raw [owned](../test-results/owned-fullscreen/rate-owned-final.json)
 and [baseline](../test-results/owned-fullscreen/rate-baseline-final.json) reports.
 
+## Build 36 feed stutter investigation
+
+A user reported continued stutter above 2× on X post `2116631726629786057`.
+Ordinary iPhone Safari capture confirmed native HLS switching to supplied MP4.
+A later stable 12-second muted MP4 window sustained decoded advancement at
+4.023× with no frame gaps above 150 ms; this does not clear the reported feed
+failure. Feed and handoff verification remain open.
+
+Verified asynchronous HLS initialization previously wrote the requested fast rate
+and displayed it before the MP4 command started. Pending initialization now keeps
+the accepted native rate and display until that coordinated command. Finite X
+HLS clips also retain that actual rate while paused or awaiting a usable candidate;
+normal readiness events can then start the verified handoff. Separately,
+four paused, connected offscreen companions could block the next eligible clip;
+lazy paused handback permits later clips within the four-player limit, preserving
+position and audio state. Both corrections have regressions; physical acceptance
+must distinguish these control changes from actual decoded playback.
+
 ## October 21 Safari 16× verification — earlier candidate
 
 The candidate caps requests at 16× and removes repeated lifecycle rate writes
@@ -457,8 +475,10 @@ alternative. Current X MediaSource playback uses the separate retained-producer
 adapter described below. StayFast avoids reassigning an unchanged native rate and
 does not fight a source-specific initialization clamp.
 
-On iPhone/iPad, a speed above 2× selects an explicitly supplied matching MP4
-rendition. Resolution supports X/Twitter React props, direct HTML `<source>`
+On iPhone/iPad, X/Twitter prefers an explicitly supplied matching MP4 at every
+speed, so a later speed increase can use the progressive source already loaded.
+Other supported HLS players select their supplied MP4 above 2×.
+Resolution supports X/Twitter React props, direct HTML `<source>`
 alternatives, Video.js/Brightcove `currentSources()` and JW Player’s current
 playlist item. Both the active HLS and chosen MP4 must belong to that exact
 media element or a verified single-video player scope. The
@@ -587,8 +607,10 @@ companion and owned wrappers/listeners without a stale resume. A caption or
 protection change returns to the same original producer.
 
 The coordinator performs one synchronous source/load/start-time/rate transition.
-It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
-selection first joins an already-requested Play promise, then checks the still-current
+It does not defer playback or seeking to metadata callbacks. Verified paused X
+media with autoplay off can prepare its MP4 without requesting Play. Autoplay
+intent remains with the site. Playing initialization first joins an already-requested
+Play promise, then checks the still-current
 source and intent in the next task before starting that synchronous transition.
 Metadata initialization also rechecks rendition eligibility when an earlier speed
 command already set the requested numeric rate. Matching `playbackRate` alone

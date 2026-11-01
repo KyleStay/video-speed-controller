@@ -24,6 +24,65 @@ window.VSC = window.VSC || {};
     );
   };
 
+  function idleCompanion(session) {
+    try {
+      const video = session.video;
+      if (
+        !session.committed ||
+        session.closed ||
+        session.committing ||
+        session.creatingController ||
+        !session.playReady ||
+        session.recovery?.reload ||
+        video.readyState < 2 ||
+        video.currentSrc !== session.candidate.progressiveUrl ||
+        !video.isConnected ||
+        !session.original.isConnected ||
+        !video.paused ||
+        !session.original.paused ||
+        video.seeking ||
+        session.original.seeking ||
+        !session.ownsNativeSource()
+      ) {
+        return false;
+      }
+      for (const media of [video, session.original]) {
+        const player = media.vsc?.iosPlayer;
+        if (
+          player?.active ||
+          player?.nativeSession ||
+          media.webkitDisplayingFullscreen ||
+          (media.webkitPresentationMode && media.webkitPresentationMode !== 'inline') ||
+          session.doc.pictureInPictureElement === media ||
+          session.doc.fullscreenElement === media
+        ) {
+          return false;
+        }
+      }
+      const rect = video.getBoundingClientRect();
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        (rect.bottom <= 0 ||
+          rect.right <= 0 ||
+          rect.top >= session.view.innerHeight ||
+          rect.left >= session.view.innerWidth)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function reclaimable(session) {
+    try {
+      return (
+        idleCompanion(session) && session.candidate.current(session.video) && idleCompanion(session)
+      );
+    } catch {
+      return false;
+    }
+  }
+
   function resolve(controller, rate, source) {
     if (
       !controller ||
@@ -32,7 +91,6 @@ window.VSC = window.VSC || {};
       rate <= 0 ||
       (rate <= 2 && source !== 'presentation') ||
       controller.disposed ||
-      active.size >= 4 ||
       players.has(controller.video) ||
       !window.VSC.IOSPlayer?.isSupported(controller.video) ||
       controller.video.ownerDocument.hidden ||
@@ -503,6 +561,7 @@ window.VSC = window.VSC || {};
       site = false,
       playing: priorPlaying,
       failed = false,
+      capacity = false,
     } = {}) {
       if (this.closed) {
         return;
@@ -512,9 +571,21 @@ window.VSC = window.VSC || {};
         : this.rateRevision;
       const sameProducer = this.identityCurrent();
       let current = sameProducer && this.ownsNativeSource();
+      if (capacity) {
+        if (this.observer?.takeRecords().length) {
+          this.originalIntentChanged = true;
+        }
+        if (this.originalIntentChanged) {
+          this.cleanup({ resume: false });
+          return;
+        }
+        if (!current || !idleCompanion(this)) {
+          return;
+        }
+      }
       // A handback is final for automatic initialization on this clip. A later
       // explicit speed command or a genuinely new SDK session may try again.
-      if (this.finished) {
+      if (this.finished && !capacity) {
         suppressAutomatic(this);
       }
       let time, playing, rate, muted, volume;
@@ -815,7 +886,11 @@ window.VSC = window.VSC || {};
     },
     canBegin(controller, rate, source = 'init') {
       try {
-        return !originals.has(controller?.video) && Boolean(resolve(controller, rate, source));
+        return (
+          (active.size < 4 || [...active].some(reclaimable)) &&
+          !originals.has(controller?.video) &&
+          Boolean(resolve(controller, rate, source))
+        );
       } catch {
         return false;
       }
@@ -850,7 +925,49 @@ window.VSC = window.VSC || {};
         if (!candidate) {
           return null;
         }
+        if (active.size >= 4) {
+          let idle;
+          for (const entry of active) {
+            if (!idleCompanion(entry)) {
+              continue;
+            }
+            if (!entry.current()) {
+              if (entry.originalIntentChanged) {
+                entry.cleanup({ resume: false });
+              }
+              if (active.size < 4) {
+                break;
+              }
+            } else if (idleCompanion(entry)) {
+              idle = entry;
+              break;
+            }
+          }
+          if (active.size >= 4) {
+            if (!idle || !candidate.current() || !idleCompanion(idle)) {
+              return null;
+            }
+            if (idle.observer?.takeRecords().length) {
+              idle.originalIntentChanged = true;
+              idle.cleanup({ resume: false });
+              return null;
+            }
+            // Reuse paused handback: retain its position without starting the producer.
+            idle.cleanup({ playing: false, capacity: true });
+          }
+          if (!candidate.current()) {
+            return null;
+          }
+        }
+        if (active.size >= 4) {
+          return null;
+        }
         session = new TwitterMP4Session(controller, candidate, rate, source);
+        if (active.size >= 4 || originals.has(controller.video)) {
+          session.closed = true;
+          session.recovery.cleanup();
+          return null;
+        }
         originals.set(controller.video, session);
         players.set(session.video, session);
         active.add(session);
