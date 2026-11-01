@@ -351,7 +351,14 @@ window.VSC = window.VSC || {};
     return variants;
   }
 
-  function inspect(video, originParent, companion, identityOnly = false, restored = false) {
+  function inspect(
+    video,
+    originParent,
+    companion,
+    identityOnly = false,
+    restored = false,
+    expectedDuration = video.duration
+  ) {
     const scope = scopeFor(video, originParent, restored);
     if (
       !scope ||
@@ -445,9 +452,9 @@ window.VSC = window.VSC || {};
             own(source, 'src') !== sourceUrl ||
             typeof sessionId !== 'string' ||
             !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sessionId) ||
-            !near(own(content, 'durationMs') / 1000, video.duration) ||
-            !near(own(selected, 'durationMs') / 1000, video.duration) ||
-            !near(own(source, 'playlistDurationSec'), video.duration) ||
+            !near(own(content, 'durationMs') / 1000, expectedDuration) ||
+            !near(own(selected, 'durationMs') / 1000, expectedDuration) ||
+            !near(own(source, 'playlistDurationSec'), expectedDuration) ||
             (!identityOnly && ![props, content, selected, source, state].every(clear))
           ) {
             return null;
@@ -607,7 +614,7 @@ window.VSC = window.VSC || {};
             if (!current()) {
               return null;
             }
-            variants = relayVariants(fiber, post, contentId, video.duration, download, current);
+            variants = relayVariants(fiber, post, contentId, expectedDuration, download, current);
             if (!variants) {
               return null;
             }
@@ -624,7 +631,7 @@ window.VSC = window.VSC || {};
               (!clear(media) ||
                 !clear(info) ||
                 own(media, 'id_str') !== contentId ||
-                !near(own(info, 'duration_millis') / 1000, video.duration) ||
+                !near(own(info, 'duration_millis') / 1000, expectedDuration) ||
                 own(media, 'video_download_url') !== download)) ||
             downloadAsset?.id !== contentId ||
             downloadAsset.type !== sourceAsset.type ||
@@ -705,6 +712,20 @@ window.VSC = window.VSC || {};
   }
 
   window.VSC.TwitterPlayer = {
+    validateRetainedHls(video, originalUrl, progressiveUrl, originParent, expectedDuration) {
+      try {
+        const next = inspect(video, originParent, undefined, false, true, expectedDuration);
+        return next === undefined
+          ? undefined
+          : Boolean(
+              next &&
+              window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(next.sourceUrl, originalUrl) &&
+              next.progressiveUrl === progressiveUrl
+            );
+      } catch {
+        return false;
+      }
+    },
     // undefined means no bound current SDK; null is an authoritative veto that
     // callers must preserve before considering React or HTML alternatives.
     findNativeHlsCandidate(video, originParent) {
@@ -751,11 +772,68 @@ window.VSC = window.VSC || {};
         ) {
           return null;
         }
-        return {
+        const duration = video.duration,
+          post = own(candidate.content, 'sourceId'),
+          controller = video.vsc;
+        const result = {
           originalUrl,
           progressiveUrl: candidate.progressiveUrl,
           mediaId: candidate.contentId,
+          revalidate(expectedReload = false) {
+            try {
+              const unchanged = () =>
+                video.ownerDocument === doc &&
+                doc.documentElement === root &&
+                doc.URL === documentUrl &&
+                video.isConnected &&
+                video.vsc === controller &&
+                video.getAttribute('src') === candidate.progressiveUrl &&
+                (!video.currentSrc || video.currentSrc === candidate.progressiveUrl) &&
+                !video.srcObject &&
+                !video.mediaKeys &&
+                !video.webkitKeys &&
+                !(video.audioTracks?.length > 1) &&
+                !(video.videoTracks?.length > 1);
+              if (!unchanged()) {
+                return false;
+              }
+              const player = video.vsc?.iosPlayer;
+              const next = inspect(
+                video,
+                player?.active ? player.originParent : originParent,
+                undefined,
+                false,
+                true,
+                expectedReload && video.readyState < 1 ? duration : video.duration
+              );
+              return Boolean(
+                next &&
+                unchanged() &&
+                own(next.content, 'sourceId') === post &&
+                [
+                  'sdk',
+                  'api',
+                  'store',
+                  'getState',
+                  'getSnapshot',
+                  'getMediaElement',
+                  'seekTo',
+                  'subscribe',
+                  'sourceUrl',
+                  'contentId',
+                  'sessionId',
+                  'progressiveUrl',
+                  'loop',
+                  'scope',
+                ].every((key) => next[key] === candidate[key])
+              );
+            } catch {
+              return false;
+            }
+          },
         };
+        Object.defineProperty(result, 'revalidate', { enumerable: false });
+        return result;
       } catch {
         return null;
       }

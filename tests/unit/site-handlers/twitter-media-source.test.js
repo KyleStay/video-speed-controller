@@ -358,6 +358,94 @@ describe('TwitterMediaSource', () => {
     expect(video.src).toBe(originalUrl);
   });
 
+  function captionState() {
+    const fixture = playerState({}, { hasCaptions: true });
+    property(video, 'duration', 20);
+    property(video, 'textTracks', [{ kind: 'captions' }, { kind: 'subtitles' }]);
+    video.vsc = { video };
+    return fixture;
+  }
+
+  it('offers a separate caption-preserving candidate while ordinary source switching remains vetoed', () => {
+    const { variants } = captionState();
+    expect(find()).toBeNull();
+    const candidate = window.VSC.TwitterMediaSource.findCaptionCandidate?.(video);
+    expect(candidate).toMatchObject({ originalUrl, progressiveUrl: variants[3].src, duration: 20 });
+    expect(candidate.isCurrent()).toBe(true);
+  });
+
+  it.each([
+    'unknown captions',
+    'unknown SDK captions',
+    'DRM',
+    'live',
+    'inherited DRM',
+    'inherited live',
+    'ambiguous',
+    'wrong HLS',
+    'unrelated track',
+  ])('keeps the caption candidate veto for %s', (reason) => {
+    const { state, track, variants } = captionState();
+    if (reason === 'unknown captions') {
+      track.hasCaptions = undefined;
+    } else if (reason === 'unknown SDK captions') {
+      delete state.hasCaptions;
+    } else if (reason === 'DRM') {
+      track.keySystems = { protected: true };
+    } else if (reason === 'live') {
+      track.live = true;
+    } else if (reason === 'inherited DRM') {
+      Object.setPrototypeOf(track, { keySystems: {} });
+    } else if (reason === 'inherited live') {
+      Object.setPrototypeOf(track, { live: true });
+    } else if (reason === 'ambiguous') {
+      state.tracks.push({ ...track });
+    } else if (reason === 'wrong HLS') {
+      variants[0].src += '&other=1';
+    } else {
+      property(video, 'textTracks', [{ kind: 'captions' }, { kind: 'metadata' }]);
+    }
+    expect(window.VSC.TwitterMediaSource.findCaptionCandidate(video)).toBeNull();
+    expect(find()).toBeNull();
+  });
+
+  it('does not invoke a caption capability accessor', () => {
+    const { track } = captionState();
+    const getter = vi.fn(() => true);
+    Object.defineProperty(track, 'hasCaptions', { get: getter });
+    expect(window.VSC.TwitterMediaSource.findCaptionCandidate(video)).toBeNull();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('does not use legacy caption metadata once a current modern SDK owns the media', () => {
+    const { track } = captionState();
+    const legacy = Object.getOwnPropertyDescriptor(parent, '__reactProps$fixture').value;
+    track.durationMs = 20456;
+    modernPlayer();
+    property(parent, '__reactProps$fixture', legacy);
+    expect(window.VSC.TwitterMediaSource.findCaptionCandidate(video)).toBeNull();
+  });
+
+  it('bounds caption SDK work when a page descriptor grows its own track list', () => {
+    const { state } = captionState();
+    const rows = state.tracks;
+    let reads = 0;
+    state.tracks = new Proxy(rows, {
+      getOwnPropertyDescriptor(target, key) {
+        if (/^\d+$/.test(key)) {
+          reads++;
+          if (target.length < 32) {
+            target.push({ id: 99 });
+          }
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    window.VSC.TwitterMediaSource.findCaptionCandidate(video);
+    expect(reads).toBe(1);
+    expect(rows).toHaveLength(2);
+  });
+
   it('accepts the expanded viewer’s absent availability declaration', () => {
     const { track, variants } = playerState({}, { mediaAvailability: undefined });
     expect(find()?.progressiveUrl).toBe(variants[3].src);

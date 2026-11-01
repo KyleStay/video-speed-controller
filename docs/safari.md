@@ -517,13 +517,24 @@ a 4K download when X explicitly supplies a lighter rendition. A validated cache
 binding also permits retaining one exact `<source>` child for automatic takeover.
 Caption, protection, live and ambiguity vetoes still apply.
 
-At 2.1× or faster, a committed visible companion watches decoded frames. Three
+Supported finite X native-HLS clips with captions may use the supplied MP4 only
+after the explicit complete subtitle rendition has been fetched and verified
+against every native cue. The bounded three-request manifest/subtitle chain and
+native parser must agree on the full text, timing and cue settings before any
+source change. Unknown, incomplete, protected or mismatched captions retain HLS.
+The generic caption veto remains unchanged for other streams. Preparation keeps
+the previous displayed rate until the playback command is actually accepted.
+Handback restores the original HLS source and current caption intent.
+
+At 2.1× or faster, committed visible X MP4 sessions watch decoded frames, including
+companions, HLS-switched MP4 and verified caption-preserving MP4. Three
 seconds without frame progress, corroborated by a stopped native frame counter
 and at least one second buffered, permits reloading that same MP4 while retaining
 time, rate, audio intent and owned presentation. Two attempts are allowed; another
 confirmed stall returns to the original player. Pause, seek, newer speed/source
 or presentation intent, visibility changes and cleanup invalidate pending recovery.
-The retained MSE producer is never reloaded. Unit recovery checks do not establish
+Recovery waits for the full native caption certificate again after a captioned
+reload. The retained MSE producer is never reloaded. Unit recovery checks do not establish
 that an actual hardware stall has been recovered on the phone.
 
 The reported October 28 post exposed an XDS transport group inside one additional

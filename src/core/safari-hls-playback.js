@@ -280,6 +280,7 @@ window.VSC = window.VSC || {};
       this.originalTime = this.video.currentTime;
       this.originalRate = this.video.playbackRate;
       this.wasPlaying = !this.video.paused && !this.video.ended;
+      this.playReady = true;
       this.pending = true;
       this.finished = false;
       this.closed = false;
@@ -287,11 +288,58 @@ window.VSC = window.VSC || {};
       this.ownMutationSeen = false;
       this.sourceEvents = new Set();
       this.listeners = [];
+      this.playGeneration = 0;
+      this.recovery = new window.VSC.OwnedMP4Recovery(this);
     }
 
     listen(target, type, callback, options) {
       target.addEventListener(type, callback, options);
       this.listeners.push(() => target.removeEventListener(type, callback, options));
+    }
+
+    recoveryCurrent(expectedReload = false) {
+      try {
+        if (
+          this.pending ||
+          !this.finished ||
+          !this.playReady ||
+          this.controller.disposed ||
+          !this.ownsSource()
+        ) {
+          return false;
+        }
+        if (typeof this.candidate.revalidate !== 'function') {
+          return false;
+        }
+        if (!this.candidate.revalidate(expectedReload)) {
+          this.cleanup({ restore: false });
+          return false;
+        }
+        return (
+          eligibleTracks(this.video, this.candidate) &&
+          !(this.video.audioTracks?.length > 1) &&
+          !(this.video.videoTracks?.length > 1) &&
+          this.ownsSource()
+        );
+      } catch {
+        this.cleanup({ restore: false });
+        return false;
+      }
+    }
+
+    recoveryFailed() {
+      const restore = this.recoveryCurrent(true);
+      if (restore) {
+        this.controller.safariPlaybackFailedSource = this.candidate.originalUrl;
+      }
+      this.cleanup({ restore, playing: true });
+    }
+
+    cancelReload() {
+      this.recovery?.cancel();
+    }
+    watchPlayback() {
+      this.recovery?.refresh();
     }
 
     // Read all queued writes, not just the final value: an away-and-back site
@@ -356,7 +404,7 @@ window.VSC = window.VSC || {};
     }
 
     ownsTransition() {
-      return this.pending && this.ownsSource();
+      return (this.pending && this.ownsSource()) || this.recovery.ownsTransition();
     }
 
     start() {
@@ -380,6 +428,9 @@ window.VSC = window.VSC || {};
           this.video,
           type,
           () => {
+            if (this.recovery.ownsTransition()) {
+              return;
+            }
             if (!this.pending || this.sourceEvents.has(type) || !this.ownsSource()) {
               cancel();
             } else {
@@ -395,14 +446,18 @@ window.VSC = window.VSC || {};
           return;
         }
         this.pending = false;
-        this.view.clearTimeout(this.deadline);
-        this.deadline = null;
+        if (this.playReady) {
+          this.view.clearTimeout(this.deadline);
+          this.deadline = null;
+        }
+        this.recovery.refresh();
       });
       this.listen(this.video, 'error', () => this.abort());
       this.listen(this.video, 'encrypted', cancel);
       const input = (event) => {
         if (event.isTrusted) {
           this.intentChanged = true;
+          this.cancelReload();
         }
       };
       for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
@@ -410,6 +465,16 @@ window.VSC = window.VSC || {};
       }
       for (const type of ['seeking', 'pause']) {
         this.listen(this.video, type, (event) => {
+          const token = this.recovery.reload;
+          if (
+            token &&
+            (token.loading ||
+              (type === 'seeking' &&
+                !token.sought &&
+                Math.abs(this.video.currentTime - token.time) < 0.25))
+          ) {
+            return;
+          }
           // Loading queues its own pause/initial seek. Real input already
           // cancels rollback even before metadata becomes available.
           if (
@@ -447,9 +512,29 @@ window.VSC = window.VSC || {};
         }
         this.finished = true;
         if (this.wasPlaying && this.doc.visibilityState !== 'hidden') {
+          this.playReady = false;
+          if (this.deadline === null) {
+            this.deadline = this.view.setTimeout(() => this.abort(), 10000);
+          }
+          const accepted = () => {
+            if (this.closed) {
+              return;
+            }
+            this.playReady = true;
+            if (!this.pending) {
+              this.view.clearTimeout(this.deadline);
+              this.deadline = null;
+            }
+            this.watchPlayback();
+          };
           const result = this.video.play();
-          result?.catch?.(() => this.abort());
+          if (typeof result?.then === 'function') {
+            result.then(accepted, () => this.abort());
+          } else {
+            accepted();
+          }
         }
+        this.watchPlayback();
       } catch {
         this.abort();
       }
@@ -462,7 +547,7 @@ window.VSC = window.VSC || {};
       this.cleanup({ restore: !this.intentChanged, aborted: true });
     }
 
-    cleanup({ restore = true, aborted = false } = {}) {
+    cleanup({ restore = true, aborted = false, playing } = {}) {
       if (this.closed) {
         return;
       }
@@ -473,12 +558,13 @@ window.VSC = window.VSC || {};
         // Page-owned media properties may throw during disposal.
       }
       this.closed = true;
-      this.pending = false;
+      this.cancelReload();
       try {
-        this.observer?.disconnect();
+        this.recovery?.cleanup();
       } catch {
-        // Continue releasing the remaining owned resources.
+        /* Continue source disposal. */
       }
+      this.pending = false;
       try {
         this.view.clearTimeout(this.deadline);
       } catch {
@@ -496,40 +582,182 @@ window.VSC = window.VSC || {};
         this.controller.safariPlayback = null;
       }
       if (!owned) {
+        try {
+          this.observer?.disconnect();
+        } catch {
+          /* Release source observation. */
+        }
         return;
       }
+      const releases = [];
       try {
         const currentTime = this.video.currentTime;
         const currentRate = this.video.playbackRate;
         const time = Number.isFinite(currentTime) ? currentTime : this.originalTime;
         const rate =
           Number.isFinite(currentRate) && currentRate > 0 ? currentRate : this.originalRate;
-        const resume = !aborted && !this.video.paused && this.doc.visibilityState !== 'hidden';
+        const resume =
+          !aborted && (playing ?? !this.video.paused) && this.doc.visibilityState !== 'hidden';
+        const poster = this.video.getAttribute('poster'),
+          visibility = this.doc.visibilityState;
+        const muted = this.video.muted,
+          volume = this.video.volume,
+          disposed = this.controller.disposed;
+        const config = this.controller.config,
+          settings = config?.settings;
+        const preference = settings?.lastSpeed,
+          revision = config?.speedPreferenceRevision;
+        let attribute = this.candidate.progressiveUrl,
+          ownWrite = false,
+          cancelled = false,
+          expectedTime = time,
+          expectedRate = rate,
+          expectedPaused = this.video.paused,
+          phase;
+        const current = () => {
+          const records = this.observer?.takeRecords() || [];
+          if (records.length) {
+            if (
+              !ownWrite ||
+              records.length !== 1 ||
+              records[0].attributeName !== 'src' ||
+              records[0].oldValue !== this.candidate.progressiveUrl
+            ) {
+              cancelled = true;
+            }
+            ownWrite = false;
+          }
+          const reset = phase === 'source' || phase === 'load';
+          return (
+            !cancelled &&
+            this.video.isConnected &&
+            this.video.vsc === this.controller &&
+            this.controller.disposed === disposed &&
+            this.controller.config === config &&
+            config?.settings === settings &&
+            settings?.lastSpeed === preference &&
+            config?.speedPreferenceRevision === revision &&
+            this.video.ownerDocument === this.doc &&
+            this.doc.documentElement === this.root &&
+            this.doc.URL === this.documentURL &&
+            this.doc.visibilityState === visibility &&
+            this.video.getAttribute('src') === attribute &&
+            this.video.getAttribute('poster') === poster &&
+            (!this.video.currentSrc ||
+              this.video.currentSrc === this.candidate.progressiveUrl ||
+              this.video.currentSrc === this.candidate.originalUrl) &&
+            !this.video.srcObject &&
+            !this.video.mediaKeys &&
+            !this.video.webkitKeys &&
+            this.video.muted === muted &&
+            this.video.volume === volume &&
+            this.video.paused === expectedPaused &&
+            (Math.abs(this.video.currentTime - expectedTime) < 0.25 ||
+              (reset && this.video.currentTime === 0)) &&
+            (this.video.playbackRate === expectedRate ||
+              (reset && this.video.playbackRate === 1)) &&
+            !this.observer?.takeRecords().length
+          );
+        };
+        const listen = (target, type, callback) => {
+          target.addEventListener(type, callback, true);
+          releases.push(() => target.removeEventListener(type, callback, true));
+        };
+        for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
+          listen(this.view, type, (event) => {
+            if (event.isTrusted) {
+              cancelled = true;
+            }
+          });
+        }
+        for (const type of ['pause', 'seeking']) {
+          listen(this.video, type, () => {
+            if (type === 'pause' ? phase !== 'pause' : !['load', 'time'].includes(phase)) {
+              cancelled = true;
+            }
+          });
+        }
         if (aborted) {
           this.controller.actionHandler?.eventManager?.releaseMediaState?.(this.video);
         }
-        this.video.pause();
+        const pause = this.video.pause;
+        if (!current()) {
+          return;
+        }
+        phase = 'pause';
+        expectedPaused = true;
+        Reflect.apply(pause, this.video, []);
+        if (!current()) {
+          return;
+        }
+        phase = 'source';
+        attribute = this.originalAttribute;
+        ownWrite = true;
         if (this.originalAttribute === null) {
           this.video.removeAttribute('src');
         } else {
           this.video.setAttribute('src', this.originalAttribute);
         }
-        this.video.load();
+        if (!current()) {
+          return;
+        }
+        const load = this.video.load;
+        if (!current()) {
+          return;
+        }
+        phase = 'load';
+        Reflect.apply(load, this.video, []);
+        if (!current()) {
+          return;
+        }
+        expectedTime = this.video.currentTime;
+        expectedRate = this.video.playbackRate;
+        phase = 'time';
         if (Number.isFinite(time)) {
+          expectedTime = time;
           this.video.currentTime = time;
         }
+        if (!current()) {
+          return;
+        }
+        phase = 'rate';
         if (Number.isFinite(rate) && rate > 0) {
+          expectedRate = rate;
           if (aborted && this.controller.actionHandler?.setSpeed) {
             this.controller.actionHandler.setSpeed(this.video, rate, 'init');
           } else if (this.video.playbackRate !== rate) {
             this.video.playbackRate = rate;
           }
         }
+        if (!current()) {
+          return;
+        }
         if (resume) {
-          this.video.play()?.catch?.(() => {});
+          const play = this.video.play;
+          if (!current()) {
+            return;
+          }
+          phase = 'play';
+          expectedPaused = false;
+          const result = Reflect.apply(play, this.video, []);
+          Promise.resolve(result).catch(() => {});
+          current();
         }
       } catch {
         // Restoration is one attempt; never fight a replacement site session.
+      } finally {
+        try {
+          this.observer?.disconnect();
+        } catch {
+          /* Continue releasing command listeners. */
+        }
+        for (const release of releases) {
+          try {
+            release();
+          } catch {
+            /* Release other independent subscriptions. */
+          }
+        }
       }
     }
   }
@@ -560,10 +788,13 @@ window.VSC = window.VSC || {};
         } else if (controller?.safariPlaybackPending) {
           return null;
         }
+        const existing = controller?.safariPlayback;
+        if (source !== 'init') {
+          existing?.cancelReload?.();
+        }
         if (source === 'external' || !Number.isFinite(rate)) {
           return null;
         }
-        const existing = controller?.safariPlayback;
         if (existing?.ownsSource()) {
           return existing;
         }

@@ -425,6 +425,83 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(window.VSC.TwitterPlayer.findNativeHlsCandidate(video)).toBeUndefined();
   });
 
+  describe('retained native HLS SDK proof', () => {
+    function retained() {
+      video.src = sourceUrl;
+      property(video, 'currentSrc', sourceUrl);
+      video.vsc = { video };
+      const candidate = window.VSC.TwitterPlayer.findNativeHlsCandidate(video);
+      expect(candidate).toBeTruthy();
+      video.src = candidate.progressiveUrl;
+      property(video, 'currentSrc', candidate.progressiveUrl);
+      return candidate;
+    }
+
+    it.each([NaN, 0])('permits only the expected owned ready0 duration reset %s', (duration) => {
+      const candidate = retained();
+      expect(candidate.revalidate()).toBe(true);
+      property(video, 'readyState', 0);
+      property(video, 'currentSrc', '');
+      property(video, 'duration', duration);
+      expect(candidate.revalidate()).toBe(false);
+      expect(candidate.revalidate(true)).toBe(true);
+      property(video, 'readyState', 4);
+      expect(candidate.revalidate(true)).toBe(false);
+      property(video, 'duration', 20.456);
+      property(video, 'currentSrc', candidate.progressiveUrl);
+      expect(candidate.revalidate()).toBe(true);
+    });
+
+    it.each([
+      'foreign source',
+      'SDK session',
+      'content ID',
+      'SDK method',
+      'captions',
+      'unknown captions',
+      'DRM',
+      'live',
+      'controller',
+    ])('retains a fresh %s veto during an expected decoder reload', (change) => {
+      const candidate = retained();
+      property(video, 'readyState', 0);
+      property(video, 'currentSrc', '');
+      property(video, 'duration', NaN);
+      expect(candidate.revalidate(true)).toBe(true);
+      if (change === 'foreign source') {
+        video.src = mp4('640x360');
+      } else if (change === 'SDK session') {
+        state.session.id = 'ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      } else if (change === 'content ID') {
+        content.contentId = '999';
+      } else if (change === 'SDK method') {
+        api.getState = vi.fn(() => state);
+      } else if (change === 'captions') {
+        state.textTracks.tracks.push({ kind: 'captions' });
+      } else if (change === 'unknown captions') {
+        state.textTracks.tracks = undefined;
+      } else if (change === 'DRM') {
+        content.keySystems = {};
+      } else if (change === 'live') {
+        state.source.live = true;
+      } else {
+        video.vsc = { video };
+      }
+      expect(candidate.revalidate(true)).toBe(false);
+    });
+
+    it('keeps clear, vetoed and absent modern SDK results distinct for legacy caption ownership', () => {
+      const candidate = retained();
+      const validate = () =>
+        window.VSC.TwitterPlayer.validateRetainedHls(video, sourceUrl, candidate.progressiveUrl);
+      expect(validate()).toBe(true);
+      state.textTracks.tracks.push({ kind: 'captions' });
+      expect(validate()).toBe(false);
+      delete parent.__reactFiber$fixture;
+      expect(validate()).toBeUndefined();
+    });
+  });
+
   it.each(['blob', 'native HLS'])(
     'bounds %s variant inspection when a page descriptor grows its own array',
     (kind) => {

@@ -525,6 +525,90 @@ describe('X retained MediaSource MP4 playback', () => {
       expect(original.load).not.toHaveBeenCalled();
     });
 
+    it('does not let repeated identical frame metadata conceal a decoded stall', async () => {
+      await playing();
+      for (let sample = 0; sample < 13; sample++) {
+        await vi.advanceTimersByTimeAsync(sample === 0 ? 125 : 250);
+        if (reloads.length) {
+          break;
+        }
+        const callback = frames.values().next().value;
+        frames.clear();
+        expect(callback).toBeTypeOf('function');
+        callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 });
+      }
+      expect(reloads).toHaveLength(1);
+      expect(reloads[0].source).toBe(MP4);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('stops monitoring after a page frame API returns an invalid handle without reloading', async () => {
+      await playing();
+      const callback = frames.values().next().value;
+      frames.clear();
+      video.requestVideoFrameCallback = vi.fn(() => NaN);
+      callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 });
+      await stall();
+      expect(video.requestVideoFrameCallback).toHaveBeenCalled();
+      expect(reloads).toHaveLength(0);
+      expect(frames.size).toBe(0);
+      expect(original.load).not.toHaveBeenCalled();
+      session.cleanup({ resume: false });
+      expectReleased(session);
+    });
+
+    it.each(['listener registration', 'next frame request'])(
+      'contains a recovery %s exception while keeping base playback usable',
+      async (failure) => {
+        let removed, registration;
+        if (failure === 'listener registration') {
+          const Recovery = window.VSC.OwnedMP4Recovery;
+          // Production constructs this mock with new, so it must remain constructable.
+          // eslint-disable-next-line prefer-arrow-callback
+          vi.spyOn(window.VSC, 'OwnedMP4Recovery').mockImplementation(function (owner) {
+            const media = owner.video;
+            const add = media.addEventListener.bind(media);
+            removed = vi.spyOn(media, 'removeEventListener');
+            const injected = vi.spyOn(media, 'addEventListener').mockImplementation((...args) => {
+              if (args[0] === 'loadstart') {
+                throw Error('Page rejected recovery listener');
+              }
+              registration = args;
+              add(...args);
+            });
+            try {
+              return new Recovery(owner);
+            } finally {
+              injected.mockRestore();
+            }
+          });
+        }
+        await playing();
+        if (failure === 'listener registration') {
+          expect(registration[0]).toBe('emptied');
+          expect(removed).toHaveBeenCalledWith(...registration);
+        } else {
+          const callback = frames.values().next().value;
+          frames.clear();
+          video.requestVideoFrameCallback = () => {
+            throw Error('Page replaced frame API');
+          };
+          expect(() =>
+            callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 })
+          ).not.toThrow();
+        }
+        await stall();
+        expect(reloads).toHaveLength(0);
+        expect(frames.size).toBe(0);
+        expect(session.closed).toBe(false);
+        expect(video.src).toBe(MP4);
+        expect(video.paused).toBe(false);
+        expect(original.load).not.toHaveBeenCalled();
+        session.cleanup({ resume: false });
+        expectReleased(session);
+      }
+    );
+
     it.each(['reject', 'timeout', 'second seek', 'different seek'])(
       'handles a queued own-seek before recovery %s without confusing newer seek intent',
       async (outcome) => {

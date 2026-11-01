@@ -36,8 +36,11 @@ import '../observers/custom-webm-observer.js';
 import '../site-handlers/twitter-media-source.js';
 import '../site-handlers/twitter-player.js';
 import '../site-handlers/progressive-media-source.js';
+import '../core/decoded-playback-monitor.js';
 import '../core/safari-hls-playback.js';
 import '../core/twitter-mp4-playback.js';
+import '../core/twitter-caption-source.js';
+import '../core/twitter-caption-playback.js';
 import '../core/action-handler.js';
 import '../core/video-controller.js';
 

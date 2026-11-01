@@ -91,6 +91,7 @@ window.VSC = window.VSC || {};
       this.playGeneration = 0;
       this.originalPlay = this.original.play;
       this.originalPause = this.original.pause;
+      this.recovery = new window.VSC.OwnedMP4Recovery(this);
     }
 
     originCurrent() {
@@ -162,313 +163,30 @@ window.VSC = window.VSC || {};
       this.listeners.push(() => target.removeEventListener(type, handler, options));
     }
 
-    stopWatch() {
-      const watch = this.watch;
-      this.watch = null;
+    recoveryCurrent() {
       try {
-        this.view.clearTimeout(watch?.timer);
-      } catch {
-        /* Release independently. */
-      }
-      try {
-        if (watch?.frame !== undefined) {
-          this.video.cancelVideoFrameCallback(watch.frame);
-        }
-      } catch {
-        /* A page may replace the API. */
-      }
-    }
-
-    cancelReload() {
-      this.stopWatch();
-      if (this.reload) {
-        this.reload = null;
-        this.playGeneration++;
-        try {
-          this.view.clearTimeout(this.deadline);
-        } catch {
-          /* Keep cancellation final. */
-        }
-      }
-      this.watchPlayback();
-    }
-
-    reloadCurrent(token, allowPaused = false, expectedSeek = false) {
-      try {
-        if (this.reload !== token || token.generation !== this.playGeneration) {
-          return false;
-        }
-        const current = this.current();
+        const current = this.committed && this.current();
         if (this.nativeObserver?.takeRecords().length) {
           this.cleanup({ resume: false });
           return false;
         }
-        const player = this.video.vsc?.iosPlayer;
-        return (
-          this.reload === token &&
-          token.generation === this.playGeneration &&
-          !this.doc.hidden &&
-          current &&
-          this.video.getAttribute('poster') === token.poster &&
-          this.video.muted === token.muted &&
-          this.video.volume === token.volume &&
-          this.video.vsc === token.controller &&
-          player === token.player &&
-          player?.active === token.active &&
-          player?.ui === token.ui &&
-          player?.nativeGeneration === token.nativeGeneration &&
-          window.VSC.IOSPlayer.presentationRevision === token.presentationRevision &&
-          this.controller.config.speedPreferenceRevision === token.revision &&
-          this.controller.config.settings.lastSpeed === token.preference &&
-          (token.command ||
-            ((allowPaused || !this.video.paused) &&
-              (!this.video.seeking ||
-                ((expectedSeek || token.sought) &&
-                  Math.abs(this.video.currentTime - token.time) < 0.25)) &&
-              this.video.playbackRate === token.rate))
-        );
+        return current;
       } catch {
         return false;
       }
     }
 
+    recoveryFailed() {
+      this.cleanup({ site: true, playing: true });
+    }
+    cancelReload() {
+      this.recovery?.cancel();
+    }
     ownsTransition(type) {
-      return Boolean(this.reload?.events.has(type) && this.reloadCurrent(this.reload));
+      return this.recovery?.ownsTransition(type) || false;
     }
-
-    finishReload(token) {
-      if (
-        token.ready &&
-        token.accepted &&
-        this.reload === token &&
-        (!this.reloadCurrent(token) || !this.video.seeking)
-      ) {
-        this.cancelReload();
-      }
-    }
-
     watchPlayback() {
-      if (this.watch || this.reload) {
-        return;
-      }
-      try {
-        const video = this.video;
-        const eligible = () => {
-          if (!this.committed || !this.current()) {
-            return false;
-          }
-          const rect = video.getBoundingClientRect(),
-            style = this.view.getComputedStyle(video);
-          return (
-            !this.doc.hidden &&
-            !video.paused &&
-            !video.ended &&
-            !video.seeking &&
-            video.playbackRate >= 2.1 &&
-            video.readyState >= 3 &&
-            Number.isFinite(video.duration) &&
-            video.duration - video.currentTime > video.playbackRate &&
-            !video.webkitDisplayingFullscreen &&
-            (!video.webkitPresentationMode || video.webkitPresentationMode === 'inline') &&
-            this.doc.pictureInPictureElement !== video &&
-            this.doc.fullscreenElement !== video &&
-            this.intersecting !== false &&
-            rect.width > 0 &&
-            rect.height > 0 &&
-            rect.bottom > 0 &&
-            rect.right > 0 &&
-            rect.top < this.view.innerHeight &&
-            rect.left < this.view.innerWidth &&
-            style.display !== 'none' &&
-            style.visibility === 'visible' &&
-            Number(style.opacity) !== 0 &&
-            (!video.checkVisibility ||
-              video.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
-          );
-        };
-        if (!eligible() || typeof video.requestVideoFrameCallback !== 'function') {
-          return;
-        }
-        const quality = () => video.getVideoPlaybackQuality?.().totalVideoFrames;
-        const count = quality();
-        if (!Number.isSafeInteger(count) || count < 0) {
-          return;
-        }
-        const watch = (this.watch = { count, progress: this.view.performance.now() });
-        const frame = (_now, metadata) => {
-          if (this.watch !== watch) {
-            return;
-          }
-          if (watch.requesting) {
-            this.stopWatch();
-            return;
-          }
-          if (
-            Number.isFinite(metadata?.mediaTime) &&
-            Number.isFinite(metadata?.presentedFrames) &&
-            (!watch.metadata ||
-              metadata.mediaTime > watch.metadata.mediaTime ||
-              metadata.presentedFrames > watch.metadata.presentedFrames)
-          ) {
-            watch.progress = this.view.performance.now();
-            watch.metadata = {
-              mediaTime: metadata.mediaTime,
-              presentedFrames: metadata.presentedFrames,
-            };
-          }
-          request();
-        };
-        const request = () => {
-          watch.requesting = true;
-          const handle = video.requestVideoFrameCallback(frame);
-          watch.requesting = false;
-          if (!Number.isSafeInteger(handle) || handle < 0 || this.watch !== watch) {
-            this.stopWatch();
-            return;
-          }
-          watch.frame = handle;
-        };
-        const check = () => {
-          if (this.watch !== watch) {
-            return;
-          }
-          try {
-            const next = quality(),
-              now = this.view.performance.now();
-            if (!eligible() || !Number.isSafeInteger(next) || next < watch.count) {
-              this.stopWatch();
-              return;
-            }
-            if (next > watch.count) {
-              watch.count = next;
-              watch.progress = now;
-            }
-            const remaining = 3000 - (now - watch.progress);
-            if (remaining > 0) {
-              watch.timer = this.view.setTimeout(check, remaining);
-              return;
-            }
-            let buffered = false;
-            for (let i = 0; i < Math.min(video.buffered.length, 32); i++) {
-              if (
-                video.buffered.start(i) <= video.currentTime &&
-                video.buffered.end(i) >= video.currentTime + 1
-              ) {
-                buffered = true;
-              }
-            }
-            if (!buffered) {
-              watch.progress = now;
-              watch.timer = this.view.setTimeout(check, 3000);
-              return;
-            }
-            this.stopWatch();
-            if (eligible()) {
-              this.reloadCompanion();
-            }
-          } catch {
-            this.stopWatch();
-          }
-        };
-        request();
-        if (this.watch === watch) {
-          watch.timer = this.view.setTimeout(check, 3000);
-        }
-      } catch {
-        this.stopWatch();
-      }
-    }
-
-    reloadCompanion() {
-      if ((this.reloadAttempts || 0) >= 2) {
-        this.cleanup({ site: true });
-        return;
-      }
-      try {
-        if (!this.current() || this.video.paused || this.doc.hidden) {
-          return;
-        }
-        const video = this.video,
-          player = video.vsc?.iosPlayer;
-        const token = (this.reload = {
-          generation: ++this.playGeneration,
-          time: video.currentTime,
-          rate: video.playbackRate,
-          muted: video.muted,
-          volume: video.volume,
-          poster: video.getAttribute('poster'),
-          controller: video.vsc,
-          player,
-          active: player?.active,
-          ui: player?.ui,
-          nativeGeneration: player?.nativeGeneration,
-          presentationRevision: window.VSC.IOSPlayer.presentationRevision,
-          revision: this.controller.config.speedPreferenceRevision,
-          preference: this.controller.config.settings.lastSpeed,
-          events: new Set(),
-          command: true,
-        });
-        const fail = () => {
-          if (this.reload !== token) {
-            return;
-          }
-          if (this.reloadCurrent(token, true)) {
-            this.cleanup({ site: true, playing: true });
-          } else {
-            this.cancelReload();
-          }
-        };
-        const valid = () => {
-          if (this.reloadCurrent(token)) {
-            return true;
-          }
-          this.cancelReload();
-          return false;
-        };
-        if (!valid()) {
-          return;
-        }
-        this.reloadAttempts = (this.reloadAttempts || 0) + 1;
-        this.deadline = this.view.setTimeout(fail, 10000);
-        const load = video.load;
-        if (!valid()) {
-          return;
-        }
-        token.loading = true;
-        Reflect.apply(load, video, []);
-        token.loading = false;
-        if (!valid()) {
-          return;
-        }
-        video.currentTime = token.time;
-        if (!valid()) {
-          return;
-        }
-        video.playbackRate = token.rate;
-        if (!valid()) {
-          return;
-        }
-        const play = video.play;
-        if (!valid()) {
-          return;
-        }
-        const playing = Reflect.apply(play, video, []);
-        Promise.resolve(playing).then(() => {
-          if (this.reloadCurrent(token)) {
-            token.accepted = true;
-            this.finishReload(token);
-          } else if (this.reload === token) {
-            this.cancelReload();
-          }
-        }, fail);
-        if (!valid()) {
-          return;
-        }
-        token.command = false;
-        this.finishReload(token);
-      } catch {
-        this.cleanup({ site: true });
-      }
+      this.recovery?.refresh();
     }
 
     start() {
@@ -554,53 +272,7 @@ window.VSC = window.VSC || {};
         if (this.finished) {
           this.commit();
         }
-        if (this.reload) {
-          this.reload.ready = true;
-          this.finishReload(this.reload);
-        }
-      });
-      for (const type of ['emptied', 'loadstart']) {
-        this.listen(
-          video,
-          type,
-          () => {
-            const token = this.reload;
-            if (token && !token.events.has(type) && this.reloadCurrent(token)) {
-              token.events.add(type);
-            } else {
-              this.cancelReload();
-            }
-          },
-          true
-        );
-      }
-      for (const type of ['playing', 'seeked', 'ratechange']) {
-        this.listen(video, type, () => {
-          if (type === 'seeked' && this.reload) {
-            this.finishReload(this.reload);
-          } else if (!this.reload) {
-            this.stopWatch();
-            this.watchPlayback();
-          }
-        });
-      }
-      this.listen(video, 'pause', () => {
-        if (!this.reload?.loading) {
-          this.cancelReload();
-        }
-      });
-      this.listen(video, 'seeking', () => {
-        const token = this.reload;
-        if (
-          token &&
-          !token.sought &&
-          Math.abs(video.currentTime - token.time) < 0.25 &&
-          this.reloadCurrent(token, true, true)
-        ) {
-          token.sought = true;
-        } else {
-          this.cancelReload();
-        }
+        this.recovery.refresh();
       });
       this.listen(video, 'error', () => this.abort());
       this.listen(video, 'loadstart', () => {
@@ -799,17 +471,6 @@ window.VSC = window.VSC || {};
           // may open the overlay, never Play or browser DOM fullscreen.
           this.video.vsc.iosPlayer?.open();
         }
-        if (this.view.IntersectionObserver) {
-          this.intersection = new this.view.IntersectionObserver(([entry]) => {
-            this.intersecting = entry.isIntersecting;
-            if (!this.intersecting) {
-              this.cancelReload();
-            } else {
-              this.watchPlayback();
-            }
-          });
-          this.intersection.observe(this.video);
-        }
         this.watchPlayback();
       } catch {
         this.committing = false;
@@ -884,7 +545,7 @@ window.VSC = window.VSC || {};
       this.closed = true;
       this.cancelReload();
       try {
-        this.intersection?.disconnect();
+        this.recovery?.cleanup();
       } catch {
         /* Continue cleanup. */
       }
