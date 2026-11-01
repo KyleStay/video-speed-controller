@@ -412,6 +412,24 @@ describe('Safari native HLS progressive playback ownership', () => {
       }
     );
 
+    it('accepts a native load reset to the existing default rate before restoring owned HLS playback', async () => {
+      await playing();
+      state.time = 18;
+      video.defaultPlaybackRate = 2;
+      video.load.mockImplementationOnce(() => {
+        Object.assign(state, { currentSrc: '', readyState: 0, time: 0, rate: 2, paused: true });
+      });
+      session.cleanup();
+      expect(video.src).toBe(HLS);
+      expect(video.currentTime).toBe(18);
+      expect(video.playbackRate).toBe(4);
+      expect(video.paused).toBe(false);
+      expect(video.play).toHaveBeenCalledOnce();
+      expect(session.closed).toBe(true);
+      expect(controller.safariPlayback).toBeNull();
+      expect(frames.size).toBe(0);
+    });
+
     it('waits for buffering and does not treat advancing decoded quality as a stall', async () => {
       await playing();
       ahead = 0;

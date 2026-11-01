@@ -602,7 +602,8 @@ window.VSC = window.VSC || {};
           visibility = this.doc.visibilityState;
         const muted = this.video.muted,
           volume = this.video.volume,
-          disposed = this.controller.disposed;
+          disposed = this.controller.disposed,
+          defaultRate = this.video.defaultPlaybackRate;
         const config = this.controller.config,
           settings = config?.settings;
         const preference = settings?.lastSpeed,
@@ -655,7 +656,7 @@ window.VSC = window.VSC || {};
             (Math.abs(this.video.currentTime - expectedTime) < 0.25 ||
               (reset && this.video.currentTime === 0)) &&
             (this.video.playbackRate === expectedRate ||
-              (reset && this.video.playbackRate === 1)) &&
+              (reset && this.video.playbackRate === defaultRate)) &&
             !this.observer?.takeRecords().length
           );
         };
