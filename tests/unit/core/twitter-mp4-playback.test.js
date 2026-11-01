@@ -193,6 +193,294 @@ describe('X retained MediaSource MP4 playback', () => {
     document.body.replaceChildren();
   });
 
+  describe('feed companion capacity', () => {
+    let candidates;
+    beforeEach(() => {
+      candidates = new Map();
+      window.VSC.TwitterPlayer.resolve.mockImplementation((video) => candidates.get(video));
+    });
+    function clip(index) {
+      const video = document.createElement('video');
+      video.src = `${MSE}-${index}`;
+      Object.defineProperty(video, 'currentSrc', { get: () => video.src });
+      video.play = vi.fn(() => Promise.resolve());
+      video.load = vi.fn();
+      mediaState(video).paused = false;
+      const parent = document.createElement('div');
+      parent.append(video);
+      document.body.append(parent);
+      const owner = {
+        video,
+        config: controller.config,
+        actionHandler: {},
+        iosPlayer: { active: false },
+        remove() {
+          this.disposed = true;
+          delete video.vsc;
+          api().controllerRemoved(video);
+        },
+      };
+      video.vsc = owner;
+      const metadata = {
+        ...candidate,
+        originalUrl: video.src,
+        progressiveUrl: `${MP4}?clip=${index}`,
+        current: vi.fn(() => video.isConnected),
+        identityCurrent: vi.fn(() => video.isConnected),
+        subscribe: vi.fn(() => vi.fn()),
+        api: {
+          seekTo: vi.fn((time) => {
+            video.currentTime = time;
+          }),
+        },
+      };
+      candidates.set(video, metadata);
+      return { video, owner, metadata, play: video.play };
+    }
+    async function idleFour() {
+      const rows = [];
+      for (let index = 0; index < 4; index++) {
+        const row = clip(index);
+        row.session = api().begin(row.owner, 4, 'init');
+        row.session.finish();
+        await loaded(row.session);
+        expect(row.session.committed).toBe(true);
+        Object.defineProperty(row.session.video, 'currentSrc', {
+          configurable: true,
+          get: () => row.session.video.src,
+        });
+        Object.defineProperty(row.session.video, 'readyState', { configurable: true, value: 4 });
+        row.session.video.pause();
+        row.session.video.dispatchEvent(new Event('pause'));
+        row.session.video.getBoundingClientRect = () => new DOMRect(0, -1000, 320, 180);
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    it('reclaims one idle offscreen decoder only on admission and preserves paused producer position', async () => {
+      const rows = await idleFour();
+      const oldest = rows[0];
+      Object.assign(oldest.session.video, { currentTime: 28.25, muted: false, volume: 0.6 });
+      const fifth = clip(5);
+      expect(api().canBegin(fifth.owner, 4, 'init')).toBe(true);
+      expect(rows.every(({ session }) => !session.closed)).toBe(true);
+      expect(oldest.metadata.api.seekTo).not.toHaveBeenCalled();
+      const next = api().begin(fifth.owner, 4, 'init');
+      expect(next).toBeTruthy();
+      expect(rows.filter(({ session }) => session.closed)).toHaveLength(1);
+      expect(oldest.metadata.api.seekTo).toHaveBeenCalledWith(28.25);
+      expect(oldest.video).toMatchObject({
+        currentTime: 28.25,
+        playbackRate: 4,
+        muted: false,
+        volume: 0.6,
+        paused: true,
+      });
+      next.finish();
+      await loaded(next);
+      expect(document.querySelectorAll('[data-vsc-twitter-mp4]')).toHaveLength(4);
+      for (const row of rows) {
+        expect(row.video.load).not.toHaveBeenCalled();
+        expect(row.play).not.toHaveBeenCalled();
+      }
+      const revisited = { ...oldest.owner, disposed: false };
+      oldest.video.vsc = revisited;
+      mediaState(oldest.video).paused = false;
+      expect(api().canBegin(revisited, 4, 'init')).toBe(true);
+    });
+
+    it.each([
+      'playing',
+      'visible',
+      'owned',
+      'native',
+      'PiP',
+      'pending Play',
+      'reload',
+      'loading',
+      'producer seek',
+      'companion seek',
+      'identity',
+    ])('does not evict a %s companion', async (condition) => {
+      const rows = await idleFour();
+      for (const { session, metadata } of rows) {
+        if (condition === 'playing') {
+          mediaState(session.video).paused = false;
+        }
+        if (condition === 'visible') {
+          session.video.getBoundingClientRect = () => new DOMRect(0, 0, 320, 180);
+        }
+        if (condition === 'owned') {
+          session.video.vsc.iosPlayer.active = true;
+        }
+        if (condition === 'native') {
+          session.video.vsc.iosPlayer.nativeSession = true;
+        }
+        if (condition === 'PiP') {
+          Object.defineProperty(session.video, 'webkitPresentationMode', {
+            configurable: true,
+            value: 'picture-in-picture',
+          });
+        }
+        if (condition === 'pending Play') {
+          nativePlay.mockImplementation(() => new Promise(() => {}));
+          session.original.play();
+        }
+        if (condition === 'reload') {
+          session.recovery.reload = {};
+        }
+        if (condition === 'loading') {
+          Object.defineProperty(session.video, 'currentSrc', { configurable: true, value: '' });
+        }
+        if (condition === 'producer seek' || condition === 'companion seek') {
+          const seeking = condition === 'producer seek' ? session.original : session.video;
+          seeking.currentTime = 99;
+          Object.defineProperty(seeking, 'seeking', { configurable: true, value: true });
+        }
+        if (condition === 'identity') {
+          metadata.current.mockReturnValue(false);
+        }
+      }
+      const fifth = clip(5);
+      expect(api().canBegin(fifth.owner, 4, 'init')).toBe(false);
+      expect(api().begin(fifth.owner, 4, 'init')).toBeNull();
+      expect(rows.every(({ session }) => !session.closed)).toBe(true);
+      expect(rows.every(({ metadata }) => !metadata.api.seekTo.mock.calls.length)).toBe(true);
+      if (condition === 'producer seek') {
+        expect(rows.map(({ video }) => video.currentTime)).toEqual([99, 99, 99, 99]);
+      }
+    });
+
+    it('keeps the bound when final candidate validation admits another clip reentrantly', async () => {
+      const rows = await idleFour(),
+        fifth = clip(5),
+        sixth = clip(6);
+      let nested,
+        reads = 0;
+      fifth.metadata.current.mockImplementation(() => {
+        if (++reads === 2) {
+          nested = api().begin(sixth.owner, 4, 'init');
+        }
+        return true;
+      });
+      expect(api().begin(fifth.owner, 4, 'init')).toBeNull();
+      expect(nested).toBeTruthy();
+      expect(rows.filter(({ session }) => !session.closed)).toHaveLength(3);
+      expect(rows.filter(({ session }) => !session.closed).length + Number(!nested.closed)).toBe(4);
+      expect(api().getPending(fifth.video)).toBeNull();
+      expect(fifth.video.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['another clip', 'same original'])(
+      'releases only the unstarted session when construction admits %s',
+      async (kind) => {
+        const rows = kind === 'another clip' ? await idleFour() : [];
+        rows.pop()?.session.cleanup({ resume: false, reinitialize: false });
+        const fifth = clip(5),
+          sixth = kind === 'same original' ? fifth : clip(6);
+        const cleanup = vi.spyOn(window.VSC.OwnedMP4Recovery.prototype, 'cleanup');
+        const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+        let entered = false,
+          nested;
+        Object.defineProperty(fifth.video, 'currentTime', {
+          configurable: true,
+          get() {
+            if (!entered) {
+              entered = true;
+              nested = api().begin(sixth.owner, 4, 'init');
+            }
+            return clock.get.call(this);
+          },
+          set(value) {
+            clock.set.call(this, value);
+          },
+        });
+        expect(api().begin(fifth.owner, 4, 'init')).toBeNull();
+        expect(nested).toBeTruthy();
+        expect(nested.closed).toBe(false);
+        expect(api().getPending(sixth.video)).toBe(nested);
+        expect(sixth.video.vsc).toBe(sixth.owner);
+        expect(sixth.owner.disposed).not.toBe(true);
+        expect(rows.filter(({ session }) => !session.closed).length + 1).toBe(
+          kind === 'another clip' ? 4 : 1
+        );
+        const rejected = cleanup.mock.contexts.find((recovery) => recovery.owner !== nested);
+        expect(rejected.owner.closed).toBe(true);
+        expect(rejected.listeners).toHaveLength(0);
+        expect(rejected.owner.video.isConnected).toBe(false);
+        expect(rejected.owner.video.hasAttribute('src')).toBe(false);
+        expect(fifth.video.load).not.toHaveBeenCalled();
+        expect(fifth.play).not.toHaveBeenCalled();
+        nested.finish();
+        await loaded(nested);
+        expect(nested.committed).toBe(true);
+        expect(api().get(nested.video)).toBe(nested);
+      }
+    );
+
+    it.each(['invalid', 'failed init'])(
+      'does not evict for an %s fifth clip',
+      async (condition) => {
+        const fifth = clip(5);
+        if (condition === 'failed init') {
+          const failed = api().begin(fifth.owner, 4, 'init');
+          failed.abort();
+        }
+        const rows = await idleFour();
+        if (condition === 'invalid') {
+          candidates.delete(fifth.video);
+        }
+        expect(api().canBegin(fifth.owner, 4, 'init')).toBe(false);
+        expect(api().begin(fifth.owner, 4, 'init')).toBeNull();
+        expect(rows.every(({ session }) => !session.closed)).toBe(true);
+      }
+    );
+
+    it.each(['source write', 'new Play'])(
+      'does not hand back a victim changed by a reentrant %s',
+      async (change) => {
+        const rows = await idleFour();
+        const fifth = clip(5),
+          victim = rows[0];
+        fifth.metadata.current.mockImplementation(() => {
+          if (change === 'source write') {
+            const src = victim.video.src;
+            victim.video.src = `${src}-new`;
+            victim.video.src = src;
+          } else {
+            mediaState(victim.session.video).paused = false;
+          }
+          return true;
+        });
+        expect(api().begin(fifth.owner, 4, 'init')).toBeNull();
+        expect(rows.filter(({ session }) => session.closed)).toHaveLength(
+          change === 'source write' ? 1 : 0
+        );
+        expect(rows.every(({ metadata }) => !metadata.api.seekTo.mock.calls.length)).toBe(true);
+        expect(fifth.video.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('releases queued source invalidation without consuming another idle slot', async () => {
+      const rows = await idleFour(),
+        stale = rows[0],
+        fifth = clip(5);
+      const src = stale.video.src;
+      stale.video.src = `${src}-new`;
+      stale.video.src = src;
+      const next = api().begin(fifth.owner, 4, 'init');
+      await Promise.resolve();
+      expect(next).toBeTruthy();
+      expect(stale.session.closed).toBe(true);
+      expect(api().isRetained(stale.video)).toBe(false);
+      expect(rows.slice(1).every(({ session }) => !session.closed)).toBe(true);
+      expect(rows.every(({ metadata }) => !metadata.api.seekTo.mock.calls.length)).toBe(true);
+      expect(stale.video.load).not.toHaveBeenCalled();
+      expect(stale.play).not.toHaveBeenCalled();
+    });
+  });
+
   describe('presentation-only source-child binding', () => {
     let source;
 

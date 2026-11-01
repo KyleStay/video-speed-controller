@@ -323,6 +323,19 @@ baseline. This single simulator pair establishes no universal smoothness or
 improvement claim. See the raw [owned](../test-results/owned-fullscreen/rate-owned-final.json)
 and [baseline](../test-results/owned-fullscreen/rate-baseline-final.json) reports.
 
+## Build 36 feed stutter remains unresolved
+
+A user reported continued stutter above 2× on X post `2116631726629786057`.
+Ordinary iPhone Safari capture confirmed native HLS switching to supplied MP4;
+a 12-second window included that transition and three gaps above 150 ms, so it
+does not establish sustained MP4 smoothness. A separate feed-capacity regression
+shows four paused, connected offscreen companions blocking the next eligible
+clip. Lazy paused handback now permits that next clip within the four-player
+limit, preserving the previous clip's position and audio state. This is not proof
+that the reported stutter is fixed. Physical verification of the correction and
+a steady MP4 window remain pending; iOS currently rejects the QA launcher with
+`Guided Access active`.
+
 ## October 21 Safari 16× verification — earlier candidate
 
 The candidate caps requests at 16× and removes repeated lifecycle rate writes

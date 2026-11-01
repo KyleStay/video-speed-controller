@@ -186,6 +186,11 @@ with direct `chrome.*` access.
     Failed handoffs restore the original local rate and interface while retaining
     the saved preference; recovery errors belong only to the current request.
     Committed MP4 playback uses the shared session-owned recovery helper.
+    Keep at most four MP4 companions. A later eligible clip may reclaim one
+    paused, offscreen, source-owned companion through paused handback; active
+    presentation, pending Play and reloads retain their slots. Capacity handback
+    preserves position without starting or loading the retained producer, and
+    does not mark that clip as a failed automatic takeover.
     Intercept X blob presentation before any original-node portal; unsupported
     streams stay inline with an explicit Use site player escape. Pending entry
     honors presentation revisions, visibility and cancellation. Preserve accepted
