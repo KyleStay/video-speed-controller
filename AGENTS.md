@@ -143,7 +143,8 @@ with direct `chrome.*` access.
     a child `<source>` can become ready without a video `src` attribute mutation.
     Removal releases these listeners with the source observer.
   - `safari-hls-playback.js` — bounded, same-video HLS→MP4 transitions for
-    iOS native-HLS playback above 2×. `progressive-media-source.js` resolves same-item
+    iOS native-HLS playback above 2×; X prefers its supplied MP4 at every rate.
+    `progressive-media-source.js` resolves same-item
     HTML alternatives and recognized Video.js/Brightcove/JW Player metadata;
     `twitter-media-source.js` resolves X’s nearby React props and current SDK track.
     All require an exact active HLS match and an explicitly supplied MP4; the
@@ -459,7 +460,7 @@ with direct `chrome.*` access.
 - **iOS player ownership**: retain the original media, source/srcObject,
   MediaSource/MediaKeys, and tracks. The source exception is eligible iOS native-HLS fast
   playback: a finite native-HLS clip may use the site's exact same-asset MP4
-  rendition above 2×. The current X SDK adapter instead retains its MSE producer
+  rendition above 2×; X prefers that rendition at every rate. The current X SDK adapter instead retains its MSE producer
   and controls a supplied MP4 companion; it never reloads or detaches the original.
   Explicit owned presentation also stages that companion before moving any media,
   because WebKit can discard the original MSE buffers on a DOM portal.
@@ -478,7 +479,8 @@ with direct `chrome.*` access.
   Keep the original node, position, paused
   state and presentation. `load()`, pending start time, rate and any continuation
   `play()` run in one coordinated speed-command call stack, never metadata
-  callbacks. Automatic init first joins only an already-requested Play promise;
+  callbacks. Verified paused X media with autoplay off may prepare MP4 without
+  requesting Play. Other automatic init first joins an already-requested Play promise;
   a bounded next-task check validates source/document/preferences/intent before
   issuing that command. While queued, retain the accepted native rate and display;
   only the coordinated source command applies the requested fast rate.

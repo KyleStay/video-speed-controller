@@ -631,7 +631,6 @@ class VideoController {
             video.srcObject ||
             video.mediaKeys ||
             video.webkitKeys ||
-            targetSpeed <= 2 ||
             typeof source !== 'string' ||
             source.length > 4096
           ) {
@@ -639,6 +638,12 @@ class VideoController {
           }
           const parsed = new URL(source, doc.baseURI);
           const mse = parsed.protocol === 'blob:';
+          if (
+            targetSpeed <= 2 &&
+            (mse || !window.VSC.EventManager.isTwitterHost(new URL(doc.URL).hostname))
+          ) {
+            return;
+          }
           if (
             mse
               ? !window.VSC.IOSPlayer?.isSupported(video) ||

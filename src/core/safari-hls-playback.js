@@ -4,12 +4,10 @@ window.VSC = window.VSC || {};
 (function () {
   const readyInitializations = new WeakSet();
 
-  function deferXInitialization(controller, rate, source) {
+  function isXNativeHls(controller) {
     try {
       const video = controller?.video;
       if (
-        source !== 'init' ||
-        rate <= 2 ||
         !video?.isConnected ||
         controller.disposed ||
         video.vsc !== controller ||
@@ -22,12 +20,14 @@ window.VSC = window.VSC || {};
         return null;
       }
       const url = new URL(video.currentSrc || video.src);
-      return ['http:', 'https:'].includes(url.protocol) && /\.m3u8$/i.test(url.pathname)
-        ? { deferred: true }
-        : null;
+      return ['http:', 'https:'].includes(url.protocol) && /\.m3u8$/i.test(url.pathname);
     } catch {
       return null;
     }
+  }
+
+  function deferXInitialization(controller, rate, source) {
+    return source === 'init' && rate > 2 && isXNativeHls(controller) ? { deferred: true } : null;
   }
 
   // Joining an already-requested play promise does not restart playback. Wait
@@ -47,6 +47,8 @@ window.VSC = window.VSC || {};
     const lastSpeed = settings?.lastSpeed;
     const siteSpeed = settings?.siteDefaultSpeed;
     const revision = controller.config?.speedPreferenceRevision;
+    const rememberSpeed = settings?.rememberSpeed;
+    const targetSpeed = controller.getTargetSpeed?.();
     const listeners = [];
     let closed = false;
     let timer, observer;
@@ -144,11 +146,13 @@ window.VSC = window.VSC || {};
                 (video.currentSrc || video.src) === candidate.originalUrl &&
                 controller.config?.settings?.lastSpeed === lastSpeed &&
                 controller.config?.settings?.siteDefaultSpeed === siteSpeed &&
-                controller.config?.speedPreferenceRevision === revision;
+                controller.config?.speedPreferenceRevision === revision &&
+                controller.config?.settings?.rememberSpeed === rememberSpeed &&
+                controller.getTargetSpeed?.() === targetSpeed;
               pending.cleanup();
               if (
                 !valid ||
-                (lastSpeed !== rate && siteSpeed !== rate && !hasCurrentLocalRate(controller, rate))
+                (lastSpeed !== rate && siteSpeed !== rate && !hasCurrentInitRate(controller, rate))
               ) {
                 return;
               }
@@ -237,11 +241,13 @@ window.VSC = window.VSC || {};
     return true;
   }
 
-  function hasCurrentLocalRate(controller, rate) {
+  function hasCurrentInitRate(controller, rate) {
     const local = controller.actionHandler?.eventManager?.getMediaRateState?.(controller.video);
     return (
-      local?.lifecycleSpeed === rate &&
-      (local.lifecycleSpeedRevision ?? 0) === (controller.config?.speedPreferenceRevision ?? 0)
+      (local?.lifecycleSpeed === rate &&
+        (local.lifecycleSpeedRevision ?? 0) ===
+          (controller.config?.speedPreferenceRevision ?? 0)) ||
+      (isXNativeHls(controller) && controller.getTargetSpeed?.() === rate)
     );
   }
 
@@ -249,14 +255,15 @@ window.VSC = window.VSC || {};
     if (
       source === 'external' ||
       !Number.isFinite(rate) ||
-      rate <= 2 ||
+      rate <= 0 ||
+      (rate <= 2 && !isXNativeHls(controller)) ||
       !eligible(controller) ||
       (source === 'init' &&
         (controller.safariPlaybackFailedSource ===
           (controller.video.currentSrc || controller.video.src) ||
           (controller.config?.settings?.lastSpeed !== rate &&
             controller.config?.settings?.siteDefaultSpeed !== rate &&
-            !hasCurrentLocalRate(controller, rate))))
+            !hasCurrentInitRate(controller, rate))))
     ) {
       return null;
     }
@@ -832,7 +839,13 @@ window.VSC = window.VSC || {};
         if (!candidate) {
           return deferXInitialization(controller, rate, source);
         }
-        if (source === 'init' && !readyInitializations.has(controller)) {
+        if (
+          source === 'init' &&
+          !readyInitializations.has(controller) &&
+          (!isXNativeHls(controller) ||
+            controller.video.paused !== true ||
+            controller.video.autoplay !== false)
+        ) {
           return (
             deferInitialization(controller, rate, candidate) ||
             deferXInitialization(controller, rate, source)

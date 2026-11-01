@@ -740,6 +740,7 @@ describe('Safari native HLS progressive playback ownership', () => {
           resolver.mockReturnValue(null);
         } else {
           state.paused = true;
+          video.autoplay = true;
         }
         const timer = vi.spyOn(view, 'setTimeout');
         expect(action.setSpeed(video, 4, 'init')).toBe(false);
@@ -760,6 +761,40 @@ describe('Safari native HLS progressive playback ownership', () => {
         expect(video.load).not.toHaveBeenCalled();
       }
     );
+
+    it('prepares X MP4 at computed1 without replacing session4 when Remember is off', () => {
+      controller.config.settings.rememberSpeed = false;
+      controller.getTargetSpeed = () => 1;
+      state.paused = true;
+      expect(action.setSpeed(video, 1, 'init')).toBe(true);
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(1);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(controller.config.settings.lastSpeed).toBe(4);
+      expect(controller.config.save).not.toHaveBeenCalled();
+    });
+
+    it('cancels queued computed1 when Remember changes the current target to4', async () => {
+      manager.releaseMediaState(video);
+      local = manager.getOrCreateMediaRateState(video);
+      controller.config.settings.rememberSpeed = false;
+      controller.getTargetSpeed = () => (controller.config.settings.rememberSpeed ? 4 : 1);
+      const requested = pendingSitePlay();
+      expect(action.setSpeed(video, 1, 'init')).toBe(false);
+      controller.config.settings.rememberSpeed = true;
+      requested.resolve();
+      await flushInitialization();
+      expect(controller.safariPlaybackPending).toBeNull();
+      expect(video.src).toBe(HLS);
+      expect(video.load).not.toHaveBeenCalled();
+      expect(video.playbackRate).toBe(1);
+      expect(controller.config.settings.lastSpeed).toBe(4);
+      expect(controller.config.save).not.toHaveBeenCalled();
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      await flushInitialization();
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(4);
+    });
 
     it.each([
       'other host',

@@ -475,8 +475,10 @@ alternative. Current X MediaSource playback uses the separate retained-producer
 adapter described below. StayFast avoids reassigning an unchanged native rate and
 does not fight a source-specific initialization clamp.
 
-On iPhone/iPad, a speed above 2× selects an explicitly supplied matching MP4
-rendition. Resolution supports X/Twitter React props, direct HTML `<source>`
+On iPhone/iPad, X/Twitter prefers an explicitly supplied matching MP4 at every
+speed, so a later speed increase can use the progressive source already loaded.
+Other supported HLS players select their supplied MP4 above 2×.
+Resolution supports X/Twitter React props, direct HTML `<source>`
 alternatives, Video.js/Brightcove `currentSources()` and JW Player’s current
 playlist item. Both the active HLS and chosen MP4 must belong to that exact
 media element or a verified single-video player scope. The
@@ -605,8 +607,10 @@ companion and owned wrappers/listeners without a stale resume. A caption or
 protection change returns to the same original producer.
 
 The coordinator performs one synchronous source/load/start-time/rate transition.
-It does not defer playback or seeking to metadata callbacks. Automatic saved-speed
-selection first joins an already-requested Play promise, then checks the still-current
+It does not defer playback or seeking to metadata callbacks. Verified paused X
+media with autoplay off can prepare its MP4 without requesting Play. Autoplay
+intent remains with the site. Playing initialization first joins an already-requested
+Play promise, then checks the still-current
 source and intent in the next task before starting that synchronous transition.
 Metadata initialization also rechecks rendition eligibility when an earlier speed
 command already set the requested numeric rate. Matching `playbackRate` alone
