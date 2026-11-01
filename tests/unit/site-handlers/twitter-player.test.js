@@ -114,6 +114,185 @@ describe('TwitterPlayer current MSE identity', () => {
     expect(pause).not.toHaveBeenCalled();
   });
 
+  describe('current post cached variants', () => {
+    let records, variants, environment, cache, media, owner;
+    beforeEach(() => {
+      delete modern.timeRemainingAccessory;
+      modern.downloadUrl = mp4('3840x2160');
+      modern.poppedOutSource.playerProps.downloadUrl = modern.downloadUrl;
+      variants = [
+        { content_type: 'application/x-mpegURL', url: sourceUrl },
+        ...[
+          ['480x270', 256000],
+          ['640x360', 832000],
+          ['1280x720', 2176000],
+          ['1920x1080', 10368000],
+          ['3840x2160', 25128000],
+        ].map(([size, bitrate]) => ({ content_type: 'video/mp4', url: mp4(size), bitrate })),
+      ];
+      media = { id_str: contentId, type: 'video', video_info: { __ref: 'info' } };
+      records = new Map([
+        ['media', media],
+        ['info', { duration_millis: 20400, variants: { __refs: variants.map((_, i) => `v${i}`) } }],
+        ...variants.map((item, i) => [`v${i}`, item]),
+      ]);
+      cache = Object.create({ get: vi.fn((id) => records.get(id)) });
+      const relayStore = Object.create({ getSource: () => cache });
+      environment = Object.assign(Object.create({ getStore: vi.fn(() => relayStore) }), {
+        '@@RelayModernEnvironment': true,
+      });
+      owner = {
+        memoizedProps: { tweet: { rest_id: postId, media_entities2: [{ __id: 'media' }] } },
+        dependencies: { firstContext: { memoizedValue: { environment }, next: null } },
+        return: null,
+      };
+      for (let index = 0; index < 8; index++) {
+        owner.dependencies.firstContext = {
+          memoizedValue: {},
+          next: owner.dependencies.firstContext,
+        };
+      }
+      fiber.return.return = owner;
+    });
+
+    it('selects the supplied cached 720p instead of the bound 4K download without media commands', () => {
+      const load = vi.spyOn(video, 'load');
+      const play = vi.spyOn(video, 'play');
+      expect(resolve()?.progressiveUrl).toBe(mp4('1280x720'));
+      expect(cache.get.mock.calls.map(([id]) => id)).toEqual([
+        'media',
+        'info',
+        'v0',
+        'v1',
+        'v2',
+        'v3',
+        'v4',
+        'v5',
+      ]);
+      expect(video.src).toBe(blob);
+      expect(load).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+    });
+
+    it('accepts the exact child representation only with the current cached source binding', () => {
+      video.removeAttribute('src');
+      const child = document.createElement('source');
+      child.src = blob;
+      video.append(child);
+      const candidate = resolve();
+      expect(candidate?.progressiveUrl).toBe(mp4('1280x720'));
+      expect(candidate?.sourceNode).toBe(child);
+      expect(candidate?.current()).toBe(true);
+      child.src = 'blob:https://x.com/other';
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(false);
+    });
+
+    it.each([
+      [
+        'caption',
+        () => {
+          state.textTracks.tracks.push({ kind: 'captions' });
+        },
+      ],
+      [
+        'DRM',
+        () => {
+          sdk.isProtected = true;
+        },
+      ],
+      [
+        'live',
+        () => {
+          content.isLive = true;
+        },
+      ],
+      [
+        'foreign post',
+        () => {
+          owner.memoizedProps.tweet.rest_id = '999';
+        },
+      ],
+      [
+        'foreign variant',
+        () => {
+          variants[3].url = mp4('1280x720').replace(contentId, '999');
+        },
+      ],
+      [
+        'cached captions',
+        () => {
+          media.hasCaptions = true;
+        },
+      ],
+      [
+        'missing record',
+        () => {
+          records.delete('v3');
+        },
+      ],
+      [
+        'declared invalid accessory',
+        () => {
+          modern.timeRemainingAccessory = undefined;
+        },
+      ],
+    ])('refuses %s without media commands or an unsafe download fallback', (_reason, change) => {
+      const load = vi.spyOn(video, 'load');
+      change();
+      expect(resolve()).toBeNull();
+      expect(video.src).toBe(blob);
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it.each(['SDK', 'cache', 'SDK method replacement'])(
+      'rejects reentrant %s changes without loading the producer',
+      (where) => {
+        const load = vi.spyOn(video, 'load');
+        const change = () => {
+          video.src = 'blob:https://x.com/other';
+        };
+        if (where === 'SDK method replacement') {
+          api.getState.mockImplementationOnce(() => {
+            api.getState = () => ({ ...state, hasCaptions: true });
+            return state;
+          });
+        } else if (where === 'SDK') {
+          api.getState.mockImplementation(() => {
+            change();
+            return state;
+          });
+        } else {
+          cache.get.mockImplementation((id) => {
+            change();
+            return records.get(id);
+          });
+        }
+        expect(resolve()).toBeNull();
+        expect(load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('keeps identity handback valid at seek readiness and after captions become available', () => {
+      const candidate = resolve();
+      expect(candidate?.current()).toBe(true);
+      property(video, 'readyState', 1);
+      state.textTracks.tracks.push({ kind: 'captions' });
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(true);
+      state.source = { ...state.source, src: `${sourceUrl}&next=1` };
+      expect(candidate.identityCurrent()).toBe(false);
+    });
+
+    it('rejects stale cached rendition selection for takeover without blocking original identity handback', () => {
+      const candidate = resolve();
+      expect(candidate?.current()).toBe(true);
+      variants[3].url = mp4('1280x720').replace('current.mp4', 'replacement.mp4');
+      expect(candidate.current()).toBe(false);
+      expect(candidate.identityCurrent()).toBe(true);
+    });
+  });
+
   describe('explicit presentation with one direct source child', () => {
     let source;
     const presentation = () =>

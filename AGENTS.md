@@ -161,11 +161,18 @@ with direct `chrome.*` access.
     owned. Metadata callbacks attach presentation, never request Play.
     Explicit presentation may bind one direct `<source>` child, retaining its
     node and `src`/`type`/`media` identity. Any source write ends that ownership.
-    Automatic blob/MSE takeover still requires the video's `src` attribute.
+    Automatic child-source takeover requires the current post's exact Relay media
+    reference and SDK-local environment; read at most eight linked cache records
+    and reuse the supplied-rendition ranking. Missing countdown UI permits this
+    route; present, inherited or invalid UI metadata remains an authoritative veto.
     Playing handoffs commit only after their synchronous Play request succeeds;
     pending Play/Pause generations prevent stale settlement from taking over.
     Failed handoffs restore the original local rate and interface while retaining
     the saved preference; recovery errors belong only to the current request.
+    A committed, visible MP4 at 2.1× or faster monitors decoded progress. A
+    three-second buffered stall may reload only that owned companion, twice;
+    further failure hands back the original. The single reload's source events
+    preserve presentation/rate authority; newer intent and cleanup cancel it.
     Intercept X blob presentation before any original-node portal; unsupported
     streams stay inline with an explicit Use site player escape. Pending entry
     honors presentation revisions, visibility and cancellation. Preserve accepted
@@ -411,11 +418,12 @@ with direct `chrome.*` access.
   or scroll target. Native-begin events only observe presentation; they never
   create or refresh a post-entry scroll snapshot. Only an explicit native
   fullscreen request captures scrolling before invoking the browser API.
-  The only exception is a verified pending `SafariHLSPlayback` transition
-  between two supplied renditions of the same clip. It retains the owned presentation
-  and local rate authority. An intervening site source/poster write, duplicate
-  load, lost origin, document change, or disposal ends that exception. Never use
-  a generic “source is changing” flag to bypass recycled-media protection.
+  Verified pending `SafariHLSPlayback` transitions between two supplied renditions,
+  and one current `TwitterMP4Session` companion reload, retain the same clip's
+  owned presentation and local rate authority. An intervening site source/poster
+  write, duplicate load, lost origin, document change, or disposal ends that
+  exception. Never use a generic “source is changing” flag to bypass recycled-media
+  protection.
   A denied explicit owned-to-Apple request may restore only its same-source
   viewport, with no play/fullscreen call; newer input (including wheel), URL/root,
   source, presentation or cleanup invalidates recovery. Native fullscreen events
