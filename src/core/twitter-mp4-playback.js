@@ -91,6 +91,7 @@ window.VSC = window.VSC || {};
       this.playGeneration = 0;
       this.originalPlay = this.original.play;
       this.originalPause = this.original.pause;
+      this.recovery = new window.VSC.OwnedMP4Recovery(this);
     }
 
     originCurrent() {
@@ -160,6 +161,32 @@ window.VSC = window.VSC || {};
     listen(target, type, handler, options) {
       target.addEventListener(type, handler, options);
       this.listeners.push(() => target.removeEventListener(type, handler, options));
+    }
+
+    recoveryCurrent() {
+      try {
+        const current = this.committed && this.current();
+        if (this.nativeObserver?.takeRecords().length) {
+          this.cleanup({ resume: false });
+          return false;
+        }
+        return current;
+      } catch {
+        return false;
+      }
+    }
+
+    recoveryFailed() {
+      this.cleanup({ site: true, playing: true });
+    }
+    cancelReload() {
+      this.recovery?.cancel();
+    }
+    ownsTransition(type) {
+      return this.recovery?.ownsTransition(type) || false;
+    }
+    watchPlayback() {
+      this.recovery?.refresh();
     }
 
     start() {
@@ -245,6 +272,7 @@ window.VSC = window.VSC || {};
         if (this.finished) {
           this.commit();
         }
+        this.recovery.refresh();
       });
       this.listen(video, 'error', () => this.abort());
       this.listen(video, 'loadstart', () => {
@@ -275,6 +303,11 @@ window.VSC = window.VSC || {};
       });
       this.listen(this.view, 'pagehide', yieldToSite);
       this.listen(this.doc, 'visibilitychange', () => {
+        if (this.doc.hidden) {
+          this.cancelReload();
+        } else {
+          this.watchPlayback();
+        }
         if (this.presentation && !this.committed && this.doc.hidden) {
           this.cleanup({ resume: false });
         }
@@ -438,6 +471,7 @@ window.VSC = window.VSC || {};
           // may open the overlay, never Play or browser DOM fullscreen.
           this.video.vsc.iosPlayer?.open();
         }
+        this.watchPlayback();
       } catch {
         this.committing = false;
         this.abort();
@@ -509,6 +543,12 @@ window.VSC = window.VSC || {};
         current = false;
       }
       this.closed = true;
+      this.cancelReload();
+      try {
+        this.recovery?.cleanup();
+      } catch {
+        /* Continue cleanup. */
+      }
       active.delete(this);
       originals.delete(this.original);
       players.delete(this.video);
@@ -783,6 +823,9 @@ window.VSC = window.VSC || {};
     begin(controller, rate, source = 'internal') {
       let session;
       try {
+        if (source !== 'init') {
+          players.get(controller?.video)?.cancelReload();
+        }
         if (controller?.video) {
           recoveryRequests.delete(controller.video);
         }

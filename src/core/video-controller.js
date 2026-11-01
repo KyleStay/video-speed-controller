@@ -290,6 +290,7 @@ class VideoController {
       !this.actionHandler ||
       (this.video.readyState >= 1 &&
         targetSpeed === this.video.playbackRate &&
+        !window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') &&
         !window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') &&
         !window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init'))
     ) {
@@ -318,6 +319,7 @@ class VideoController {
         // still needs its supplied progressive rendition for fast playback.
         if (
           currentTargetSpeed !== this.video.playbackRate ||
+          window.VSC.TwitterCaptionPlayback?.canBegin(this, currentTargetSpeed, 'init') ||
           window.VSC.SafariHLSPlayback?.canSwitch?.(this, currentTargetSpeed, 'init')
         ) {
           this.actionHandler.adjustSpeed(this.video, currentTargetSpeed, { source: 'init' });
@@ -606,9 +608,9 @@ class VideoController {
       );
       return { local, speedPreferenceRevision, targetSpeed };
     };
-    const mediaEventAction = (event, hlsReadinessOnly = false) => {
+    const mediaEventAction = (event, sourceReadinessOnly = false) => {
       const { local, speedPreferenceRevision, targetSpeed } = mediaTarget(event.target);
-      if (hlsReadinessOnly) {
+      if (sourceReadinessOnly) {
         try {
           const video = event.target;
           const doc = video.ownerDocument;
@@ -619,6 +621,7 @@ class VideoController {
             video.vsc !== this ||
             video.localName !== 'video' ||
             !video.isConnected ||
+            this.config.settings.enabled === false ||
             video.readyState < 2 ||
             video.paused ||
             video.ended ||
@@ -630,13 +633,19 @@ class VideoController {
             video.webkitKeys ||
             targetSpeed <= 2 ||
             typeof source !== 'string' ||
-            source.length > 4096 ||
-            !/\.m3u8(?:[?#]|$)/i.test(source)
+            source.length > 4096
           ) {
             return;
           }
           const parsed = new URL(source, doc.baseURI);
-          if (!['https:', 'http:'].includes(parsed.protocol) || !/\.m3u8$/i.test(parsed.pathname)) {
+          const mse = parsed.protocol === 'blob:';
+          if (
+            mse
+              ? !window.VSC.IOSPlayer?.isSupported(video) ||
+                !window.VSC.EventManager.isTwitterHost(new URL(doc.URL).hostname) ||
+                parsed.origin !== new URL(doc.URL).origin
+              : !['https:', 'http:'].includes(parsed.protocol) || !/\.m3u8$/i.test(parsed.pathname)
+          ) {
             return;
           }
           const now = doc.defaultView.performance.now();
@@ -650,6 +659,7 @@ class VideoController {
           budget.events++;
           if (
             this.safariPlaybackPending ||
+            this.twitterCaptionPending ||
             this.safariPlayback ||
             this.safariPlaybackFailedSource === source
           ) {
@@ -661,12 +671,17 @@ class VideoController {
             poster = video.getAttribute('poster');
           const srcObject = video.srcObject,
             rate = video.playbackRate;
-          if (window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init')) {
+          const canStart = mse
+            ? window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
+            : window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') ||
+              window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init');
+          if (canStart) {
             const current = mediaTarget(video);
             if (
               this.disposed ||
               video.vsc !== this ||
               !video.isConnected ||
+              this.config.settings.enabled === false ||
               video.ownerDocument !== doc ||
               doc.documentElement !== root ||
               doc.URL !== url ||
@@ -700,6 +715,7 @@ class VideoController {
       try {
         if (event.target.playbackRate === targetSpeed) {
           if (
+            window.VSC.TwitterCaptionPlayback?.canBegin(this, targetSpeed, 'init') ||
             window.VSC.SafariHLSPlayback?.canSwitch?.(this, targetSpeed, 'init') ||
             window.VSC.TwitterMP4Playback?.canBegin(this, targetSpeed, 'init')
           ) {
@@ -734,7 +750,12 @@ class VideoController {
         if (
           !event.isTrusted ||
           event.target !== this.video ||
-          !window.VSC.SafariHLSPlayback?.matches?.(this.video)
+          (!window.VSC.SafariHLSPlayback?.matches?.(this.video) &&
+            !(
+              (this.video.currentSrc || this.video.src)?.startsWith('blob:') &&
+              window.VSC.IOSPlayer?.isSupported(this.video) &&
+              window.VSC.EventManager.isTwitterHost(new URL(this.video.ownerDocument.URL).hostname)
+            ))
         ) {
           return;
         }
@@ -756,9 +777,12 @@ class VideoController {
     this.video.addEventListener('play', this.handlePlay);
     this.video.addEventListener('playing', this.handlePlayingReadiness);
     this.video.addEventListener('seeked', this.handleSeek);
-    this.handleRateSourceReset = () => {
+    this.handleRateSourceReset = (event) => {
       this.hlsPlayingReadiness = null;
-      if (!this.safariPlayback?.ownsTransition()) {
+      if (
+        !this.safariPlayback?.ownsTransition() &&
+        !window.VSC.TwitterMP4Playback?.get(this.video)?.ownsTransition(event.type)
+      ) {
         this.actionHandler.eventManager?.releaseMediaState?.(this.video);
       }
     };
@@ -893,7 +917,9 @@ class VideoController {
 
     // Restore the original rendition after our lifecycle listeners are gone;
     // continuing an already-playing clip must not initialize another fallback.
+    this.twitterCaptionRestore?.cleanup();
     this.safariPlaybackPending?.cleanup();
+    this.twitterCaptionPending?.cleanup();
     this.safariPlayback?.cleanup();
     window.VSC.GifPlayback?.get(this.video)?.cleanup();
 

@@ -355,6 +355,410 @@ describe('X retained MediaSource MP4 playback', () => {
     expectReleased(session);
   });
 
+  describe('owned MP4 decoded-stall recovery', () => {
+    let frames, total, ahead, reloads, session, video;
+    async function playing(rate = 4) {
+      frames = new Map();
+      total = 10;
+      ahead = 20;
+      reloads = [];
+      let id = 0,
+        ready = 4,
+        current = MP4;
+      session = begin(rate);
+      video = session.video;
+      Object.defineProperties(video, {
+        readyState: { configurable: true, get: () => ready },
+        currentSrc: { configurable: true, get: () => current },
+        duration: { configurable: true, value: 120 },
+        videoWidth: { configurable: true, value: 640 },
+        videoHeight: { configurable: true, value: 360 },
+        buffered: {
+          configurable: true,
+          get: () => ({
+            length: ahead ? 1 : 0,
+            start: () => video.currentTime,
+            end: () => video.currentTime + ahead,
+          }),
+        },
+      });
+      video.getBoundingClientRect = () => new DOMRect(0, 0, 320, 180);
+      video.style.opacity = '1';
+      video.getVideoPlaybackQuality = () => ({ totalVideoFrames: total });
+      video.requestVideoFrameCallback = (callback) => {
+        frames.set(++id, callback);
+        return id;
+      };
+      video.cancelVideoFrameCallback = (key) => frames.delete(key);
+      video.load = vi.fn(() => {
+        if (video.getAttribute('src') !== MP4) {
+          return;
+        }
+        reloads.push({ source: video.src, time: video.currentTime });
+        ready = 0;
+        current = '';
+        mediaState(video).paused = true;
+        video.currentTime = 0;
+        video.playbackRate = 1;
+        video.dispatchEvent(new Event('emptied'));
+        video.dispatchEvent(new Event('loadstart'));
+        setTimeout(() => {
+          ready = 4;
+          current = MP4;
+          video.dispatchEvent(new Event('loadeddata'));
+          video.dispatchEvent(new Event('playing'));
+        }, 1);
+      });
+      session.finish();
+      await loaded(session);
+      video.dispatchEvent(new Event('playing'));
+      nativePlay.mockClear();
+      return session;
+    }
+    const stall = () => vi.advanceTimersByTimeAsync(3100);
+    function ownedPlayer() {
+      controller.config.getKeyBinding = () => 1.8;
+      const player = new window.VSC.IOSPlayer(video.vsc);
+      video.vsc.iosPlayer = player;
+      const remove = video.vsc.remove;
+      video.vsc.remove = () => {
+        player.cleanup();
+        remove();
+      };
+      uiPlayers.push(player);
+      player.attach();
+      expect(player.openPresentation()).toBe(true);
+      return player;
+    }
+
+    it.each([2.1, 4])(
+      'reloads only the same buffered companion at %s× and preserves playback intent',
+      async (rate) => {
+        await playing(rate);
+        const player = rate === 4 ? ownedPlayer() : null;
+        video.currentTime = 18;
+        video.muted = false;
+        video.volume = 0.6;
+        await stall();
+        expect(reloads).toEqual([{ source: MP4, time: 18 }]);
+        expect(video.currentTime).toBe(18);
+        expect(video.playbackRate).toBe(rate);
+        expect(video.muted).toBe(false);
+        expect(video.volume).toBe(0.6);
+        expect(video.paused).toBe(false);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(original.src).toBe(MSE);
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        if (player) {
+          expect(player.active).toBe(true);
+        }
+      }
+    );
+
+    it.each([
+      'buffering',
+      'pause',
+      'seek',
+      'hidden',
+      'below threshold',
+      'decoded progress',
+      'CSS visibility',
+      'CSS opacity',
+      'CSS checkVisibility',
+    ])('does not reload during %s', async (condition) => {
+      await playing();
+      if (condition === 'buffering') {
+        ahead = 0;
+      } else if (condition === 'pause') {
+        video.pause();
+        video.dispatchEvent(new Event('pause'));
+      } else if (condition === 'seek') {
+        Object.defineProperty(video, 'seeking', { configurable: true, value: true });
+        video.dispatchEvent(new Event('seeking'));
+      } else if (condition === 'hidden') {
+        vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+        document.dispatchEvent(new Event('visibilitychange'));
+      } else if (condition === 'below threshold') {
+        video.playbackRate = 2;
+        video.dispatchEvent(new Event('ratechange'));
+      } else if (condition.startsWith('CSS')) {
+        if (condition === 'CSS visibility') {
+          video.style.visibility = 'hidden';
+        } else if (condition === 'CSS opacity') {
+          video.style.opacity = '0';
+        } else {
+          video.checkVisibility = () => false;
+        }
+      } else {
+        total++;
+        const callback = frames.values().next().value;
+        frames.clear();
+        callback?.(performance.now(), {
+          mediaTime: video.currentTime + 0.1,
+          presentedFrames: total,
+        });
+      }
+      await vi.advanceTimersByTimeAsync(condition === 'decoded progress' ? 2900 : 3100);
+      expect(reloads).toHaveLength(0);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('hands back the guarded original after two unsuccessful reloads instead of loading a third time', async () => {
+      await playing();
+      await stall();
+      await stall();
+      await stall();
+      expect(reloads).toHaveLength(2);
+      expect(session.closed).toBe(true);
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('keeps watching after buffering ends without another Playing event', async () => {
+      await playing();
+      ahead = 0;
+      await stall();
+      expect(reloads).toHaveLength(0);
+      ahead = 20;
+      await stall();
+      expect(reloads).toHaveLength(1);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('does not let repeated identical frame metadata conceal a decoded stall', async () => {
+      await playing();
+      for (let sample = 0; sample < 13; sample++) {
+        await vi.advanceTimersByTimeAsync(sample === 0 ? 125 : 250);
+        if (reloads.length) {
+          break;
+        }
+        const callback = frames.values().next().value;
+        frames.clear();
+        expect(callback).toBeTypeOf('function');
+        callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 });
+      }
+      expect(reloads).toHaveLength(1);
+      expect(reloads[0].source).toBe(MP4);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('stops monitoring after a page frame API returns an invalid handle without reloading', async () => {
+      await playing();
+      const callback = frames.values().next().value;
+      frames.clear();
+      video.requestVideoFrameCallback = vi.fn(() => NaN);
+      callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 });
+      await stall();
+      expect(video.requestVideoFrameCallback).toHaveBeenCalled();
+      expect(reloads).toHaveLength(0);
+      expect(frames.size).toBe(0);
+      expect(original.load).not.toHaveBeenCalled();
+      session.cleanup({ resume: false });
+      expectReleased(session);
+    });
+
+    it.each(['listener registration', 'next frame request'])(
+      'contains a recovery %s exception while keeping base playback usable',
+      async (failure) => {
+        let removed, registration;
+        if (failure === 'listener registration') {
+          const Recovery = window.VSC.OwnedMP4Recovery;
+          // Production constructs this mock with new, so it must remain constructable.
+          // eslint-disable-next-line prefer-arrow-callback
+          vi.spyOn(window.VSC, 'OwnedMP4Recovery').mockImplementation(function (owner) {
+            const media = owner.video;
+            const add = media.addEventListener.bind(media);
+            removed = vi.spyOn(media, 'removeEventListener');
+            const injected = vi.spyOn(media, 'addEventListener').mockImplementation((...args) => {
+              if (args[0] === 'loadstart') {
+                throw Error('Page rejected recovery listener');
+              }
+              registration = args;
+              add(...args);
+            });
+            try {
+              return new Recovery(owner);
+            } finally {
+              injected.mockRestore();
+            }
+          });
+        }
+        await playing();
+        if (failure === 'listener registration') {
+          expect(registration[0]).toBe('emptied');
+          expect(removed).toHaveBeenCalledWith(...registration);
+        } else {
+          const callback = frames.values().next().value;
+          frames.clear();
+          video.requestVideoFrameCallback = () => {
+            throw Error('Page replaced frame API');
+          };
+          expect(() =>
+            callback(performance.now(), { mediaTime: 12.5, presentedFrames: 10 })
+          ).not.toThrow();
+        }
+        await stall();
+        expect(reloads).toHaveLength(0);
+        expect(frames.size).toBe(0);
+        expect(session.closed).toBe(false);
+        expect(video.src).toBe(MP4);
+        expect(video.paused).toBe(false);
+        expect(original.load).not.toHaveBeenCalled();
+        session.cleanup({ resume: false });
+        expectReleased(session);
+      }
+    );
+
+    it.each(['reject', 'timeout', 'second seek', 'different seek'])(
+      'handles a queued own-seek before recovery %s without confusing newer seek intent',
+      async (outcome) => {
+        await playing();
+        let reject;
+        nativePlay.mockImplementationOnce(function () {
+          mediaState(this).paused = false;
+          return new Promise((_resolve, fail) => {
+            reject = fail;
+          });
+        });
+        const load = video.load.getMockImplementation();
+        video.load.mockImplementationOnce(() => {
+          load();
+          setTimeout(() => {
+            Object.defineProperty(video, 'seeking', { configurable: true, value: true });
+            video.dispatchEvent(new Event('seeking'));
+            Object.defineProperty(video, 'seeking', { configurable: true, value: false });
+            video.dispatchEvent(new Event('seeked'));
+          }, 0);
+        });
+        await stall();
+        if (outcome.includes('seek')) {
+          if (outcome === 'different seek') {
+            video.currentTime += 1;
+          }
+          video.dispatchEvent(new Event('seeking'));
+        }
+        if (outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(10000);
+        } else {
+          reject(new DOMException('Interrupted', 'AbortError'));
+          await Promise.resolve();
+        }
+        expect(original.load).not.toHaveBeenCalled();
+        expect(originalPlay.mock.calls.length).toBe(outcome.includes('seek') ? 0 : 1);
+        expect(session.closed).toBe(!outcome.includes('seek'));
+      }
+    );
+
+    it.each(['close', 'reopen'])(
+      'rearms ready playback after UI %s invalidates a pending recovery',
+      async (change) => {
+        await playing();
+        const player = ownedPlayer();
+        let resolve;
+        nativePlay.mockImplementationOnce(function () {
+          mediaState(this).paused = false;
+          return new Promise((done) => {
+            resolve = done;
+          });
+        });
+        await stall();
+        player.close();
+        if (change === 'reopen') {
+          expect(player.openPresentation()).toBe(true);
+        }
+        resolve();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(video.readyState).toBe(4);
+        expect(video.paused).toBe(false);
+        expect(frames.size).toBe(1);
+        expect(nativePlay).toHaveBeenCalledOnce();
+        video.pause();
+        video.dispatchEvent(new Event('pause'));
+        expect(frames.size).toBe(0);
+        expect(originalPlay).not.toHaveBeenCalled();
+      }
+    );
+
+    it('does not Play after a synchronous reload callback replaces the producer source', async () => {
+      await playing();
+      video.load.mockImplementationOnce(() => {
+        reloads.push({ source: video.src });
+        original.src = 'blob:https://x.com/new-item';
+        video.dispatchEvent(new Event('loadstart'));
+      });
+      await stall();
+      expect(reloads).toHaveLength(1);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['load throws', 'Play rejects'])(
+      'hands back the guarded original when recovery %s',
+      async (failure) => {
+        await playing();
+        if (failure === 'load throws') {
+          video.load.mockImplementationOnce(() => {
+            throw Error('Load refused');
+          });
+        } else {
+          nativePlay.mockRejectedValueOnce(new DOMException('Play refused', 'NotAllowedError'));
+        }
+        await stall();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(original.src).toBe(MSE);
+      }
+    );
+
+    it.each(['pause', 'new speed', 'same speed', 'cleanup'])(
+      'ignores stale recovery Play settlement after %s',
+      async (cancel) => {
+        await playing();
+        let resolve, reject;
+        nativePlay.mockImplementationOnce(function () {
+          mediaState(this).paused = false;
+          return new Promise((done, fail) => {
+            resolve = done;
+            reject = fail;
+          });
+        });
+        await stall();
+        expect(reloads).toHaveLength(1);
+        if (cancel === 'pause') {
+          video.pause();
+          video.dispatchEvent(new Event('pause'));
+        } else if (cancel.endsWith('speed')) {
+          controller.config.save = vi.fn();
+          new window.VSC.ActionHandler(controller.config, null).setSpeed(
+            video,
+            cancel === 'same speed' ? 4 : 3,
+            'user'
+          );
+        } else {
+          session.cleanup({ resume: false });
+        }
+        if (cancel === 'pause') {
+          reject(new DOMException('Paused', 'AbortError'));
+        } else {
+          resolve();
+        }
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(reloads).toHaveLength(1);
+        expect(originalPlay).not.toHaveBeenCalled();
+        if (cancel === 'new speed') {
+          expect(video.playbackRate).toBe(3);
+        }
+        if (!cancel.endsWith('speed')) {
+          expect(video.paused).toBe(true);
+        }
+      }
+    );
+  });
+
   it.each(['rate', 'external', 'desktop', 'disposed', 'site', 'missing'])(
     'does not probe an ineligible %s request',
     (reason) => {
@@ -416,6 +820,25 @@ describe('X retained MediaSource MP4 playback', () => {
     );
     expect(begin(6)).toBe(session);
     expect(session.video.playbackRate).toBe(6);
+  });
+
+  it('resumes the retained producer when SDK handback seeking drops readiness and vetoes new takeover', async () => {
+    const session = await commit();
+    candidate.api.seekTo.mockImplementation((time) => {
+      original.currentTime = time;
+      Object.defineProperty(original, 'readyState', { configurable: true, value: 1 });
+      candidate.current.mockReturnValue(false);
+    });
+    session.video.currentTime = 18;
+    session.cleanup();
+    expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(18);
+    expect(candidate.current()).toBe(false);
+    expect(candidate.identityCurrent()).toBe(true);
+    expect(originalPlay).toHaveBeenCalledOnce();
+    expect(window.VSC_controller.onVideoFound).toHaveBeenCalledOnce();
+    expect(original.src).toBe(MSE);
+    expect(original.load).not.toHaveBeenCalled();
+    expectReleased(session);
   });
 
   it('never autoplays an originally paused clip', async () => {

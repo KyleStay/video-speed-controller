@@ -1042,3 +1042,103 @@ describe('VideoController', () => {
     eventManager.cleanup();
   });
 });
+
+describe('VideoController late X MSE readiness', () => {
+  let dom, config, events, actions, controllers, canBegin;
+  beforeEach(async () => {
+    installChromeMock();
+    resetMockStorage();
+    dom = createMockDOM();
+    controllers = [];
+    config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    config.settings.lastSpeed = 4;
+    config.settings.rememberSpeed = true;
+    vi.spyOn(document, 'URL', 'get').mockReturnValue('https://x.com/NASAJPL');
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    vi.spyOn(window.VSC.IOSPlayer, 'isSupported').mockReturnValue(true);
+    vi.spyOn(window.VSC.SafariHLSPlayback, 'matches').mockReturnValue(false);
+    vi.spyOn(window.VSC.SafariHLSPlayback, 'canSwitch').mockReturnValue(false);
+    canBegin = vi.spyOn(window.VSC.TwitterMP4Playback, 'canBegin').mockReturnValue(false);
+    events = new window.VSC.EventManager(config, null);
+    actions = new window.VSC.ActionHandler(config, events);
+    vi.spyOn(actions, 'adjustSpeed');
+    vi.spyOn(config, 'save');
+  });
+  afterEach(() => {
+    controllers.forEach((controller) => controller.remove());
+    events.cleanup();
+    dom.cleanup();
+    cleanupChromeMock();
+    vi.restoreAllMocks();
+  });
+  const attach = (source = 'blob:https://x.com/first') => {
+    canBegin.mockReturnValue(false);
+    const video = createMockVideo({ currentSrc: source, readyState: 2, playbackRate: 4 });
+    dom.container.append(video);
+    const controller = new window.VSC.VideoController(video, null, config, actions);
+    controllers.push(controller);
+    actions.adjustSpeed.mockClear();
+    canBegin.mockClear();
+    return controller;
+  };
+  const playing = (controller, isTrusted = true) =>
+    controller.handlePlayingReadiness({ target: controller.video, type: 'playing', isTrusted });
+  it('uses late metadata on the next feed controller at its already-matching saved rate', () => {
+    attach().remove();
+    const next = attach('blob:https://x.com/next');
+    playing(next);
+    expect(actions.adjustSpeed).not.toHaveBeenCalled();
+    canBegin.mockReturnValue(true);
+    playing(next);
+    expect(actions.adjustSpeed).toHaveBeenCalledExactlyOnceWith(next.video, 4, { source: 'init' });
+    expect(config.save).not.toHaveBeenCalled();
+  });
+  it.each([
+    'synthetic',
+    'foreign origin',
+    'desktop',
+    'other host',
+    'disabled',
+    'stale preference',
+    'source changed',
+  ])('retains the site player for %s', (reason) => {
+    const controller = attach(
+      reason === 'foreign origin' ? 'blob:https://other.example/clip' : undefined
+    );
+    canBegin.mockImplementation(() => {
+      if (reason === 'stale preference') {
+        config.speedPreferenceRevision = 1;
+      }
+      if (reason === 'source changed') {
+        controller.video.currentSrc = 'blob:https://x.com/new';
+      }
+      return true;
+    });
+    if (reason === 'desktop') {
+      window.VSC.IOSPlayer.isSupported.mockReturnValue(false);
+    }
+    if (reason === 'other host') {
+      Object.getOwnPropertyDescriptor(document, 'URL').get.mockReturnValue('https://example.com/');
+    }
+    if (reason === 'disabled') {
+      config.settings.enabled = false;
+    }
+    playing(controller, reason !== 'synthetic');
+    expect(actions.adjustSpeed).not.toHaveBeenCalled();
+  });
+  it('keeps the native opportunity budget finite and refuses disabled continuation', () => {
+    const controller = attach();
+    for (let i = 0; i < 40; i++) {
+      playing(controller);
+    }
+    expect(canBegin).toHaveBeenCalledTimes(32);
+    const next = attach('blob:https://x.com/next');
+    canBegin.mockImplementation(() => {
+      config.settings.enabled = false;
+      return true;
+    });
+    playing(next);
+    expect(actions.adjustSpeed).not.toHaveBeenCalled();
+  });
+});

@@ -136,6 +136,427 @@ describe('Safari native HLS progressive playback ownership', () => {
     vi.useRealTimers();
   });
 
+  describe('same-video decoded-stall recovery', () => {
+    let frames, total, ahead, certificate, reloads, session;
+    async function playing(rate = 4) {
+      frames = new Map();
+      total = 10;
+      ahead = 20;
+      reloads = [];
+      let frameId = 0;
+      Object.assign(view, {
+        performance: window.performance,
+        innerWidth: 1024,
+        innerHeight: 768,
+        getComputedStyle: window.getComputedStyle.bind(window),
+      });
+      Object.defineProperty(doc, 'hidden', { configurable: true, value: false });
+      video.style.opacity = '1';
+      video.getBoundingClientRect = () => new DOMRect(0, 0, 320, 180);
+      Object.defineProperties(video, {
+        videoWidth: { configurable: true, value: 640 },
+        videoHeight: { configurable: true, value: 360 },
+        buffered: {
+          configurable: true,
+          get: () => ({
+            length: ahead ? 1 : 0,
+            start: () => state.time,
+            end: () => state.time + ahead,
+          }),
+        },
+      });
+      video.getVideoPlaybackQuality = () => ({ totalVideoFrames: total });
+      video.requestVideoFrameCallback = (callback) => {
+        frames.set(++frameId, callback);
+        return frameId;
+      };
+      video.cancelVideoFrameCallback = (handle) => frames.delete(handle);
+      certificate = vi.fn(() => true);
+      resolver.mockReturnValue({
+        originalUrl: HLS,
+        progressiveUrl: MP4,
+        mediaId: '123',
+        revalidate: certificate,
+      });
+      controller.config = {
+        settings: {
+          ...window.VSC.Constants.DEFAULT_SETTINGS,
+          lastSpeed: rate,
+          rememberSpeed: false,
+        },
+        speedPreferenceRevision: 0,
+        save: vi.fn(),
+      };
+      video.load.mockImplementation(() => {
+        reloads.push(video.src);
+        Object.assign(state, { paused: true, currentSrc: '', readyState: 0, rate: 1 });
+        event('emptied');
+        event('loadstart');
+        setTimeout(() => {
+          state.currentSrc = video.src;
+          state.readyState = 4;
+          event('loadeddata');
+          event('playing');
+        }, 1);
+      });
+      session = begin(rate);
+      state.rate = rate;
+      session.finish();
+      await vi.advanceTimersByTimeAsync(1);
+      video.load.mockClear();
+      video.play.mockClear();
+      reloads.length = 0;
+      return session;
+    }
+    const stall = () => vi.advanceTimersByTimeAsync(3100);
+
+    it.each([2.1, 4])(
+      'reloads only its supplied MP4 at %s× while preserving time, audio and presentation',
+      async (rate) => {
+        await playing(rate);
+        const player = controller.iosPlayer;
+        player.active = true;
+        state.time = 18;
+        video.muted = false;
+        video.volume = 0.6;
+        await stall();
+        expect(reloads).toEqual([MP4]);
+        expect(video.currentTime).toBe(18);
+        expect(video.playbackRate).toBe(rate);
+        expect(video.muted).toBe(false);
+        expect(video.volume).toBe(0.6);
+        expect(video.paused).toBe(false);
+        expect(controller.iosPlayer).toBe(player);
+        expect(player.active).toBe(true);
+        expect(controller.safariPlayback).toBe(session);
+        expect(certificate).toHaveBeenCalled();
+      }
+    );
+
+    it('retains externally supplied caption nodes, cue identity and latest On through a reload', async () => {
+      const element = doc.createElement('track');
+      const cue = { startTime: 0, endTime: 30, text: 'Retained caption' };
+      const track = {
+        kind: 'subtitles',
+        label: 'English',
+        language: 'en',
+        mode: 'showing',
+        cues: [cue],
+      };
+      Object.defineProperty(element, 'track', { value: track });
+      Object.defineProperty(video, 'textTracks', { configurable: true, value: [track] });
+      video.append(element);
+      await playing();
+      await stall();
+      expect(reloads).toEqual([MP4]);
+      expect(video.firstChild).toBe(element);
+      expect(video.textTracks[0]).toBe(track);
+      expect(track.cues[0]).toBe(cue);
+      expect(track.mode).toBe('showing');
+      expect(certificate.mock.calls.some(([loading]) => loading === true)).toBe(true);
+    });
+
+    it('waits for the initial MP4 Play acceptance before watching ready buffered media', async () => {
+      let accept;
+      video.play.mockImplementationOnce(() => {
+        state.paused = false;
+        return new Promise((resolve) => {
+          accept = resolve;
+        });
+      });
+      await playing();
+      await stall();
+      expect(video.readyState).toBe(4);
+      expect(reloads).toHaveLength(0);
+      expect(frames.size).toBe(0);
+      accept();
+      await Promise.resolve();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(frames.size).toBe(1);
+      await stall();
+      expect(reloads).toEqual([MP4]);
+      expect(video.play).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the initial deadline after loadeddata while MP4 Play remains pending forever', async () => {
+      video.play.mockImplementationOnce(() => {
+        state.paused = false;
+        return new Promise(() => {});
+      });
+      await playing();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(video.src).toBe(HLS);
+      expect(reloads).toEqual([HLS]);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(session.closed).toBe(true);
+      expect(controller.safariPlayback).toBeNull();
+      expect(frames.size).toBe(0);
+    });
+
+    it('hands back HLS after two unsuccessful same-MP4 reloads without a third MP4 load', async () => {
+      await playing();
+      await stall();
+      controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+      expect(controller.actionHandler.setSpeed(video, 4, 'user')).toBe(true);
+      await stall();
+      await stall();
+      expect(reloads).toEqual([MP4, MP4, HLS]);
+      expect(video.src).toBe(HLS);
+      expect(controller.video).toBe(video);
+      expect(session.closed).toBe(true);
+      expect(frames.size).toBe(0);
+    });
+
+    it('rechecks the source certificate before a reload and retains a fresh capability veto', async () => {
+      await playing();
+      certificate.mockClear();
+      certificate.mockReturnValue(false);
+      await stall();
+      expect(certificate).toHaveBeenCalled();
+      expect(reloads).toHaveLength(0);
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('releases a reload whose throwing load callback introduces a fresh SDK veto without restoring old HLS', async () => {
+      await playing();
+      video.load.mockImplementationOnce(() => {
+        reloads.push(video.src);
+        certificate.mockReturnValue(false);
+        throw Error('Site replaced its SDK item during load');
+      });
+      await stall();
+      expect(certificate).toHaveBeenCalled();
+      expect(reloads).toEqual([MP4]);
+      expect(video.src).toBe(MP4);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(session.closed).toBe(true);
+      expect(controller.safariPlayback).toBeNull();
+      expect(frames.size).toBe(0);
+    });
+
+    it.each(['load callback', 'Play getter'])(
+      'preserves newer site intent written by handback %s',
+      async (boundary) => {
+        await playing();
+        state.time = 12;
+        const foreign = 'https://media.example.test/site-newer.mp4';
+        const replace = () => {
+          video.src = foreign;
+          Object.assign(state, { currentSrc: foreign, time: 7, rate: 0.75, paused: true });
+        };
+        const foreignPlay = vi.fn(() => {
+          state.paused = false;
+          return Promise.resolve();
+        });
+        if (boundary === 'load callback') {
+          video.load.mockImplementationOnce(replace);
+        } else {
+          Object.defineProperty(video, 'play', {
+            configurable: true,
+            get() {
+              replace();
+              return foreignPlay;
+            },
+          });
+        }
+        session.cleanup();
+        await Promise.resolve();
+        expect(video.src).toBe(foreign);
+        expect(video.currentTime).toBe(7);
+        expect(video.playbackRate).toBe(0.75);
+        expect(video.paused).toBe(true);
+        expect(foreignPlay).not.toHaveBeenCalled();
+        if (boundary === 'load callback') {
+          expect(video.play).not.toHaveBeenCalled();
+        }
+        expect(session.closed).toBe(true);
+        expect(controller.safariPlayback).toBeNull();
+        expect(frames.size).toBe(0);
+      }
+    );
+
+    it.each(['native transport', 'user', 'external'])(
+      'preserves newer same-HLS %s intent from handback load before native events arrive',
+      async (source) => {
+        await playing();
+        state.time = 12;
+        let accepted;
+        video.load.mockImplementationOnce(() => {
+          Object.assign(state, {
+            currentSrc: HLS,
+            readyState: 4,
+            time: 7,
+            rate: 0.75,
+            paused: true,
+          });
+          if (source !== 'native transport') {
+            controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+            accepted = controller.actionHandler.setSpeed(video, 2, source);
+          }
+        });
+        session.cleanup();
+        await Promise.resolve();
+        expect(video.src).toBe(HLS);
+        expect(video.currentSrc).toBe(HLS);
+        expect(video.currentTime).toBe(7);
+        expect(video.playbackRate).toBe(source === 'native transport' ? 0.75 : 2);
+        if (source !== 'native transport') {
+          expect(accepted).toBe(true);
+          expect(controller.config.settings.lastSpeed).toBe(source === 'user' ? 2 : 4);
+        }
+        expect(video.paused).toBe(true);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(session.closed).toBe(true);
+        expect(controller.safariPlayback).toBeNull();
+        expect(frames.size).toBe(0);
+      }
+    );
+
+    it('accepts a native load reset to the existing default rate before restoring owned HLS playback', async () => {
+      await playing();
+      state.time = 18;
+      video.defaultPlaybackRate = 2;
+      video.load.mockImplementationOnce(() => {
+        Object.assign(state, { currentSrc: '', readyState: 0, time: 0, rate: 2, paused: true });
+      });
+      session.cleanup();
+      expect(video.src).toBe(HLS);
+      expect(video.currentTime).toBe(18);
+      expect(video.playbackRate).toBe(4);
+      expect(video.paused).toBe(false);
+      expect(video.play).toHaveBeenCalledOnce();
+      expect(session.closed).toBe(true);
+      expect(controller.safariPlayback).toBeNull();
+      expect(frames.size).toBe(0);
+    });
+
+    it('waits for buffering and does not treat advancing decoded quality as a stall', async () => {
+      await playing();
+      ahead = 0;
+      await stall();
+      expect(reloads).toHaveLength(0);
+      ahead = 20;
+      total++;
+      await stall();
+      expect(reloads).toHaveLength(0);
+      expect(frames.size).toBe(1);
+      await stall();
+      expect(reloads).toEqual([MP4]);
+    });
+
+    it.each(['pause', 'seek', 'source', 'UI', 'cleanup'])(
+      'ignores rejected recovery Play after newer %s intent',
+      async (change) => {
+        await playing();
+        controller.iosPlayer.active = true;
+        let reject;
+        video.play.mockImplementationOnce(() => {
+          state.paused = false;
+          return new Promise((_resolve, fail) => {
+            reject = fail;
+          });
+        });
+        await stall();
+        expect(reloads).toEqual([MP4]);
+        if (change === 'pause') {
+          video.pause();
+          event('pause');
+        } else if (change === 'seek') {
+          state.time = 37;
+          Object.defineProperty(video, 'seeking', { configurable: true, value: true });
+          event('seeking');
+        } else if (change === 'source') {
+          video.src = 'https://media.example.test/newer.mp4';
+          state.currentSrc = video.src;
+          event('loadstart');
+        } else if (change === 'UI') {
+          controller.iosPlayer.active = false;
+        } else {
+          session.cleanup({ restore: false });
+        }
+        reject(new DOMException('Superseded Play', 'AbortError'));
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(reloads).toEqual([MP4]);
+        expect(video.play).toHaveBeenCalledOnce();
+        if (change === 'pause') {
+          expect(video.paused).toBe(true);
+        }
+        if (change === 'seek') {
+          expect(video.currentTime).toBe(37);
+        }
+        if (change === 'source') {
+          expect(video.src).toBe('https://media.example.test/newer.mp4');
+        }
+        if (change === 'cleanup') {
+          expect(frames.size).toBe(0);
+        }
+      }
+    );
+
+    it.each(['rejection', 'timeout'])(
+      'keeps a queued own seek compatible with recovery %s and guarded HLS handback',
+      async (failure) => {
+        await playing();
+        state.time = 18;
+        let reject;
+        video.play.mockImplementationOnce(() => {
+          state.paused = false;
+          return new Promise((_resolve, fail) => {
+            reject = fail;
+          });
+        });
+        const load = video.load.getMockImplementation();
+        video.load.mockImplementationOnce(() => {
+          load();
+          setTimeout(() => {
+            Object.defineProperty(video, 'seeking', { configurable: true, value: true });
+            event('seeking');
+            Object.defineProperty(video, 'seeking', { configurable: true, value: false });
+            event('seeked');
+          }, 0);
+        });
+        await stall();
+        expect(reloads).toEqual([MP4]);
+        if (failure === 'timeout') {
+          await vi.advanceTimersByTimeAsync(10000);
+        } else {
+          reject(new DOMException('Recovery refused', 'NotAllowedError'));
+          await Promise.resolve();
+        }
+        expect(video.src).toBe(HLS);
+        expect(session.closed).toBe(true);
+        expect(reloads).toEqual([MP4, HLS]);
+      }
+    );
+
+    it.each([3, 4])(
+      'keeps a real newer %s× command after stale reload Play rejection',
+      async (rate) => {
+        await playing();
+        let reject;
+        video.play.mockImplementationOnce(() => {
+          state.paused = false;
+          return new Promise((_resolve, fail) => {
+            reject = fail;
+          });
+        });
+        await stall();
+        expect(reloads).toEqual([MP4]);
+        controller.actionHandler = new window.VSC.ActionHandler(controller.config, null);
+        expect(controller.actionHandler.setSpeed(video, rate, 'user')).toBe(true);
+        reject(new DOMException('Superseded command', 'AbortError'));
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(video.playbackRate).toBe(rate);
+        expect(video.src).toBe(MP4);
+        expect(video.play).toHaveBeenCalledOnce();
+        expect(reloads).toEqual([MP4]);
+        expect(session.closed).toBe(false);
+      }
+    );
+  });
+
   it('matches iOS video documents across sites', () => {
     expect(window.VSC.SafariHLSPlayback.matches(video)).toBe(true);
     view.location.hostname = 'www.twitter.com';

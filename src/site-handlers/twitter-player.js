@@ -198,7 +198,167 @@ window.VSC = window.VSC || {};
     return found || portal;
   }
 
-  function inspect(video, originParent, companion, identityOnly = false, restored = false) {
+  const relayClear = (value) =>
+    clear(value) &&
+    [...FLAGS, 'alternateAudioTracks', 'alternateVideoTracks', 'captionTracks'].every(
+      (key) => Object.hasOwn(value, key) || !(key in value)
+    );
+
+  function relayVariants(fiber, post, contentId, duration, download, current) {
+    const reads = [],
+      methods = [],
+      ancestors = new Set();
+    const data = (object, key) => {
+      const value = own(object, key);
+      if (object && !Object.hasOwn(object, key) && key in Object(object)) {
+        throw Error('Inherited cache data');
+      }
+      reads.push([object, key, value]);
+      return value;
+    };
+    const method = (object, key) => {
+      for (let depth = 0; object && depth < 4; depth++, object = Object.getPrototypeOf(object)) {
+        if (Object.getOwnPropertyDescriptor(object, key)) {
+          return own(object, key);
+        }
+      }
+    };
+    const capture = (object, key) => {
+      const value = method(object, key);
+      methods.push([object, key, value]);
+      return value;
+    };
+    const call = (object, fn, args) => {
+      const valid = () => current() && methods.every(([o, k, v]) => method(o, k) === v);
+      if (typeof fn !== 'function' || !valid()) {
+        throw Error('Changed cache owner');
+      }
+      const result = Reflect.apply(fn, object, args);
+      if (!valid()) {
+        throw Error('Changed cache owner');
+      }
+      return result;
+    };
+    const list = (value, max) => {
+      const count = data(value, 'length');
+      if (!Array.isArray(value) || !Number.isSafeInteger(count) || count < 1 || count > max) {
+        throw Error('Cache list budget');
+      }
+      const result = [];
+      for (let i = 0; i < count; i++) {
+        result.push(data(value, String(i)));
+      }
+      if (data(value, 'length') !== count) {
+        throw Error('Changed cache list');
+      }
+      return result;
+    };
+    const reference = (value) =>
+      typeof value === 'string' && value.length > 0 && value.length <= 512;
+    let environment,
+      mediaRef,
+      contexts = 0;
+    for (let depth = 0; fiber && depth < 24; depth++, fiber = data(fiber, 'return')) {
+      if (ancestors.has(fiber)) {
+        throw Error('Cache ancestor cycle');
+      }
+      ancestors.add(fiber);
+      const tweet = data(data(fiber, 'memoizedProps'), 'tweet');
+      if (tweet && data(tweet, 'rest_id') === post) {
+        const ref = data(list(data(tweet, 'media_entities2'), 1)[0], '__id');
+        if (!reference(ref) || (mediaRef && mediaRef !== ref)) {
+          throw Error('Ambiguous cache media');
+        }
+        mediaRef = ref;
+      }
+      let dependency = data(data(fiber, 'dependencies'), 'firstContext');
+      const seen = new Set();
+      for (let i = 0; dependency && i < 64; i++, dependency = data(dependency, 'next')) {
+        if (seen.has(dependency) || ++contexts > 64) {
+          throw Error('Cache context budget');
+        }
+        seen.add(dependency);
+        const next = data(data(dependency, 'memoizedValue'), 'environment');
+        if (next) {
+          if (
+            method(next, '@@RelayModernEnvironment') !== true ||
+            (environment && next !== environment)
+          ) {
+            throw Error('Ambiguous cache environment');
+          }
+          environment = next;
+        }
+      }
+      if (dependency) {
+        throw Error('Cache dependency budget');
+      }
+    }
+    if (!environment || !mediaRef) {
+      return null;
+    }
+    capture(environment, '@@RelayModernEnvironment');
+    const store = call(environment, capture(environment, 'getStore'), []);
+    const source = call(store, capture(store, 'getSource'), []);
+    const get = capture(source, 'get'),
+      records = new Set();
+    const record = (ref) => {
+      if (!reference(ref) || records.has(ref) || records.size >= 8) {
+        throw Error('Cache record budget');
+      }
+      records.add(ref);
+      const value = call(source, get, [ref]);
+      if (!relayClear(value)) {
+        throw Error('Cache capability veto');
+      }
+      for (const key of [
+        ...FLAGS,
+        'alternateAudioTracks',
+        'alternateVideoTracks',
+        'captionTracks',
+      ]) {
+        data(value, key);
+      }
+      return value;
+    };
+    const media = record(mediaRef);
+    if (data(media, 'id_str') !== contentId || data(media, 'type') !== 'video') {
+      return null;
+    }
+    const info = record(data(data(media, 'video_info'), '__ref'));
+    if (!near(data(info, 'duration_millis') / 1000, duration)) {
+      return null;
+    }
+    const variants = list(data(data(info, 'variants'), '__refs'), 8).map((ref) => {
+      const item = record(ref);
+      return {
+        content_type: data(item, 'content_type'),
+        url: data(item, 'url'),
+        bitrate: data(item, 'bitrate'),
+      };
+    });
+    if (
+      !variants.some((item) => item.content_type === 'video/mp4' && item.url === download) ||
+      reads.some(
+        ([object, key, value]) =>
+          own(object, key) !== value ||
+          (object && !Object.hasOwn(object, key) && key in Object(object))
+      ) ||
+      !current() ||
+      methods.some(([object, key, value]) => method(object, key) !== value)
+    ) {
+      return null;
+    }
+    return variants;
+  }
+
+  function inspect(
+    video,
+    originParent,
+    companion,
+    identityOnly = false,
+    restored = false,
+    expectedDuration = video.duration
+  ) {
     const scope = scopeFor(video, originParent, restored);
     if (
       !scope ||
@@ -292,9 +452,9 @@ window.VSC = window.VSC || {};
             own(source, 'src') !== sourceUrl ||
             typeof sessionId !== 'string' ||
             !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sessionId) ||
-            !near(own(content, 'durationMs') / 1000, video.duration) ||
-            !near(own(selected, 'durationMs') / 1000, video.duration) ||
-            !near(own(source, 'playlistDurationSec'), video.duration) ||
+            !near(own(content, 'durationMs') / 1000, expectedDuration) ||
+            !near(own(selected, 'durationMs') / 1000, expectedDuration) ||
+            !near(own(source, 'playlistDurationSec'), expectedDuration) ||
             (!identityOnly && ![props, content, selected, source, state].every(clear))
           ) {
             return null;
@@ -356,22 +516,125 @@ window.VSC = window.VSC || {};
           const supplied = own(popped, 'playerProps');
           const media = own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media');
           const info = own(media, 'video_info');
-          const variants = own(info, 'variants');
+          let variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
           const downloadAsset = asset(download, 'mp4');
+          const cached = Boolean(
+            modern &&
+            !Object.getOwnPropertyDescriptor(modern, 'timeRemainingAccessory') &&
+            !('timeRemainingAccessory' in modern)
+          );
+          if (cached) {
+            // Without countdown UI, the same post's renditions live in Relay.
+            const doc = video.ownerDocument,
+              root = doc.documentElement,
+              url = doc.URL;
+            const nativeUrl = video.currentSrc || video.src,
+              assigned = video.getAttribute('src'),
+              poster = video.getAttribute('poster');
+            const fields = [
+              [sdk, 'element', 'src', 'controller', 'store'],
+              [controller, 'api'],
+              [api, 'getState', 'getMediaElement', 'seekTo'],
+              [store, 'getSnapshot', 'subscribe'],
+              [props, 'src', 'hostKey', 'content'],
+              [
+                content,
+                'contentId',
+                'sourceId',
+                'tweetId',
+                'mediaAssetUrl',
+                'durationMs',
+                'contentType',
+                'sourceType',
+              ],
+              [
+                selected,
+                'contentId',
+                'sourceId',
+                'tweetId',
+                'mediaAssetUrl',
+                'durationMs',
+                'contentType',
+                'sourceType',
+              ],
+              [state, 'source', 'content', 'session', 'playback', 'textTracks'],
+              [source, 'src', 'kind', 'playlistDurationSec'],
+              [modern, 'poppedOutSource', 'downloadUrl'],
+              [popped, 'hostKey', 'playerProps'],
+              [supplied, 'src', 'content', 'downloadUrl'],
+            ].flatMap(([object, ...keys]) => keys.map((key) => [object, key, own(object, key)]));
+            const stable = () =>
+              own(sdk, 'controller') === controller &&
+              own(sdk, 'store') === store &&
+              own(controller, 'api') === api &&
+              own(api, 'getState') === getState &&
+              own(api, 'getMediaElement') === getMediaElement &&
+              own(api, 'seekTo') === seekTo &&
+              own(store, 'getSnapshot') === getSnapshot &&
+              own(store, 'subscribe') === subscribe &&
+              fields.every(([object, key, value]) => own(object, key) === value) &&
+              video.ownerDocument === doc &&
+              doc.documentElement === root &&
+              doc.URL === url &&
+              video.isConnected &&
+              (video.currentSrc || video.src) === nativeUrl &&
+              video.getAttribute('src') === assigned &&
+              video.getAttribute('poster') === poster &&
+              !video.srcObject &&
+              !video.mediaKeys &&
+              !video.webkitKeys &&
+              video.textTracks?.length === 0 &&
+              video.querySelectorAll('track').length === 0 &&
+              !(video.audioTracks?.length > 1) &&
+              !(video.videoTracks?.length > 1) &&
+              [
+                sdk,
+                controller,
+                state,
+                props,
+                content,
+                selected,
+                source,
+                modern,
+                popped,
+                supplied,
+              ].every(relayClear) &&
+              own(own(state, 'session'), 'id') === sessionId &&
+              own(own(state, 'playback'), 'shouldLoop') === loop &&
+              own(own(state, 'textTracks'), 'tracks')?.length === 0;
+            const current = () =>
+              stable() &&
+              getState.call(api) === state &&
+              stable() &&
+              getSnapshot.call(store) === state &&
+              stable() &&
+              getMediaElement.call(api) === video &&
+              stable();
+            if (!current()) {
+              return null;
+            }
+            variants = relayVariants(fiber, post, contentId, expectedDuration, download, current);
+            if (!variants) {
+              return null;
+            }
+          }
           const variantCount = own(variants, 'length');
           if (
             !modern ||
-            ![modern, popped, supplied, media, info].every(clear) ||
+            ![modern, popped, supplied].every(clear) ||
             own(popped, 'hostKey') !== hostKey ||
             own(supplied, 'src') !== sourceUrl ||
             own(supplied, 'content') !== content ||
             own(supplied, 'downloadUrl') !== download ||
-            own(media, 'id_str') !== contentId ||
-            !near(own(info, 'duration_millis') / 1000, video.duration) ||
+            (!cached &&
+              (!clear(media) ||
+                !clear(info) ||
+                own(media, 'id_str') !== contentId ||
+                !near(own(info, 'duration_millis') / 1000, expectedDuration) ||
+                own(media, 'video_download_url') !== download)) ||
             downloadAsset?.id !== contentId ||
             downloadAsset.type !== sourceAsset.type ||
-            own(media, 'video_download_url') !== download ||
             !Array.isArray(variants) ||
             !Number.isSafeInteger(variantCount) ||
             variantCount < 0 ||
@@ -437,6 +700,7 @@ window.VSC = window.VSC || {};
           result = {
             ...binding,
             progressiveUrl: best.url,
+            cached,
             loop,
             scope,
           };
@@ -448,6 +712,20 @@ window.VSC = window.VSC || {};
   }
 
   window.VSC.TwitterPlayer = {
+    validateRetainedHls(video, originalUrl, progressiveUrl, originParent, expectedDuration) {
+      try {
+        const next = inspect(video, originParent, undefined, false, true, expectedDuration);
+        return next === undefined
+          ? undefined
+          : Boolean(
+              next &&
+              window.VSC.TwitterMediaSource.matchesCurrentPlayerHls(next.sourceUrl, originalUrl) &&
+              next.progressiveUrl === progressiveUrl
+            );
+      } catch {
+        return false;
+      }
+    },
     // undefined means no bound current SDK; null is an authoritative veto that
     // callers must preserve before considering React or HTML alternatives.
     findNativeHlsCandidate(video, originParent) {
@@ -494,11 +772,68 @@ window.VSC = window.VSC || {};
         ) {
           return null;
         }
-        return {
+        const duration = video.duration,
+          post = own(candidate.content, 'sourceId'),
+          controller = video.vsc;
+        const result = {
           originalUrl,
           progressiveUrl: candidate.progressiveUrl,
           mediaId: candidate.contentId,
+          revalidate(expectedReload = false) {
+            try {
+              const unchanged = () =>
+                video.ownerDocument === doc &&
+                doc.documentElement === root &&
+                doc.URL === documentUrl &&
+                video.isConnected &&
+                video.vsc === controller &&
+                video.getAttribute('src') === candidate.progressiveUrl &&
+                (!video.currentSrc || video.currentSrc === candidate.progressiveUrl) &&
+                !video.srcObject &&
+                !video.mediaKeys &&
+                !video.webkitKeys &&
+                !(video.audioTracks?.length > 1) &&
+                !(video.videoTracks?.length > 1);
+              if (!unchanged()) {
+                return false;
+              }
+              const player = video.vsc?.iosPlayer;
+              const next = inspect(
+                video,
+                player?.active ? player.originParent : originParent,
+                undefined,
+                false,
+                true,
+                expectedReload && video.readyState < 1 ? duration : video.duration
+              );
+              return Boolean(
+                next &&
+                unchanged() &&
+                own(next.content, 'sourceId') === post &&
+                [
+                  'sdk',
+                  'api',
+                  'store',
+                  'getState',
+                  'getSnapshot',
+                  'getMediaElement',
+                  'seekTo',
+                  'subscribe',
+                  'sourceUrl',
+                  'contentId',
+                  'sessionId',
+                  'progressiveUrl',
+                  'loop',
+                  'scope',
+                ].every((key) => next[key] === candidate[key])
+              );
+            } catch {
+              return false;
+            }
+          },
         };
+        Object.defineProperty(result, 'revalidate', { enumerable: false });
+        return result;
       } catch {
         return null;
       }
@@ -510,16 +845,20 @@ window.VSC = window.VSC || {};
           return null;
         }
         const originalUrl = video.currentSrc || video.src;
-        // Child-source MSE stays with the site except for explicit presentation.
+        // Automatic child-source entry requires the same-post cache route below.
         // Retain the exact node and its representation throughout the session.
-        const sourceBinding = allowSourceChild ? sourceChild(video, originalUrl) : null;
+        const sourceBinding = sourceChild(video, originalUrl);
         if (!nativeSafe(video, doc, originalUrl, false, sourceBinding)) {
           return null;
         }
         const root = doc.documentElement;
         const documentUrl = doc.URL;
         const initial = inspect(video, originParent);
-        if (!initial) {
+        if (
+          !initial ||
+          (sourceBinding && !allowSourceChild && !initial.cached) ||
+          !nativeSafe(video, doc, originalUrl, false, sourceBinding)
+        ) {
           return null;
         }
         const scopeRoot = initial.scope.getRootNode();
@@ -582,6 +921,7 @@ window.VSC = window.VSC || {};
                   'contentId',
                   'sessionId',
                   'progressiveUrl',
+                  'cached',
                   'loop',
                   'scope',
                 ].every((key) => next[key] === initial[key])

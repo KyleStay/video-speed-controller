@@ -123,10 +123,13 @@ class IOSPlayer {
       });
     }
     let documentFullscreen = false;
-    const sourceReset = () => {
+    const sourceReset = (event) => {
       // A verified rendition change retains this exact clip and presentation.
       // Site replacements still invalidate every old-resource resume/scroll flag.
-      if (this.controller.safariPlayback?.ownsTransition()) {
+      if (
+        this.controller.safariPlayback?.ownsTransition() ||
+        window.VSC.TwitterMP4Playback?.get(this.video)?.ownsTransition(event.type)
+      ) {
         return;
       }
       // Feeds reuse media nodes. Presentation and scroll restoration belong to
@@ -1570,6 +1573,7 @@ class IOSPlayer {
   }
 
   applySpeed(speed) {
+    this.captionSpeedStatus = null;
     const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
     if (!Number.isFinite(speed) || speed < MIN || speed > MAX) {
       this.ui.refs.status.textContent =
@@ -1580,7 +1584,47 @@ class IOSPlayer {
     }
     const accepted = this.controller.actionHandler.setSpeed(this.video, speed, 'user');
     if (accepted === false) {
-      this.ui.refs.status.textContent = 'This video could not use that playback speed.';
+      const pending = this.controller.twitterCaptionPending;
+      const preparing =
+        pending?.controller === this.controller &&
+        pending.video === this.video &&
+        pending.deferred === true &&
+        !pending.closed &&
+        pending.rate === Number(speed.toFixed(2));
+      this.ui.refs.status.textContent = preparing
+        ? 'Preparing captions…'
+        : 'This video could not use that playback speed.';
+      if (preparing && pending.settled?.then) {
+        const request = (this.captionSpeedStatus = {});
+        const ui = this.ui;
+        const settle = (result) => {
+          if (this.captionSpeedStatus !== request) {
+            return;
+          }
+          this.captionSpeedStatus = null;
+          if (
+            this.disposed ||
+            !this.active ||
+            this.ui !== ui ||
+            (this.controller.twitterCaptionPending &&
+              this.controller.twitterCaptionPending !== pending) ||
+            ui.refs.status.textContent !== 'Preparing captions…'
+          ) {
+            return;
+          }
+          const session = this.controller.safariPlayback;
+          const transferred =
+            result?.transferred === true && session?.captioned && session.ownsSource();
+          ui.refs.status.textContent =
+            transferred || pending.intentChanged
+              ? ''
+              : 'This video could not use that playback speed.';
+          this.update();
+        };
+        Promise.resolve(pending.settled)
+          .then(settle, () => settle())
+          .catch(() => {});
+      }
       this.update();
       return false;
     }
@@ -1758,6 +1802,7 @@ class IOSPlayer {
   }
 
   close({ settle = true } = {}) {
+    this.captionSpeedStatus = null;
     this.nativeRecovery?.cancel();
     IOSPlayer.presentationRevision++;
     window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: !this.disposed });
@@ -1895,7 +1940,9 @@ class IOSPlayer {
     this.resumeOnShow = false;
     IOSPlayer.siteRelinquished.add(this.video);
     this.controller.safariPlaybackPending?.cleanup();
-    this.controller.safariPlayback?.cleanup({ restore: false });
+    this.controller.safariPlayback?.cleanup({
+      restore: this.controller.safariPlayback?.captioned === true,
+    });
     this.close();
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();

@@ -509,6 +509,34 @@ up to 720p when available. It reads no global registry, constructs no media URL
 and fetches no post data. This adapter is iOS-only and leaves generic blob/MSE
 source switching disabled.
 
+When X omits its countdown accessory, the same post's renditions can instead
+live in its SDK-local Relay cache. Follow only the bound post's media reference
+through at most eight linked records, matching the current HLS, download, asset
+and duration before using the existing up-to-720p ranking. This avoids selecting
+a 4K download when X explicitly supplies a lighter rendition. A validated cache
+binding also permits retaining one exact `<source>` child for automatic takeover.
+Caption, protection, live and ambiguity vetoes still apply.
+
+Supported finite X native-HLS clips with captions may use the supplied MP4 only
+after the explicit complete subtitle rendition has been fetched and verified
+against every native cue. The bounded three-request manifest/subtitle chain and
+native parser must agree on the full text, timing and cue settings before any
+source change. Unknown, incomplete, protected or mismatched captions retain HLS.
+The generic caption veto remains unchanged for other streams. Preparation keeps
+the previous displayed rate until the playback command is actually accepted.
+Handback restores the original HLS source and current caption intent.
+
+At 2.1× or faster, committed visible X MP4 sessions watch decoded frames, including
+companions, HLS-switched MP4 and verified caption-preserving MP4. Three
+seconds without frame progress, corroborated by a stopped native frame counter
+and at least one second buffered, permits reloading that same MP4 while retaining
+time, rate, audio intent and owned presentation. Two attempts are allowed; another
+confirmed stall returns to the original player. Pause, seek, newer speed/source
+or presentation intent, visibility changes and cleanup invalidate pending recovery.
+Recovery waits for the full native caption certificate again after a captioned
+reload. The retained MSE producer is never reloaded. Unit recovery checks do not establish
+that an actual hardware stall has been recovered on the phone.
+
 The reported October 28 post exposed an XDS transport group inside one additional
 chrome wrapper. Recognition accepts that exact bounded layout as well as the
 direct group, while retaining ambiguity checks and unrelated controls/captions.
@@ -567,7 +595,8 @@ command already set the requested numeric rate. Matching `playbackRate` alone
 must not strand a loading native-HLS clip on its original stream above 2×.
 X can initially leave its selected track’s caption status unknown, then explicitly
 report no captions after playback starts. Later trusted native `playing` events
-recheck full rendition eligibility, bounded to 32 events/ten seconds per source.
+recheck full rendition eligibility, including the current X MSE adapter, bounded
+to 32 events/ten seconds per source.
 Unknown or enabled captions remain vetoes. The synchronous recheck preserves
 current rate authority and revalidates source, document and playback intent after
 resolver calls; it adds no polling or readiness timer. Source lifecycle resets
