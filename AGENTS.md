@@ -480,7 +480,11 @@ with direct `chrome.*` access.
   `play()` run in one coordinated speed-command call stack, never metadata
   callbacks. Automatic init first joins only an already-requested Play promise;
   a bounded next-task check validates source/document/preferences/intent before
-  issuing that command. It never starts paused media; cleanup/input/source/hidden
+  issuing that command. While queued, retain the accepted native rate and display;
+  only the coordinated source command applies the requested fast rate.
+  Unready or paused finite X HLS clips also retain their actual rate during init;
+  existing native readiness events may start a later verified MP4 handoff.
+  It never starts paused media; cleanup/input/source/hidden
   state cancels the pending observer, listeners and ten-second deadline.
   Saved/session speeds also apply to subsequent feed clips; a failed
   source is not retried by initialization. Trusted native `playing` events

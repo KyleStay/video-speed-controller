@@ -21,7 +21,8 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     resolver,
     order,
     visibility,
-    added;
+    added,
+    previousURL;
   const emit = (type) => video.dispatchEvent(new Event(type));
   const nativePlaying = () => {
     const listener = controller.handlePlayingReadiness;
@@ -43,6 +44,8 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
   beforeEach(async () => {
     installChromeMock();
     resetMockStorage();
+    previousURL = document.URL;
+    globalThis.jsdom.reconfigure({ url: 'https://x.com/example/status/12345' });
     dom = createMockDOM();
     dom.container.dataset.testid = 'videoComponent';
     config = new window.VSC.VideoSpeedConfig();
@@ -130,7 +133,9 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     controller = new window.VSC.VideoController(video, dom.container, config, action);
     expect(resolver).toHaveReturnedWith(null);
     expect(controller.safariPlaybackPending).toBeFalsy();
-    expect(video.playbackRate).toBe(4);
+    expect(video.playbackRate).toBe(1);
+    expect(Number(controller.speedIndicator.textContent)).toBe(1);
+    expect(manager.getMediaRateState(video)).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
     expect(video.load).not.toHaveBeenCalled();
     video.readyState = 2;
     action.adjustSpeed.mockClear();
@@ -150,6 +155,35 @@ describe('Counterfactual62 finite native-playing HLS readiness', () => {
     cleanupChromeMock();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    globalThis.jsdom.reconfigure({ url: previousURL });
+  });
+
+  it('retains a paused loadedmetadata rate then switches only on eligible native playing', async () => {
+    controller.remove();
+    manager.releaseMediaState(video);
+    video.readyState = 0;
+    video.paused = true;
+    selected.hasCaptions = false;
+    controller = new window.VSC.VideoController(video, dom.container, config, action);
+    video.readyState = 1;
+    emit('loadedmetadata');
+    expect(video.playbackRate).toBe(1);
+    expect(Number(controller.speedIndicator.textContent)).toBe(1);
+    expect(controller.safariPlaybackPending).toBeFalsy();
+    expect(video.load).not.toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    expect(manager.getMediaRateState(video)).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+    video.readyState = 2;
+    video.paused = false;
+    nativePlaying();
+    await flush();
+    expect(video.src).toBe(MP4);
+    expect(video.playbackRate).toBe(4);
+    expect(Number(controller.speedIndicator.textContent)).toBe(4);
+    expect(video.load).toHaveBeenCalledOnce();
+    expect(
+      order.filter(([type, rate, source]) => type === 'rate' && rate === 4 && source === HLS)
+    ).toEqual([]);
   });
 
   it('keeps early unknown captions vetoed, then uses a later native playing opportunity after explicit false', async () => {

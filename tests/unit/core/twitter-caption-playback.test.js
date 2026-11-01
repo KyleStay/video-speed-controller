@@ -393,6 +393,26 @@ describe('owned X caption playback command and cleanup', () => {
     expect(video.load).toHaveBeenCalledOnce();
   });
 
+  it('keeps fresh caption preparation at its accepted rate through queued native ratechange', async () => {
+    expect(manager.getMediaRateState(video)?.acceptedSpeed).toBeUndefined();
+    const nativeRateChange = Promise.resolve().then(() =>
+      manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() })
+    );
+    expect(command(4, 'init')).toBe(false);
+    await nativeRateChange;
+    expect(video.playbackRate).toBe(1);
+    expect(controller.speedIndicator.textContent).toBe('1.00');
+    expect(manager.getMediaRateState(video)).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+    expect(video.load).not.toHaveBeenCalled();
+    resolveSource(result());
+    await flush();
+    expect(video.src).toBe(MP4);
+    expect(video.playbackRate).toBe(4);
+    expect(manager.getMediaRateState(video).acceptedSpeed).toBe(4);
+    expect(config.settings.lastSpeed).toBe(4);
+    expect(config.save).not.toHaveBeenCalled();
+  });
+
   it('does not reload while initial MP4 Play is held even after complete native cue readiness', async () => {
     recoveryMedia();
     let accept,

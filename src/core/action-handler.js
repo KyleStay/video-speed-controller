@@ -576,12 +576,30 @@ class ActionHandler {
         window.VSC.TwitterMP4Playback?.begin(video.vsc, numericSpeed, source) ||
         window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
       if (playbackTransition?.deferred) {
-        // Preparing the complete native caption track has not accepted a new
-        // media rate yet. Retain only local command intent; leave the displayed
+        // Preparing a source transition has not accepted a new media rate yet.
+        // Retain only local command intent; leave the displayed
         // and accepted rate unchanged until the coordinated source command.
         if (mediaRateState) {
-          mediaRateState.lifecycleSpeed = numericSpeed;
-          mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+          const acceptedRevision = mediaRateState.acceptedSpeedRevision ?? 0;
+          const expectedPreference =
+            source !== 'external' && source !== 'init' ? numericSpeed : previousSpeed;
+          if (
+            (this.config.speedPreferenceRevision ?? 0) === speedPreferenceRevision &&
+            this.config.settings.lastSpeed === expectedPreference &&
+            acceptedRevision <= speedPreferenceRevision
+          ) {
+            mediaRateState.lifecycleSpeed = numericSpeed;
+            mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+            if (
+              Number.isFinite(previousPlaybackRate) &&
+              previousPlaybackRate > 0 &&
+              (!Number.isFinite(mediaRateState.acceptedSpeed) ||
+                acceptedRevision < speedPreferenceRevision)
+            ) {
+              mediaRateState.acceptedSpeed = previousPlaybackRate;
+              mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
+            }
+          }
         }
         return false;
       }

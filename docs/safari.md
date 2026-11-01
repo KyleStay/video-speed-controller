@@ -323,18 +323,23 @@ baseline. This single simulator pair establishes no universal smoothness or
 improvement claim. See the raw [owned](../test-results/owned-fullscreen/rate-owned-final.json)
 and [baseline](../test-results/owned-fullscreen/rate-baseline-final.json) reports.
 
-## Build 36 feed stutter remains unresolved
+## Build 36 feed stutter investigation
 
 A user reported continued stutter above 2× on X post `2116631726629786057`.
-Ordinary iPhone Safari capture confirmed native HLS switching to supplied MP4;
-a 12-second window included that transition and three gaps above 150 ms, so it
-does not establish sustained MP4 smoothness. A separate feed-capacity regression
-shows four paused, connected offscreen companions blocking the next eligible
-clip. Lazy paused handback now permits that next clip within the four-player
-limit, preserving the previous clip's position and audio state. This is not proof
-that the reported stutter is fixed. Physical verification of the correction and
-a steady MP4 window remain pending; iOS currently rejects the QA launcher with
-`Guided Access active`.
+Ordinary iPhone Safari capture confirmed native HLS switching to supplied MP4.
+A later stable 12-second muted MP4 window sustained decoded advancement at
+4.023× with no frame gaps above 150 ms; this does not clear the reported feed
+failure. Feed and handoff verification remain open.
+
+Verified asynchronous HLS initialization previously wrote the requested fast rate
+and displayed it before the MP4 command started. Pending initialization now keeps
+the accepted native rate and display until that coordinated command. Finite X
+HLS clips also retain that actual rate while paused or awaiting a usable candidate;
+normal readiness events can then start the verified handoff. Separately,
+four paused, connected offscreen companions could block the next eligible clip;
+lazy paused handback permits later clips within the four-player limit, preserving
+position and audio state. Both corrections have regressions; physical acceptance
+must distinguish these control changes from actual decoded playback.
 
 ## October 21 Safari 16× verification — earlier candidate
 

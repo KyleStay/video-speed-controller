@@ -586,7 +586,7 @@ describe('Safari native HLS progressive playback ownership', () => {
       expect(video.src).toBe(HLS);
       expect(controller.safariPlayback).toBeUndefined();
       expect(video.load).not.toHaveBeenCalled();
-      expect(begin(3, 'init')).toBeNull();
+      expect(begin(3, 'init')).toMatchObject({ deferred: true });
       expect(controller.safariPlaybackPending).toBeDefined();
       expect(video.src).toBe(HLS);
       await flushInitialization();
@@ -698,6 +698,344 @@ describe('Safari native HLS progressive playback ownership', () => {
     }
   );
 
+  describe('deferred initialization through the real speed action', () => {
+    let action, manager, local;
+    beforeEach(() => {
+      Object.defineProperty(doc, 'URL', {
+        configurable: true,
+        value: 'https://x.com/example/status/123',
+      });
+      controller.config = {
+        settings: { ...window.VSC.Constants.DEFAULT_SETTINGS, lastSpeed: 4, rememberSpeed: true },
+        speedPreferenceRevision: 0,
+        save: vi.fn(),
+      };
+      manager = new window.VSC.EventManager(controller.config, null);
+      local = manager.getOrCreateMediaRateState(video);
+      Object.assign(local, {
+        lifecycleSpeed: 1,
+        acceptedSpeed: 1,
+        lifecycleSpeedRevision: 0,
+        acceptedSpeedRevision: 0,
+      });
+      action = controller.actionHandler = new window.VSC.ActionHandler(controller.config, manager);
+      controller.speedIndicator = doc.createElement('span');
+      controller.speedIndicator.textContent = '1.00';
+      vi.spyOn(window.VSC.siteHandlerManager, 'getCurrentHandler').mockReturnValue(
+        new window.VSC.BaseSiteHandler()
+      );
+    });
+    afterEach(() => {
+      manager.cleanup();
+      vi.restoreAllMocks();
+    });
+
+    it.each(['unresolved', 'paused'])(
+      'retains native speed for %s X HLS without starting pending work',
+      async (reason) => {
+        manager.releaseMediaState(video);
+        local = manager.getOrCreateMediaRateState(video);
+        state.readyState = 1;
+        if (reason === 'unresolved') {
+          resolver.mockReturnValue(null);
+        } else {
+          state.paused = true;
+        }
+        const timer = vi.spyOn(view, 'setTimeout');
+        expect(action.setSpeed(video, 4, 'init')).toBe(false);
+        expect(action.setSpeed(video, 4, 'init')).toBe(false);
+        manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+        expect(video.playbackRate).toBe(1);
+        expect(controller.speedIndicator.textContent).toBe('1.00');
+        expect(local).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+        expect(controller.config.settings.lastSpeed).toBe(4);
+        expect(controller.config.save).not.toHaveBeenCalled();
+        expect(controller.safariPlaybackPending).toBeFalsy();
+        expect(controller.safariPlayback).toBeUndefined();
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.load).not.toHaveBeenCalled();
+        expect(timer).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      'other host',
+      'MP4',
+      'blob',
+      'explicit',
+      'live',
+      'unknown duration',
+      'orphan',
+      'srcObject',
+      'desktop',
+      'nonHTTP',
+    ])('leaves existing %s rate policy unchanged', (reason) => {
+      resolver.mockReturnValue(null);
+      if (reason === 'other host') {
+        Object.defineProperty(doc, 'URL', { value: 'https://example.com/video' });
+      }
+      if (reason === 'MP4') {
+        video.src = state.currentSrc = MP4;
+      }
+      if (reason === 'blob') {
+        video.src = state.currentSrc = 'blob:https://x.com/producer';
+      }
+      if (reason === 'nonHTTP') {
+        video.src = state.currentSrc = 'file:///video.m3u8';
+      }
+      if (reason === 'live') {
+        state.duration = Infinity;
+      }
+      if (reason === 'unknown duration') {
+        state.duration = NaN;
+      }
+      if (reason === 'orphan') {
+        delete video.vsc;
+      }
+      if (reason === 'srcObject') {
+        Object.defineProperty(video, 'srcObject', { value: {} });
+      }
+      if (reason === 'desktop') {
+        vi.spyOn(window.VSC.SafariHLSPlayback, 'matches').mockReturnValue(false);
+      }
+      expect(action.setSpeed(video, 4, reason === 'explicit' ? 'internal' : 'init')).toBe(true);
+      expect(video.playbackRate).toBe(4);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.load).not.toHaveBeenCalled();
+      expect(controller.safariPlaybackPending).toBeFalsy();
+    });
+
+    it('keeps native rate/display/accepted authority until the verified queued MP4 command starts', async () => {
+      const requested = pendingSitePlay(),
+        sitePlay = video.play();
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      expect(local).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      expect(video.playbackRate).toBe(1);
+      expect(controller.speedIndicator.textContent).toBe('1.00');
+      expect(video.load).not.toHaveBeenCalled();
+      expect(video.play).toHaveBeenCalledTimes(2);
+      requested.resolve();
+      await sitePlay;
+      await Promise.resolve();
+      expect(video.src).toBe(HLS);
+      expect(video.playbackRate).toBe(1);
+      expect(controller.speedIndicator.textContent).toBe('1.00');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(4);
+      expect(controller.speedIndicator.textContent).toBe('4.00');
+      loaded();
+      await Promise.resolve();
+      expect(local.acceptedSpeed).toBe(4);
+      expect(controller.safariPlaybackPending).toBeNull();
+      expect(controller.config.settings.lastSpeed).toBe(4);
+      expect(controller.config.save).not.toHaveBeenCalled();
+    });
+
+    it('preserves a fresh attachment rate through queued native ratechange while Play is held', async () => {
+      manager.releaseMediaState(video);
+      local = manager.getOrCreateMediaRateState(video);
+      expect(local.acceptedSpeed).toBeUndefined();
+      const requested = pendingSitePlay();
+      const nativeRateChange = Promise.resolve().then(() =>
+        manager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() })
+      );
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      await nativeRateChange;
+      expect(video.playbackRate).toBe(1);
+      expect(controller.speedIndicator.textContent).toBe('1.00');
+      expect(local).toMatchObject({
+        lifecycleSpeed: 4,
+        acceptedSpeed: 1,
+        acceptedSpeedRevision: 0,
+      });
+      expect(video.load).not.toHaveBeenCalled();
+      requested.resolve();
+      await flushInitialization();
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(4);
+      expect(local.acceptedSpeed).toBe(4);
+      expect(controller.config.settings.lastSpeed).toBe(4);
+      expect(controller.config.save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['current', 0, 0, 2],
+      ['stale', 1, 0, 1],
+      ['newer', 0, 1, 2],
+    ])(
+      'preserves %s accepted authority while deferring',
+      async (_kind, revision, acceptedRevision, expected) => {
+        controller.config.speedPreferenceRevision = revision;
+        Object.assign(local, { acceptedSpeed: 2, acceptedSpeedRevision: acceptedRevision });
+        const requested = pendingSitePlay();
+        expect(action.setSpeed(video, 4, 'init')).toBe(false);
+        expect(local.acceptedSpeed).toBe(expected);
+        expect(local.acceptedSpeedRevision).toBe(expected === 1 ? revision : acceptedRevision);
+        controller.safariPlaybackPending.cleanup();
+        requested.resolve();
+        await flushInitialization();
+        expect(video.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('retains newer preference authority established inside the joining Play call', async () => {
+      const requested = pendingSitePlay();
+      video.play.mockImplementationOnce(() => {
+        controller.config.settings.lastSpeed = 3;
+        controller.config.speedPreferenceRevision = 1;
+        Object.assign(local, {
+          lifecycleSpeed: 3,
+          lifecycleSpeedRevision: 1,
+          acceptedSpeed: 3,
+          acceptedSpeedRevision: 1,
+        });
+        return requested.promise;
+      });
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      expect(local).toMatchObject({
+        lifecycleSpeed: 3,
+        lifecycleSpeedRevision: 1,
+        acceptedSpeed: 3,
+        acceptedSpeedRevision: 1,
+      });
+      requested.resolve();
+      await flushInitialization();
+      expect(video.load).not.toHaveBeenCalled();
+      expect(controller.config.settings.lastSpeed).toBe(3);
+    });
+
+    it.each([
+      'reject',
+      'throw',
+      'no promise',
+      'observer failure',
+      'pause',
+      'source',
+      'removal',
+      'input',
+      'timeout',
+    ])(
+      'releases %s without accepting native4 or loading from a late Play settlement',
+      async (cause) => {
+        const requested = pendingSitePlay();
+        if (cause === 'throw') {
+          video.play.mockImplementationOnce(() => {
+            throw new Error('Play unavailable');
+          });
+        } else if (cause === 'no promise') {
+          video.play.mockReturnValueOnce(undefined);
+        } else if (cause === 'observer failure') {
+          view.MutationObserver = class {
+            constructor() {
+              throw new Error('Observer unavailable');
+            }
+          };
+        }
+        expect(action.setSpeed(video, 4, 'init')).toBe(false);
+        expect(video.playbackRate).toBe(1);
+        expect(controller.speedIndicator.textContent).toBe('1.00');
+        expect(local.acceptedSpeed).toBe(1);
+        if (cause === 'reject') {
+          requested.reject(new DOMException('Blocked', 'NotAllowedError'));
+        } else if (cause === 'pause') {
+          state.paused = true;
+          event('pause');
+        } else if (cause === 'source') {
+          video.src = HLS.replace('/123/', '/456/');
+        } else if (cause === 'removal') {
+          video.remove();
+        } else if (cause === 'input') {
+          view.addEventListener.mock.calls.find(([type]) => type === 'pointerdown')[1]({
+            isTrusted: true,
+          });
+        } else {
+          await vi.advanceTimersByTimeAsync(10000);
+        }
+        if (cause !== 'reject') {
+          requested.resolve();
+        }
+        await flushInitialization();
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(controller.safariPlaybackPending).toBeNull();
+        expect(controller.safariPlayback).toBeUndefined();
+        expect(video.playbackRate).toBe(1);
+        expect(controller.speedIndicator.textContent).toBe('1.00');
+        expect(local).toMatchObject({ lifecycleSpeed: 4, acceptedSpeed: 1 });
+        expect(controller.config.settings.lastSpeed).toBe(4);
+        expect(controller.config.save).not.toHaveBeenCalled();
+        expect(video.load).not.toHaveBeenCalled();
+        expect(video.play).toHaveBeenCalledTimes(cause === 'observer failure' ? 0 : 1);
+        expect(vi.getTimerCount()).toBe(0);
+      }
+    );
+
+    it('lets an explicit command replace the pending initialization synchronously', async () => {
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      expect(action.setSpeed(video, 4, 'internal')).toBe(true);
+      expect(controller.safariPlaybackPending).toBeNull();
+      expect(video.src).toBe(MP4);
+      expect(video.playbackRate).toBe(4);
+      expect(video.load).toHaveBeenCalledOnce();
+      await flushInitialization();
+      expect(video.load).toHaveBeenCalledOnce();
+    });
+
+    it('keeps another feed clip independent when the first queued Play rejects', async () => {
+      const requested = pendingSitePlay();
+      expect(action.setSpeed(video, 4, 'init')).toBe(false);
+      const next = doc.createElement('video'),
+        nextHLS = HLS.replace('/123/', '/456/'),
+        nextMP4 = MP4.replace('/123/', '/456/');
+      next.src = nextHLS;
+      doc.body.append(next);
+      for (const [name, value] of Object.entries({
+        currentSrc: nextHLS,
+        readyState: 4,
+        duration: 120,
+        paused: false,
+      })) {
+        Object.defineProperty(next, name, { configurable: true, value });
+      }
+      next.play = vi.fn(() => Promise.resolve());
+      next.load = vi.fn();
+      const nextController = {
+        video: next,
+        config: controller.config,
+        actionHandler: action,
+        iosPlayer: { nativeSession: false },
+        speedIndicator: doc.createElement('span'),
+      };
+      next.vsc = nextController;
+      manager.getOrCreateMediaRateState(next).acceptedSpeed = 1;
+      resolver.mockImplementation((media) => ({
+        originalUrl: media === next ? nextHLS : HLS,
+        progressiveUrl: media === next ? nextMP4 : MP4,
+        mediaId: media === next ? '456' : '123',
+      }));
+      try {
+        expect(action.setSpeed(next, 4, 'init')).toBe(false);
+        expect(nextController.safariPlaybackPending).not.toBe(controller.safariPlaybackPending);
+        requested.reject(new DOMException('Blocked', 'NotAllowedError'));
+        await flushInitialization();
+        expect(controller.safariPlaybackPending).toBeNull();
+        expect(video.src).toBe(HLS);
+        expect(video.playbackRate).toBe(1);
+        expect(next.src).toBe(nextMP4);
+        expect(next.playbackRate).toBe(4);
+        expect(next.load).toHaveBeenCalledOnce();
+        expect(controller.config.settings.lastSpeed).toBe(4);
+      } finally {
+        nextController.safariPlaybackPending?.cleanup();
+        nextController.safariPlayback?.cleanup({ restore: false });
+      }
+    });
+  });
+
   it('settles the original site play promise before loading the saved-speed rendition', async () => {
     controller.config = { settings: { lastSpeed: 3 } };
     state.rate = 3;
@@ -705,11 +1043,11 @@ describe('Safari native HLS progressive playback ownership', () => {
     const requested = pendingSitePlay();
     const sitePlay = video.play();
     const siteFulfilled = vi.fn(() => order.push(['site-play-fulfilled']));
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     sitePlay.then(siteFulfilled);
     expect(controller.safariPlaybackPending).toBeDefined();
     expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 3, 'init')).toBe(false);
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     expect(video.play).toHaveBeenCalledTimes(2);
     expect(video.load).not.toHaveBeenCalled();
     expect(order).toEqual([]);
@@ -739,7 +1077,7 @@ describe('Safari native HLS progressive playback ownership', () => {
     expect(video.play).not.toHaveBeenCalled();
     expect(video.load).not.toHaveBeenCalled();
     state.paused = false;
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     await flushInitialization();
     expect(video.src).toBe(MP4);
   });
@@ -758,7 +1096,7 @@ describe('Safari native HLS progressive playback ownership', () => {
       } else {
         video.play.mockReturnValueOnce(undefined);
       }
-      expect(begin(3, 'init')).toBeNull();
+      expect(begin(3, 'init')).toMatchObject({ deferred: true });
       await flushInitialization();
       vi.advanceTimersByTime(10000);
       expect(controller.safariPlaybackPending).toBeFalsy();
@@ -918,8 +1256,9 @@ describe('Safari native HLS progressive playback ownership', () => {
         throw new Error('observer unavailable');
       }
     };
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     expect(controller.safariPlaybackPending).toBeNull();
+    expect(video.play).not.toHaveBeenCalled();
     expect(video.load).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -1380,7 +1719,7 @@ describe('Safari native HLS progressive playback ownership', () => {
     controller.config = { settings: { lastSpeed: 3 } };
     wireSpeedAction();
     state.rate = 3;
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     await flushInitialization();
     const session = controller.safariPlayback;
     video.playbackRate = 3;
@@ -1403,7 +1742,7 @@ describe('Safari native HLS progressive playback ownership', () => {
     resolver.mockReturnValue({ originalUrl: nextHLS, progressiveUrl: nextMP4, mediaId: '456' });
     expect(window.VSC.SafariHLSPlayback.canSwitch(controller, 3, 'init')).toBe(true);
     expect(controller.safariPlaybackFailedSource).toBe(HLS);
-    expect(begin(3, 'init')).toBeNull();
+    expect(begin(3, 'init')).toMatchObject({ deferred: true });
     await flushInitialization();
     expect(video.src).toBe(nextMP4);
   });
