@@ -26,6 +26,7 @@ import runLoopingMedia from './looping-media.e2e.js';
 import runGifImages from './gif-images.e2e.js';
 import runCustomWebM from './custom-webm.e2e.js';
 import runTwitterMP4 from './twitter-mp4.e2e.js';
+import runTwitterLoop from './twitter-loop.e2e.js';
 import runTwitterLiveMP4 from './twitter-live-mp4.e2e.js';
 import runSiteControls from './site-controls.e2e.js';
 
@@ -38,6 +39,7 @@ const suites = {
   'site-controls-core': (options) => runSiteControls({ ...options, popup: false }),
   'site-controls-ios': (options) => runSiteControls({ ...options, ios: true, popup: false }),
   'twitter-mp4': runTwitterMP4,
+  'twitter-loop': runTwitterLoop,
   'twitter-live-mp4': runTwitterLiveMP4,
   'custom-webm': runCustomWebM,
   'gif-images': runGifImages,

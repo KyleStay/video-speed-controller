@@ -168,11 +168,23 @@ with direct `chrome.*` access.
     every native cue before changing the original video. Preparation retains
     command intent without claiming an accepted/displayed rate. Source changes,
     rejection, handback and cleanup release owned tracks, Blobs and listeners.
+    Verified short SDK loops may use a separate caption owner: bind the exact
+    showing native/SDK subtitle track, fetch the complete finite rendition and
+    verify every cue, including the SDK's generated IDs. Preserve those IDs and
+    settings in bounded cue epochs on the real continuous AV timeline. Ordinary
+    caption vetoes remain unchanged; metadata authority alone cannot commit.
+    Preserve exact source positions or X's documented per-cue line/snapping/
+    line-alignment tuple for default sources; owned cue fields stay exact.
+    Give the pending owned track a valid empty VTT source before insertion:
+    iOS may auto-enable it immediately. That empty load is never caption proof;
+    complete source/native cues and certified owned-track readiness still gate release.
   - `twitter-mp4-playback.js` + `site-handlers/twitter-player.js` — iOS-only
     current X SDK adapter for blob/MSE clips above 2× and explicit owned-player
     entry at any accepted rate. Retain and pause the
-    original producer; play an explicitly supplied same-asset MP4 companion.
+    original producer; play a supplied same-asset native companion.
     Bind bounded React metadata to the exact SDK/media/content/session/source;
+    caption-inset wrapper updates retain the same track identities and all
+    non-presentation metadata; other metadata changes still revoke authority.
     captions, DRM, live and ambiguity veto takeover. Handback seeks/resumes the
     unchanged original only while that identity and companion source remain
     owned. Metadata callbacks attach presentation, never request Play.
@@ -181,7 +193,14 @@ with direct `chrome.*` access.
     Automatic child-source takeover requires the current post's exact Relay media
     reference and SDK-local environment; read at most eight linked cache records
     and reuse the supplied-rendition ranking. Missing countdown UI permits this
-    route; present, inherited or invalid UI metadata remains an authoritative veto.
+    route. Clips may also join an exact own-data Relay
+    media fragment supplied by that UI; its `__id` must equal the current post's
+    sole media reference. Mixed expanded fields, inherited claims, accessors and
+    contradictory UI metadata remain authoritative vetoes.
+    Cached playback renditions may omit the download URL only when both metadata
+    owners have an absent or own-data-undefined field, rechecked around cache/SDK
+    reads. Inherited, accessor, invalid and mixed fields remain vetoes. Exact
+    current HLS and same-asset supplied MP4 variants still bind playback.
     Playing handoffs commit only after their synchronous Play request succeeds;
     pending Play/Pause generations prevent stale settlement from taking over.
     Failed handoffs restore the original local rate and interface while retaining
@@ -197,6 +216,63 @@ with direct `chrome.*` access.
     honors presentation revisions, visibility and cancellation. Preserve accepted
     rates through initialSpeed and per-media lifecycle authority without saving
     a new global preference just for opening fullscreen.
+    Looping companions require unlimited intent: own-data `loop === true` on the
+    exact SDK-owning creator props, or absent/own-data-nullish repeat limits on
+    both creator and selected SDK content with current loop eligibility.
+    Recheck eligibility, limits and source ownership together.
+    `shouldLoop` alone may allow finite repeats; the paused producer cannot count them.
+    Committed iOS X companions coalesce relative speed intent for 100 ms of quiet
+    before one real rate write; retain every delta through the existing clamp and
+    snap rules. Native readback, displayed acceptance and persistence change only
+    with that write. Source, controller, document and preference changes cancel
+    pending intent; Pause never becomes an implicit Play. This applies to both
+    supplied MP4 and continuous-loop companions. Native iOS video playback may coalesce
+    subsequent relative input only after a synchronous command selected no
+    transition and completed native acceptance above 2×. Crossing 2× still runs
+    rendition selection in the current input call stack. Its media-state-owned queue uses
+    a captured native rate setter, never delayed source selection or Play;
+    `EventManager.releaseMediaState` and source/intent changes cancel it.
+  - `twitter-loop-source.js` + `twitter-loop-playback.js` — bounded iOS transport
+    inside an already verified X companion for finite 1–60 second clips with
+    one enabled audio track. Validate every declared master entry (at most eight
+    video/audio pairs), requiring unique URLs, groups and ordered dimensions,
+    one-to-one associations and identical audio semantics. Select only the pair
+    matching the exact supplied MP4 dimensions within the 1280×720 envelope.
+    Fetch only its explicit same-asset VOD maps/segments; enforce CORS, a 12-second
+    deadline, 16 segments per track, 37 requests and 8 MiB. Unsupported manifests
+    retain the MP4 path. Cache one full clip, derive its period from native track
+    ranges and append complete audio/video cycles on a rolling MMS timeline.
+    Hold the real native rate at zero during preparation, after resource loading
+    resets it; retain only the latest requested positive rate in the session.
+    A trusted Play can remain pending at zero. A verified unlimited captioned
+    loop may wait through the original's natural end for the site's own restart;
+    actual playing and settled seeking gate release, while explicit Pause cancels.
+    Initial binding requires decoded data; a bound caption companion retains full
+    authority through a metadata-only original seek, with every capability and
+    identity check still applied. Cleanup never resumes an original this session
+    has not paused. After one
+    complete validated cycle and settled seeking, release that rate without
+    another Play; a newer Pause stays paused. Unexpected rate resets, clamping, source loss or release-time
+    intent changes fail through the guarded fallback. Never copy held zero into
+    handback or preference state. Future buffering has a quarter-period target
+    with at least two wall seconds of runway. Charge the entire hold to startup
+    in native and decoded measurements; it is not accepted high-speed playback.
+    Instance-owned time/range properties remain clip-relative; native prototype
+    getters and frame metadata remain the playback evidence. No loop-boundary
+    seeks, pitch changes or dropped audio tails. Keep the exact owned MMS/HLS
+    source children with remote playback enabled. Unexpected HLS selection is
+    failure; only verified post-commit wireless routing retains that fallback.
+    Pending preparation failure may continue the same latest Play intent on its
+    verified MP4; stale Play settlement, Pause and source writes still win.
+    Revalidate the full caption/DRM/live/ambiguity certificate throughout async
+    loading and buffer work. Committed MMS never uses MP4 reload recovery. Cleanup releases readers,
+    buffers, URLs, event listeners and only still-owned properties. Read
+    `docs/safari.md` before changing the source, clock or handback contract.
+    A live caption owner must attest the exact master and subtitle group before
+    subtitle declarations are accepted. Cue epochs precede matching AV appends
+    and retire only after both AV buffers; cap them at 64 epochs/16,384 cues.
+    Captioned failures hand back without MP4/HLS continuation. Rate-zero release
+    also waits for complete native epoch-zero cues and the latest-position seek.
 - `observers/`
   - `custom-webm-observer.js` — iOS-only adapter for an unambiguous expanded
     OGV decoder surface. Probe the exact supplied WebM in an off-DOM native video
@@ -205,6 +281,9 @@ with direct `chrome.*` access.
     probe and ownership; handback, source/root changes and removal release the
     native decoder, scoped hiding CSS and owned method wrappers. Bound probes
     and retries; unsupported clips retain the original player.
+    Observing a connected custom decoder enables the existing deferred class/style
+    path, so later expansion can be reconsidered without another readiness event.
+    Recheck only the decoder or an exact expanded container's bounded direct children.
   - `gif-observer.js` — visible GIF candidates only, captured image loads and the
     existing bounded mutation/shadow walk. One decode at a time; byte, frame and
     document memory limits; same-origin/CORS fetches with no new permissions.
@@ -406,7 +485,17 @@ with direct `chrome.*` access.
   ownership. Custom close and native exit retain inline policy. The primary
   Full screen action opens the owned player around the original media; Custom
   Player remains another explicit entry. `ios-player-fullscreen` requests DOM
-  fullscreen only for the owned container where permitted. Guard asynchronous
+  fullscreen for the owned container where permitted. A current X companion
+  instead uses its exact registered site-player container: mount only the owned
+  UI host inside it, leaving the original media and its ancestors in place.
+  Resolve that container lazily from a bounded, unambiguous current SDK/group
+  binding. Explicit fullscreen entry while playing may notify that exact group
+  of Play; discovery and metadata callbacks never do. Do not import private
+  protection modules, fake visibility or filter site Pause calls. The external
+  target needs both its current source/registration and an authored request token;
+  rejected requests, pre-existing fullscreen and newer site presentation confer
+  no exit authority. Restore only the same still-owned UI host on denial/exit;
+  never reacquire a host the site removed or moved. Guard asynchronous
   completion by UI/session/source generation; cleanup removes listeners and
   exits only its owned fullscreen target. More → Apple player explicitly invokes
   the original media's native presentation API through `withNative`. Lazy iOS-only
@@ -428,6 +517,21 @@ with direct `chrome.*` access.
   Native events alone never open the player or cause exit/reentry loops.
   Safari's bars may remain; webpage controls cannot modify Apple's UI.
   Inline-attribute ownership is separate and begins at attachment.
+  Verified finite, nonlooping X originals may instead use a separate
+  native-presentation certificate. Keep the original renderer, parent chain,
+  source and native captions in the exact registered SDK container; mount only
+  a transparent, nonmodal StayFast UI there. Entry requires native container
+  fullscreen and never requests Play. Full current source/capability authority
+  gates input; SDK/source loss closes the UI. Source and track writes revoke
+  that lease even when the page restores their old values. Its exact authored fullscreen
+  token permits UI-only exit after media authority is lost. Rejecting or exiting
+  this route returns inline without a portal fallback. Cleanup preserves foreign
+  media adopted into the UI tree. This certificate grants no transport takeover.
+  It requires exact SDK/source/session/group and native track authority, with
+  either no captions or the supported native subtitle identity. It does not need
+  alternate rendition/download metadata to retain the original renderer.
+  Present protection and identity contradictions still veto entry; source-switch
+  eligibility and its catalog requirements remain separate and unchanged.
 - **Recycled media sources**: both `emptied` and `loadstart` invalidate the old
   presentation generation, PiP/history resume flags and native/queued scroll
   snapshots. Close an active custom view using the current scroll position,

@@ -38,6 +38,8 @@ import '../site-handlers/twitter-player.js';
 import '../site-handlers/progressive-media-source.js';
 import '../core/decoded-playback-monitor.js';
 import '../core/safari-hls-playback.js';
+import '../core/twitter-loop-source.js';
+import '../core/twitter-loop-playback.js';
 import '../core/twitter-mp4-playback.js';
 import '../core/twitter-caption-source.js';
 import '../core/twitter-caption-playback.js';

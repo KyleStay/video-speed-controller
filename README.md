@@ -17,6 +17,7 @@ advertising, analytics, or StayTech backend.
   playback controls.
 - **Custom WebM on iOS** — recognized expanded OGV players use StayFast's
   inline and fullscreen controls when Safari can decode the supplied WebM.
+  Controls also appear when the page expands an already loaded clip.
   Unsupported clips keep their original player; **Use site player** returns
   control to the original renderer.
 - **Animated GIF images** — GIF images with multiple frames get speed, Play/Pause,
@@ -75,6 +76,8 @@ Restoration refreshes missed settings changes and prevents queued speed saves
 from undoing a reset. Newer settings changes take priority over delayed reads.
 Videos loaded further down X/Twitter's infinite-scroll feeds get
 controls as soon as they become ready or start playing, even on busy pages.
+On iOS, rapid speed inputs above 2× are grouped into one native rate update to
+reduce playback interruptions.
 Speed changes following a real click or unhandled keypress are accepted as your
 choice. Programmatic clicks and keyboard events do not authorize a speed reset.
 

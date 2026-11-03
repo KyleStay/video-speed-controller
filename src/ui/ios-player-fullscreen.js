@@ -2,14 +2,37 @@
 window.VSC = window.VSC || {};
 
 class IOSPlayerFullscreen {
+  static boundaryRequests = new WeakMap();
+
   constructor(owner) {
     this.owner = owner;
+    this.inPlace = Boolean(owner.nativeBoundary);
     this.ui = owner.ui;
     this.target = this.ui.screen;
     this.doc = owner.doc;
     this.view = owner.view;
     this.session = owner.session;
     this.nativeGeneration = owner.nativeGeneration;
+    this.root = this.doc.documentElement;
+    this.mountParent = this.ui.host.parentNode;
+    this.mountNext = this.ui.host.nextSibling;
+    try {
+      const boundary =
+        owner.nativeBoundary || window.VSC.TwitterMP4Playback?.fullscreenBoundary?.(owner.video);
+      if (
+        boundary?.element?.ownerDocument === this.doc &&
+        boundary.element !== this.doc.body &&
+        boundary.element !== this.root &&
+        typeof boundary.current === 'function' &&
+        typeof boundary.activate === 'function' &&
+        boundary.current()
+      ) {
+        this.boundary = boundary;
+        this.target = boundary.element;
+      }
+    } catch {
+      // Unknown site structure retains the ordinary owned fullscreen target.
+    }
     this.disposed = false;
     this.pending = false;
     this.exitPending = false;
@@ -57,7 +80,10 @@ class IOSPlayerFullscreen {
         this.owner.session === this.session &&
         this.owner.nativeGeneration === this.nativeGeneration &&
         this.ui.host.isConnected &&
-        this.target.isConnected
+        this.target.isConnected &&
+        (!this.boundary ||
+          (this.boundary.current() &&
+            this.ui.host.parentNode === (this.mounted ? this.target : this.mountParent)))
       );
     } catch {
       return false;
@@ -75,6 +101,12 @@ class IOSPlayerFullscreen {
   api() {
     try {
       if (
+        (this.boundary &&
+          typeof (
+            this.doc.exitFullscreen ||
+            this.doc.webkitExitFullscreen ||
+            this.doc.webkitCancelFullScreen
+          ) !== 'function') ||
         this.doc.fullscreenEnabled === false ||
         this.doc.webkitFullscreenEnabled === false ||
         (this.doc.permissionsPolicy || this.doc.featurePolicy)?.allowsFeature?.('fullscreen') ===
@@ -104,11 +136,27 @@ class IOSPlayerFullscreen {
 
   owns() {
     try {
+      if (
+        this.boundary &&
+        (!this.request ||
+          IOSPlayerFullscreen.boundaryRequests.get(this.target) !== this.request ||
+          (!this.inPlace && !this.boundary.current()) ||
+          (this.inPlace &&
+            (this.doc.documentElement !== this.root ||
+              this.owner.ui !== this.ui ||
+              this.owner.session !== this.session)))
+      ) {
+        return false;
+      }
       const documents = [this.doc.fullscreenElement, this.doc.webkitFullscreenElement].filter(
         Boolean
       );
       // Never exit a newer session or an unrelated page's presentation.
-      if (documents.some((element) => element !== this.target && element !== this.ui.host)) {
+      if (
+        documents.some(
+          (element) => element !== this.target && (this.boundary || element !== this.ui.host)
+        )
+      ) {
         return false;
       }
       return (
@@ -119,6 +167,34 @@ class IOSPlayerFullscreen {
     } catch {
       return false;
     }
+  }
+
+  restoreMount() {
+    if (!this.boundary) {
+      return;
+    }
+    if (IOSPlayerFullscreen.boundaryRequests.get(this.target) === this.request) {
+      IOSPlayerFullscreen.boundaryRequests.delete(this.target);
+    }
+    this.request = null;
+    try {
+      if (
+        this.mounted &&
+        this.ui.host.isConnected &&
+        this.ui.host.parentNode === this.target &&
+        this.doc.documentElement === this.root &&
+        this.mountParent?.isConnected &&
+        !(this.owner.active && this.owner.ui === this.ui && this.owner.session !== this.session)
+      ) {
+        this.mountParent.insertBefore(
+          this.ui.host,
+          this.mountNext?.parentNode === this.mountParent ? this.mountNext : null
+        );
+      }
+    } catch {
+      // Never reacquire a UI removed or moved by the site.
+    }
+    this.mounted = false;
   }
 
   cancelScroll(snapshot = this.scrollSnapshot) {
@@ -188,11 +264,32 @@ class IOSPlayerFullscreen {
     }
   }
 
+  closeInPlace() {
+    if (
+      this.owner.nativeBoundary &&
+      this.owner.active &&
+      this.owner.ui === this.ui &&
+      this.owner.session === this.session
+    ) {
+      this.owner.close();
+      return true;
+    }
+    return false;
+  }
+
   changed() {
     const owned = this.owns();
+    if (!owned && this.wasOwned && this.closeInPlace()) {
+      return;
+    }
+    if (this.boundary && !owned && this.wasOwned) {
+      this.restoreMount();
+    }
     if (!this.current()) {
       if (owned) {
         this.exit(false);
+      } else if (!this.pending) {
+        this.restoreMount();
       }
       return;
     }
@@ -226,6 +323,7 @@ class IOSPlayerFullscreen {
   enter(scrollSnapshot = null) {
     if (!this.available()) {
       this.cancelScroll(scrollSnapshot);
+      this.closeInPlace();
       return false;
     }
     if (this.owns() || this.pending) {
@@ -240,12 +338,39 @@ class IOSPlayerFullscreen {
     this.entryRepaired = false;
     this.pending = true;
     try {
+      if (this.boundary) {
+        if (
+          this.doc.fullscreenElement ||
+          this.doc.webkitFullscreenElement ||
+          (!this.owner.video.paused && !this.boundary.activate())
+        ) {
+          throw new Error('Site fullscreen ownership changed');
+        }
+        // Keep X's observed player and retained producer in the real fullscreen
+        // subtree. Only our UI moves; the site's media and ancestors stay put.
+        this.target.append(this.ui.host);
+        this.mounted = true;
+        if (!this.current()) {
+          throw new Error('Site player changed');
+        }
+        this.request = {};
+        IOSPlayerFullscreen.boundaryRequests.set(this.target, this.request);
+      }
       // Stay in the original gesture; do not await frame expansion or playback.
-      const result = this.api().call(this.target);
+      const invoke = () => this.api().call(this.target);
+      const result = window.VSC.IOSPlayerTakeover?.withNative
+        ? window.VSC.IOSPlayerTakeover.withNative(this.owner, invoke)
+        : invoke();
       Promise.resolve(result)
         .then(
           () => {
             this.pending = false;
+            if (!this.owns()) {
+              this.restoreMount();
+            }
+            if (!this.owns() && this.closeInPlace()) {
+              return;
+            }
             if (this.current()) {
               this.changed();
             } else if (this.owns()) {
@@ -254,6 +379,10 @@ class IOSPlayerFullscreen {
           },
           () => {
             this.pending = false;
+            this.restoreMount();
+            if (this.closeInPlace()) {
+              return;
+            }
             if (this.current()) {
               this.repairScroll();
               this.failure('Full screen is unavailable. Continue in this player.');
@@ -264,8 +393,11 @@ class IOSPlayerFullscreen {
       return true;
     } catch {
       this.pending = false;
+      this.restoreMount();
       this.repairScroll();
-      this.failure('Full screen is unavailable. Continue in this player.');
+      if (!this.closeInPlace()) {
+        this.failure('Full screen is unavailable. Continue in this player.');
+      }
       return false;
     }
   }
@@ -290,6 +422,9 @@ class IOSPlayerFullscreen {
         .then(
           () => {
             this.exitPending = false;
+            if (!this.owns()) {
+              this.restoreMount();
+            }
             if (this.current()) {
               this.changed();
             }
@@ -342,7 +477,11 @@ class IOSPlayerFullscreen {
       const button = this.ui.refs.fullscreen;
       const owned = this.owns();
       button.hidden = !owned && !this.available();
-      window.VSC.ShadowDOMManager.setControlIcon(button, owned ? 'contract' : 'expand');
+      if (this.ui.setIcon) {
+        this.ui.setIcon(button, owned ? 'contract' : 'expand');
+      } else {
+        window.VSC.ShadowDOMManager.setControlIcon(button, owned ? 'contract' : 'expand');
+      }
       button.setAttribute('aria-label', owned ? 'Exit full screen' : 'Full screen');
       button.setAttribute('aria-pressed', String(owned));
     } catch {
@@ -360,6 +499,11 @@ class IOSPlayerFullscreen {
     }
     this.cancelScrollRepair();
     this.exit(false);
+    // A pending successful entry still owns its late completion and will exit
+    // there. A newer fullscreen instance replaces the target's request token.
+    if (!this.pending && !this.owns()) {
+      this.restoreMount();
+    }
   }
 }
 

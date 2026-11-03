@@ -31,6 +31,24 @@ describe('owned iOS player view', () => {
     return rule.style;
   }
 
+  it('makes only the in-place dialog and stage transparent without modal semantics', () => {
+    const inPlace = new window.VSC.IOSPlayerView(document, { inPlace: true });
+    expect(inPlace.dialog.getAttribute('aria-modal')).toBe('false');
+    expect(inPlace.host.hasAttribute('data-in-place')).toBe(true);
+    expect(view.dialog.getAttribute('aria-modal')).toBe('true');
+    expect(styleFor(':host([data-in-place]) dialog', 'background').background).toBe('transparent');
+    expect(styleFor(':host([data-in-place]) .stage', 'background').background).toBe('transparent');
+    inPlace.destroy();
+  });
+
+  it('brands actual dynamic options and icons while refusing foreign descendants', () => {
+    view.refs.captions.append(view.createOption());
+    view.setIcon(view.refs.play, 'pause');
+    expect(view.ownsTree()).toBe(true);
+    view.stage.append(document.createElement('video'));
+    expect(view.ownsTree()).toBe(false);
+  });
+
   it('keeps owned fullscreen and lock in the header with explicit accessible names', () => {
     expect(view.refs.fullscreen.closest('header')).toBeTruthy();
     expect(view.refs.fullscreen.getAttribute('aria-label')).toBe('Enter full screen');

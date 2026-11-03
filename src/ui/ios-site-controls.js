@@ -68,10 +68,13 @@ const XDS_SITE_CONTROL_PROFILE = {
   controls: [
     '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Play"]',
     '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Pause"]',
+    '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Replay"]',
+    '> [data-slot="xds-context-menu-trigger"] > button[aria-label="Watch again"]',
     '> [data-slot="xds-context-menu-trigger"] > [class~="group/controls"]',
     `> [data-slot="xds-context-menu-trigger"] > ${XDS_NESTED_CONTROL_GROUP}`,
     '> [data-slot="xds-context-menu-trigger"] [data-slot="xds-button"][aria-label="Mute"]',
     '> [data-slot="xds-context-menu-trigger"] [data-slot="xds-button"][aria-label="Unmute"]',
+    '> [data-slot="xds-context-menu-trigger"] [data-slot="xds-button"][aria-label="Replay"]',
   ],
 };
 
@@ -107,7 +110,7 @@ class IOSSiteControls {
       const trigger = triggers[0];
       if (
         !trigger.querySelector(
-          ':scope > button[aria-label="Play"], :scope > button[aria-label="Pause"]'
+          ':scope > button[aria-label="Play"], :scope > button[aria-label="Pause"], :scope > button[aria-label="Replay"]'
         ) ||
         trigger.querySelectorAll(
           `:scope > [class~="group/controls"], :scope > ${XDS_NESTED_CONTROL_GROUP}`

@@ -53,6 +53,37 @@ afterEach(() => {
 });
 
 describe('native custom WebM ownership', () => {
+  it('reconsiders a preloaded paused decoder when its existing surface expands', () => {
+    const { original, container, play } = make(false);
+    container.classList.remove('expandedWebm');
+    observer = new window.VSC.CustomWebMObserver(document, attach);
+    expect(observer.hasObservedMedia).toBe(true);
+    expect(observer.entries.size).toBe(0);
+    container.classList.add('expandedWebm');
+    observer.recheck(container);
+    const row = observer.entries.get(original);
+    expect(row).toBeDefined();
+    row.video.dispatchEvent(new Event('loadeddata'));
+    expect(attach).toHaveBeenCalledWith(row.video, container);
+    expect(play).not.toHaveBeenCalled();
+    expect(row.video.play).not.toHaveBeenCalled();
+    expect(original.paused).toBe(true);
+  });
+
+  it('does not scan unrelated trees or revive disabled discovery on attribute changes', () => {
+    const { original, container } = make(false);
+    container.classList.remove('expandedWebm');
+    observer = new window.VSC.CustomWebMObserver(document, attach);
+    const query = vi.spyOn(document.body, 'querySelectorAll');
+    observer.recheck(document.body);
+    expect(query).not.toHaveBeenCalled();
+    container.classList.add('expandedWebm');
+    observer.cleanup();
+    observer.recheck(container);
+    expect(observer.entries.has(original)).toBe(false);
+    expect(attach).not.toHaveBeenCalled();
+  });
+
   it('probes native metadata before pausing or hiding the original decoder', () => {
     const { original, chrome, pause } = make();
     observer = new window.VSC.CustomWebMObserver(document, attach);

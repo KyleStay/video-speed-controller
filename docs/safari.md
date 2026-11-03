@@ -271,6 +271,31 @@ and leaves the media's native APIs unchanged. iPhone Safari browser bars may
 remain visible. **More → Apple player** is the explicit native-fullscreen escape
 where supported; StayFast cannot change Apple's controls or place its own
 controls inside Apple's player or Picture in Picture.
+For a verified X companion, DOM fullscreen instead targets the exact current
+player registered with X's playback group. Only StayFast's UI host moves inside
+that container; the retained original and its ancestors remain in place. This
+keeps X's observed player in the real fullscreen subtree, avoiding automatic
+visibility-driven Pause calls. A bounded lazy SDK/group binding checks the
+source, controller, registration and single-media scope. Only explicit entry
+while playing notifies that group of Play; no private protection module,
+visibility override or Pause suppression is used. Exit authority also requires
+the current binding and StayFast's own fullscreen request token. Pre-existing,
+rejected or newer site fullscreen remains untouched. Denial/exit restores the
+same owned host to its ordinary mount; removal by the site ends that ownership.
+Finite, nonlooping X originals can use a separate native-presentation
+certificate for that registered container. StayFast adds a transparent, nonmodal
+control surface while the original video, ancestors, source and native captions
+stay in place. This route requires native container fullscreen; entry does not
+request Play or copy captions. Current SDK, source and capability authority gates
+controls and closes the surface on loss. Cleanup can exit its exact authored
+fullscreen request after that loss, without touching a newer site request.
+Source and track writes revoke this lease even if their old values are restored.
+Rejection and native exit return inline rather than moving the original.
+This certificate verifies the exact current SDK/source/session/group and native
+audio/subtitle state. It does not choose a replacement URL, so missing alternate
+rendition or download metadata does not prevent retaining the original renderer.
+Present protection or identity contradictions still veto presentation. The MP4
+and looping transport certificates retain their existing catalog safeguards.
 An explicit Apple-player denial may restore the same-source StayFast viewport
 without play or fullscreen requests. Newer input (including wheel), navigation,
 source/session changes or cleanup cancel recovery; native fullscreen events never open it.
@@ -536,6 +561,131 @@ and duration before using the existing up-to-720p ranking. This avoids selecting
 a 4K download when X explicitly supplies a lighter rendition. A validated cache
 binding also permits retaining one exact `<source>` child for automatic takeover.
 Caption, protection, live and ambiguity vetoes still apply.
+A countdown accessory may supply an opaque Relay
+fragment instead of expanded video metadata. Require its exact own-data shape
+and match its reference to that same current post before reading renditions.
+Expanded/mixed fields, inherited claims, accessors and capability contradictions
+still reject this route; no missing URL is synthesized.
+
+The same-post cache route can use explicitly supplied playback renditions when
+both metadata owners omit the download URL or hold it as an own undefined data
+field. Exact current SDK HLS, media/post, session, cache environment and
+same-asset MP4 variants still identify playback.
+Inherited fields, accessors, invalid values, mixed owners and changes during a
+read reject that snapshot. Countdown metadata and present download URLs retain
+their existing checks.
+
+Looping companions require unlimited intent, revalidated throughout ownership:
+an own-data `loop === true` on the exact SDK-owning creator props, or absent/nullish
+own-data `maxLoopCount` and `maxLoopingThresholdSeconds` on both creator and selected
+SDK content. Inherited, accessor and non-null limits cannot certify the latter.
+That path also rechecks each content object's own loop flags or finite duration
+threshold; a paused producer's stored loop flag can outlive a policy change.
+The SDK's current `shouldLoop` flag can describe a finite repeat policy whose
+counter advances on the original video's `ended` events. A paused retained
+producer cannot enforce that policy. Finite repeat policies remain with the site player.
+
+Short finite X clips with explicit unlimited looping can use their supplied HLS
+fMP4 fragments inside the same retained-producer companion. It requires one
+enabled audio track, a 1–60 second clip and an AVC/AAC rendition within 1280×720
+(including portrait
+orientation). The exact supplied MP4 URL provides ordered dimensions; exactly
+one master variant must match. The entire master is validated before selection,
+with at most eight video/audio pairs, unique URLs/groups/dimensions, one-to-one
+audio associations and identical audio semantics across groups. Invalid
+unselected declarations also reject. It follows only explicit same-asset HTTPS
+CDN references with CORS and omitted credentials, rejecting redirects, encryption,
+caption/unknown tracks, live playlists, discontinuities, byte ranges and
+unsupported tags. Preparation is limited to 12 seconds, 16 segments per track,
+37 requests and 8 MiB. It constructs no post or media URL. Longer clips retain
+the supplied MP4 path; this bounded candidate does not establish their loop
+boundary performance.
+
+The loop owner caches the complete clip once, reads the exact audio/video end
+from native SourceBuffer ranges and appends whole cycles at that shared period.
+The separate captioned-loop route requires the exact showing SDK/native subtitle
+track and a complete finite caption certificate. Its live owner attests the same
+raw master and subtitle group, preserves verified native IDs and settings, and
+adds cue copies at multiples of the actual AV period. Those copies precede AV
+appends and retire after both AV buffers. Ordinary caption vetoes remain intact.
+Exact source positioning remains supported. For default source positioning, the
+owner also recognizes X's documented per-cue line, snapping and line-alignment
+adjustment, preserving the captured tuple on every owned cue. Other caption
+fields and owned-track mutations retain their complete verification.
+SDK caption-inset updates may replace the metadata container without changing
+its tracks. Revalidation preserves track identity and every other metadata
+field, rather than treating that layout-only container replacement as a new source.
+The original keeps playing during verification; only full cue readiness permits
+the guarded pause, latest-position seek and zero-rate release. Captioned failures
+hand back to the original instead of continuing without proven captions.
+A valid empty VTT source precedes caption-track insertion because iOS may
+automatically enable it immediately. Its empty load never certifies captions;
+the supplied source and complete owned-track cue proof still gate release.
+A user Pause during preparation cancels the pending handoff. A verified unlimited
+captioned loop may wait through the original's natural end for the site's own
+restart; actual playing and settled seeking must precede release. Initial binding
+requires decoded data. A bound caption companion can retain full source and
+caption authority while the original's seek temporarily leaves only loaded
+metadata; protection and identity checks still apply. This never requests another
+Play or resumes an original the session has not paused. Only
+the exact pause issued for a verified release receives a one-event exemption.
+Companion source writes permanently revoke that session's source lease, even if the page
+restores the old URL before observer delivery; teardown must not unload it.
+Preparation holds the actual native rate at zero after resource loading, while
+the session retains the latest requested positive rate. One Play request occurs
+in the original command stack. Once one complete cycle, native track timing and
+the initial seek are verified, readiness releases the requested rate without
+another Play. A newer Pause remains paused. Rate resets, unsupported zero,
+clamped release, source loss or a changed command during release fail through
+the same guarded fallback. Held zero never becomes a saved or handed-back rate.
+The initial cycle and all zero-rate time count as startup in measurements.
+It retains the previous/current cycles and bounded future playback, retiring
+older buffers through playback and buffer events. Future playback targets a
+quarter period with at least two wall seconds of runway. It does not seek the decoder
+at each loop, trim the audio tail, change pitch or disable looping. Normal
+controls retain clip-relative duration, seeking and handback; measurements must
+use the captured native time getter and native frame timestamps as well.
+Consecutive seeks retain the issued epoch when native readback rounds an exact
+boundary within one microsecond. This affects the clip-relative control clock;
+the captured native getter used for playback measurements remains unmodified.
+
+An exact owned MMS source precedes the supplied HLS source alternative, with
+remote playback enabled. Only an observed wireless route after commit may
+retain native HLS selection. Preparation/codec failure before commit falls back
+to the verified MP4 on the same element and latest request generation. Loaded
+metadata never requests Play. A committed loop failure uses guarded original
+handback, not the progressive MP4 reload helper. Caption, DRM, live, ambiguity
+and original-source identity vetoes remain authoritative throughout preparation
+and playback.
+
+Both continuous-loop and ordinary X MP4 companions can stall after many rapid
+native rate writes. Their shared owner retains relative input intent until
+100 ms of quiet, then applies the final target through the normal speed handler.
+Actual rate readback, UI acceptance and saved preference remain at the previous
+rate until that write. A new source, document, controller or preference cancels
+pending intent; a paused video stays paused.
+
+For native iOS video playback, the first relative command still runs source selection
+synchronously. Only a successful native command above 2× with no playback transition can
+arm a source-bound burst queue. This path is shared across sites. Further relative inputs wait for 100 ms of quiet
+before one native rate write. That flush cannot select a source or request Play.
+Media-state release, source mutations, newer commands and preference changes
+cancel it; accepted UI and storage follow actual native readback.
+
+Two paired non-X MP4 runs measured whole-window native advancement improving
+from 3.48×/3.47× to 3.88×/3.70× after nineteen genuine Faster inputs. The second
+candidate run includes two buffering waits; recurring late frame gaps remain.
+This verifies a scoped input-transition improvement, not smooth playback on every
+source. All startup, backsteps and buffering intervals remain in the measurements.
+
+This candidate's complete device acceptance remains open. Continuous fragments
+removed recurring loop-boundary gaps in the measured runs. Coalescing all 19
+genuine relative inputs improved whole-window playback from about 3.66× to
+3.92× on the short loop, and from 3.53× to 3.88× on the long MP4. Each retained
+one 265–317 ms transition gap. See the retained
+[iteration evidence](../test-results/twitter-iphone-rate-repair/loop151/ITERATIONS.md).
+Do not treat unit checks, a resource build or the passing prebuffered experiments
+as full playback acceptance.
 
 Supported finite X native-HLS clips with captions may use the supplied MP4 only
 after the explicit complete subtitle rendition has been fetched and verified

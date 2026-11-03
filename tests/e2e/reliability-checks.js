@@ -211,6 +211,104 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
     }
   );
 
+  await runTest(
+    'A preloaded custom WebM attaches when its paused surface expands later',
+    async () => {
+      const userAgent = await page.browser().userAgent();
+      try {
+        await page.setUserAgent(
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 Version/18.4 Mobile/15E148 Safari/604.1'
+        );
+        await loadFixture();
+        await page.evaluate((source) => {
+          const container = document.createElement('div');
+          container.id = 'late-webm';
+          container.className = 'ogv-cnt';
+          container.style.cssText = 'position:relative;width:340px';
+          const original = document.createElement('ogvjs');
+          let paused = true;
+          Object.assign(original, {
+            src: source,
+            muted: true,
+            volume: 0.5,
+            currentTime: 0,
+            seekable: { length: 1 },
+            play() {
+              paused = false;
+              return Promise.resolve();
+            },
+            pause() {
+              paused = true;
+            },
+            stop() {
+              paused = true;
+            },
+          });
+          Object.defineProperty(original, 'paused', { get: () => paused });
+          const chrome = document.createElement('div');
+          chrome.className = 'ogv-ctrl';
+          chrome.textContent = 'Site transport';
+          const expand = document.createElement('button');
+          expand.id = 'expand-late-webm';
+          expand.textContent = 'Expand clip';
+          expand.onclick = () => container.classList.add('expandedWebm');
+          const close = document.createElement('button');
+          close.id = 'close-late-webm';
+          close.textContent = 'Close clip';
+          close.onclick = () => {
+            original.stop();
+            container.remove();
+          };
+          container.append(original, chrome);
+          document.querySelector('main').append(expand, close, container);
+          // The decoder is already ready; opening its surface emits no new event.
+          original.dispatchEvent(new Event('loadedmetadata'));
+        }, mediaUrl);
+        await page.waitForFunction(
+          () => window.VSC_controller.mutationObserver.getPendingWorkCount() === 0
+        );
+        assert.equal(
+          await page.$eval('#late-webm', (root) => root.querySelectorAll('video').length),
+          0
+        );
+        await page.click('#expand-late-webm');
+        await page.waitForFunction(
+          () => document.querySelector('#late-webm video')?.vsc?.div.isConnected,
+          { timeout: 2500 }
+        );
+        const state = await page.$eval('#late-webm', (root) => {
+          const video = root.querySelector('video');
+          return {
+            paused: video.paused,
+            originalPaused: root.querySelector('ogvjs').paused,
+            sameSource: video.src === root.querySelector('ogvjs').src,
+            originalVisible: getComputedStyle(root.querySelector('ogvjs')).display !== 'none',
+            decoded: video.getVideoPlaybackQuality().totalVideoFrames,
+          };
+        });
+        assert.true(state.paused && state.originalPaused, 'Expansion preserves the explicit pause');
+        assert.true(
+          state.sameSource && !state.originalVisible,
+          'Only the supplied native clip owns UI'
+        );
+        assert.true(
+          state.decoded > 0,
+          'The native decoder produced the first frame before takeover'
+        );
+        await page.keyboard.press('d');
+        await page.waitForFunction(
+          () => document.querySelector('#late-webm video').playbackRate > 1
+        );
+        await page.click('#close-late-webm');
+        await page.waitForFunction(
+          () => window.VSC.stateManager.getControlledElements().length === 0
+        );
+      } finally {
+        await page.setUserAgent(userAgent);
+      }
+    }
+  );
+
   await runTest('Scrolling an X feed attaches ready videos before idle work', async () => {
     // All requests are intercepted above; this fixture never contacts X.
     await loadFixture('https://x.com/home');

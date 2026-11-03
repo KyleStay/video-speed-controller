@@ -389,6 +389,7 @@ window.VSC = window.VSC || {};
         return {
           url: uri(selected.URI, parent, 'subtitle'),
           rendition: { language: selected.LANGUAGE, name: selected.NAME },
+          subtitleGroupId: selected['GROUP-ID'],
         };
       };
       const playlist = (text, parent) => {
@@ -577,6 +578,8 @@ window.VSC = window.VSC || {};
       const oracle = vtt(third.text);
       verify();
       const result = {
+        masterText: first.text,
+        subtitleGroupId: selected.subtitleGroupId,
         vttBytes: third.bytes,
         vttText: third.text,
         oracle,

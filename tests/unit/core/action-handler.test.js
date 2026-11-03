@@ -9,6 +9,7 @@ import {
   resetMockStorage,
 } from '../../helpers/chrome-mock.js';
 import { createMockVideo, createMockDOM } from '../../helpers/test-utils.js';
+import jsdomIDL from 'jsdom/lib/generated/idl/utils.js';
 
 // Load all required modules
 
@@ -180,6 +181,60 @@ describe('ActionHandler', () => {
         expect(other.currentTime).toBe(70);
       }
     );
+
+    it.each(keys)(
+      '%s cannot act on a revoked owned presentation or fall through after it closes',
+      (_label, code, key, keyCode) => {
+        const execute = vi.spyOn(actionHandler, 'executeAction');
+        const presentationCurrent = vi.fn(() => {
+          window.VSC.IOSPlayer.activePlayers.delete(document);
+          return false;
+        });
+        window.VSC.IOSPlayer.activePlayers.set(document, { video: owned, presentationCurrent });
+        try {
+          pressKey(document.body, code, key, keyCode);
+          expect(presentationCurrent).toHaveBeenCalledOnce();
+          expect(execute).not.toHaveBeenCalled();
+          expect(owned.playbackRate).toBe(1);
+          expect(owned.currentTime).toBe(50);
+          expect(other.playbackRate).toBe(1.8);
+          expect(other.currentTime).toBe(70);
+        } finally {
+          execute.mockRestore();
+        }
+      }
+    );
+
+    it('keeps ordinary owned routing when its current presentation is verified', () => {
+      const owner = {
+        video: owned,
+        presentationCurrent: vi.fn(function () {
+          expect(this).toBe(owner);
+          return true;
+        }),
+      };
+      window.VSC.IOSPlayer.activePlayers.set(document, owner);
+      pressKey(document.body, 'KeyD', 'd', 68);
+      expect(owner.presentationCurrent).toHaveBeenCalledOnce();
+      expect(owned.playbackRate).toBe(1.1);
+      expect(other.playbackRate).toBe(1.8);
+    });
+
+    it('does not act when presentation validation throws', () => {
+      const execute = vi.spyOn(actionHandler, 'executeAction');
+      window.VSC.IOSPlayer.activePlayers.set(document, {
+        video: owned,
+        presentationCurrent() {
+          throw new Error('Revoked source');
+        },
+      });
+      try {
+        pressKey(document.body, 'KeyD', 'd', 68);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        execute.mockRestore();
+      }
+    });
 
     it.each(['input', 'select'])('preserves typing in an owned-player shadow %s', (tagName) => {
       const host = document.createElement('vsc-ios-player');
@@ -1671,5 +1726,736 @@ describe('ActionHandler', () => {
       expect(video.vsc.speedIndicator.textContent).toBe('2.00');
       expect(save).toHaveBeenCalledWith({ lastSpeed: 2 });
     });
+  });
+});
+
+describe('ActionHandler committed X playback relative commands', () => {
+  let video, controller, actionHandler, config, loop, pending, writes;
+
+  beforeEach(() => {
+    window.VSC_controller?.mutationObserver?.stop();
+    video = document.createElement('video');
+    document.body.append(video);
+    video.playbackRate = 2.1;
+    config = { settings: { lastSpeed: 2.1, rememberSpeed: false }, save: vi.fn() };
+    actionHandler = new window.VSC.ActionHandler(config, null);
+    controller = { video, actionHandler, config, speedIndicator: document.createElement('span') };
+    video.vsc = controller;
+    pending = null;
+    loop = {
+      requestedSpeed: vi.fn(() => pending),
+      queueRelative: vi.fn((_controller, target, source) => {
+        if (source === 'external' || source === 'init') {
+          return false;
+        }
+        pending = target;
+        return true;
+      }),
+      cancelRelative: vi.fn(() => {
+        pending = null;
+      }),
+    };
+    vi.spyOn(window.VSC.TwitterMP4Playback, 'get').mockImplementation((target) =>
+      target === video ? loop : undefined
+    );
+    vi.spyOn(window.VSC.TwitterCaptionPlayback, 'requestedSpeed').mockReturnValue(undefined);
+    writes = vi
+      .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+      .mockImplementation((target, rate) => {
+        target.playbackRate = rate;
+      });
+  });
+
+  afterEach(() => {
+    delete video.vsc;
+    video.remove();
+    vi.restoreAllMocks();
+  });
+
+  it('uses the pending loop target for every delta and leaves native/config state unaccepted', () => {
+    for (let click = 0; click < 19; click++) {
+      expect(actionHandler.adjustSpeed(video, 0.1, { relative: true })).toBe(false);
+    }
+    expect(loop.queueRelative).toHaveBeenLastCalledWith(controller, 4, 'internal');
+    expect(video.playbackRate).toBe(2.1);
+    expect(config.settings.lastSpeed).toBe(2.1);
+    expect(config.save).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it('retains existing snapping and product bounds while a loop target is pending', () => {
+    pending = 0.95;
+    actionHandler.adjustSpeed(video, 0.1, { relative: true });
+    expect(loop.queueRelative).toHaveBeenLastCalledWith(controller, 1, 'internal');
+    pending = 15.9;
+    actionHandler.adjustSpeed(video, 1, { relative: true });
+    expect(loop.queueRelative).toHaveBeenLastCalledWith(controller, 16, 'internal');
+    pending = 0.08;
+    actionHandler.adjustSpeed(video, -1, { relative: true });
+    expect(loop.queueRelative).toHaveBeenLastCalledWith(controller, 0.07, 'internal');
+  });
+
+  it('keeps the existing caption request base ahead of an unrelated loop request', () => {
+    pending = 4;
+    window.VSC.TwitterCaptionPlayback.requestedSpeed.mockReturnValue(2.5);
+    actionHandler.adjustSpeed(video, 0.1, { relative: true });
+    expect(loop.queueRelative).toHaveBeenLastCalledWith(controller, 2.6, 'internal');
+  });
+
+  it.each(['internal', 'external', 'init'])(
+    'cancels pending relative intent before an absolute %s command',
+    (source) => {
+      pending = 4;
+      expect(actionHandler.setSpeed(video, 1.5, source)).toBe(true);
+      expect(loop.cancelRelative).toHaveBeenCalledOnce();
+      expect(pending).toBeNull();
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 1.5);
+    }
+  );
+
+  it.each(['external', 'init'])(
+    'does not use a pending target for a relative %s update',
+    (source) => {
+      pending = 4;
+      expect(actionHandler.adjustSpeed(video, 0.1, { relative: true, source })).toBe(true);
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 2.2);
+      expect(loop.requestedSpeed).not.toHaveBeenCalled();
+      expect(pending).toBeNull();
+    }
+  );
+
+  it('preserves immediate relative changes on ordinary media', () => {
+    window.VSC.TwitterMP4Playback.get.mockReturnValue(undefined);
+    expect(actionHandler.adjustSpeed(video, 0.1, { relative: true })).toBe(true);
+    expect(writes).toHaveBeenCalledExactlyOnceWith(video, 2.2);
+    expect(video.playbackRate).toBe(2.2);
+    expect(loop.queueRelative).not.toHaveBeenCalled();
+    expect(loop.cancelRelative).not.toHaveBeenCalled();
+  });
+});
+
+describe('ActionHandler native iOS relative burst', () => {
+  let video, controller, actionHandler, manager, config, rate, writes, source, onWrite, paused;
+  let captionBegin, mp4Begin, hlsBegin, play;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.VSC_controller?.mutationObserver?.stop();
+    video = document.createElement('video');
+    video.src = 'blob:https://x.com/current-native';
+    document.body.append(video);
+    source = video.src;
+    rate = 2.1;
+    paused = false;
+    onWrite = null;
+    writes = [];
+    Object.defineProperties(video, {
+      currentSrc: { configurable: true, get: () => source },
+      paused: { configurable: true, get: () => paused },
+    });
+    // Observe the real jsdom WebIDL setter without replacing the captured native accessor.
+    const implementation = jsdomIDL.implForWrapper(video);
+    Object.defineProperty(implementation, '_playbackRate', {
+      configurable: true,
+      get: () => rate,
+      set: (value) => {
+        writes.push(value);
+        rate = value;
+        onWrite?.(value);
+      },
+    });
+    config = {
+      settings: { enabled: true, lastSpeed: 2.1, rememberSpeed: true },
+      speedPreferenceRevision: 0,
+      save: vi.fn(),
+    };
+    manager = new window.VSC.EventManager(config, null);
+    actionHandler = new window.VSC.ActionHandler(config, manager);
+    manager.actionHandler = actionHandler;
+    manager.setupRateChangeListener(document);
+    controller = { video, actionHandler, config, speedIndicator: document.createElement('span') };
+    video.vsc = controller;
+    vi.spyOn(window.VSC.IOSPlayer, 'isSupported').mockReturnValue(true);
+    vi.spyOn(window.VSC.EventManager, 'isTwitterHost').mockReturnValue(false);
+    vi.spyOn(window.VSC.TwitterMP4Playback, 'get').mockReturnValue(undefined);
+    vi.spyOn(window.VSC.TwitterMP4Playback, 'getPending').mockReturnValue(undefined);
+    vi.spyOn(window.VSC.TwitterCaptionPlayback, 'requestedSpeed').mockReturnValue(undefined);
+    captionBegin = vi.spyOn(window.VSC.TwitterCaptionPlayback, 'begin').mockReturnValue(null);
+    mp4Begin = vi.spyOn(window.VSC.TwitterMP4Playback, 'begin').mockReturnValue(null);
+    hlsBegin = vi.spyOn(window.VSC.SafariHLSPlayback, 'begin').mockReturnValue(null);
+    vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation((v, speed) => {
+      v.playbackRate = speed;
+    });
+    play = vi.spyOn(video, 'play').mockImplementation(() => {
+      throw new Error('No Play in native rate queue');
+    });
+  });
+
+  afterEach(() => {
+    manager.cleanup();
+    video.remove();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function faster() {
+    return actionHandler.adjustSpeed(video, 0.1, { relative: true });
+  }
+  function pending() {
+    faster();
+    faster();
+  }
+
+  it.each([
+    ['X', true],
+    ['non-X', false],
+  ])(
+    '%s keeps all 19 deltas with first synchronous 2.2 and one native 4 write after 100ms',
+    (_scope, isTwitter) => {
+      window.VSC.EventManager.isTwitterHost.mockReturnValue(isTwitter);
+      expect(faster()).toBe(true);
+      expect(captionBegin).toHaveBeenCalledOnce();
+      expect(mp4Begin).toHaveBeenCalledOnce();
+      expect(hlsBegin).toHaveBeenCalledOnce();
+      expect(writes).toEqual([2.2]);
+      for (let i = 1; i < 19; i++) {
+        expect(faster()).toBe(false);
+      }
+      expect(rate).toBe(2.2);
+      expect(config.settings.lastSpeed).toBe(2.2);
+      expect(controller.speedIndicator.textContent).toBe('2.20');
+      expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 2.2 });
+      vi.advanceTimersByTime(99);
+      expect(writes).toEqual([2.2]);
+      vi.advanceTimersByTime(1);
+      expect(writes).toEqual([2.2, 4]);
+      expect(config.settings.lastSpeed).toBe(4);
+      expect(controller.speedIndicator.textContent).toBe('4.00');
+      expect(manager.getMediaRateState(video).acceptedSpeed).toBe(4);
+      expect(config.save).toHaveBeenLastCalledWith({ lastSpeed: 4 });
+      expect(play).not.toHaveBeenCalled();
+      expect(captionBegin).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('never selects a newly eligible transition or site handler at delayed flush', () => {
+    pending();
+    const transition = { finish: vi.fn(), deferred: true };
+    captionBegin.mockReturnValue(transition);
+    const siteHandler = window.VSC.siteHandlerManager.handleSpeedChange;
+    siteHandler.mockClear();
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2, 2.3]);
+    expect(captionBegin).toHaveBeenCalledOnce();
+    expect(siteHandler).not.toHaveBeenCalled();
+    expect(transition.finish).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary first-command transition selection synchronous and never arms after it', () => {
+    const transition = { finish: vi.fn() };
+    captionBegin.mockReturnValue(transition);
+    expect(faster()).toBe(true);
+    expect(transition.finish).toHaveBeenCalledOnce();
+    expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+    faster();
+    expect(captionBegin).toHaveBeenCalledTimes(2);
+    expect(writes).toEqual([2.2, 2.3]);
+  });
+
+  it.each(['caption', 'mp4', 'hls'])(
+    'keeps the2× crossing synchronous for the%s adapter and its sole Play',
+    (adapter) => {
+      rate = config.settings.lastSpeed = 1.9;
+      controller.div = document.createElement('div');
+      vi.spyOn(window.VSC.stateManager, 'getControlledElements').mockReturnValue([video]);
+      let inputActive = false;
+      play.mockImplementation(() => {
+        expect(inputActive).toBe(true);
+        return Promise.resolve();
+      });
+      const begin = { caption: captionBegin, mp4: mp4Begin, hls: hlsBegin }[adapter];
+      const deferred = { deferred: true, finish: vi.fn() };
+      begin.mockImplementation((_controller, speed) => {
+        if (speed <= 2) {
+          return null;
+        }
+        expect(inputActive).toBe(true);
+        video.play();
+        return deferred;
+      });
+      const input = () => {
+        inputActive = true;
+        try {
+          actionHandler.runAction('faster', 0.1, { type: 'keydown', target: document.body });
+        } finally {
+          inputActive = false;
+        }
+      };
+      input();
+      expect(rate).toBe(2);
+      expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+      input();
+      expect(begin).toHaveBeenLastCalledWith(
+        controller,
+        2.1,
+        'internal',
+        ...(adapter === 'caption' ? [{ previousSpeed: 2 }] : [])
+      );
+      expect(play).toHaveBeenCalledOnce();
+      expect(deferred.finish).not.toHaveBeenCalled();
+      expect(writes).toEqual([2]);
+      expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+      vi.advanceTimersByTime(100);
+      expect(play).toHaveBeenCalledOnce();
+      expect(writes).toEqual([2]);
+    }
+  );
+
+  it.each(['caption pending', 'hls pending', 'active hls', 'active mp4', 'pending mp4'])(
+    'does not arm over%s ownership',
+    (kind) => {
+      if (kind === 'caption pending') {
+        controller.twitterCaptionPending = {};
+      }
+      if (kind === 'hls pending') {
+        controller.safariPlaybackPending = {};
+      }
+      if (kind === 'active hls') {
+        controller.safariPlayback = {};
+      }
+      if (kind === 'active mp4') {
+        window.VSC.TwitterMP4Playback.get.mockReturnValue({});
+      }
+      if (kind === 'pending mp4') {
+        window.VSC.TwitterMP4Playback.getPending.mockReturnValue({});
+      }
+      expect(faster()).toBe(true);
+      expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+      expect(faster()).toBe(true);
+      expect(writes).toEqual([2.2, 2.3]);
+    }
+  );
+
+  it('does not queue when native accepted readback is clamped to2×', () => {
+    onWrite = () => {
+      rate = 2;
+    };
+    faster();
+    expect(config.settings.lastSpeed).toBe(2);
+    expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+    faster();
+    expect(captionBegin).toHaveBeenCalledTimes(2);
+    expect(mp4Begin).toHaveBeenCalledTimes(2);
+    expect(hlsBegin).toHaveBeenCalledTimes(2);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('composes later bursts after an earlier own flush without using an installation-time preference', () => {
+    for (let i = 0; i < 5; i++) {
+      faster();
+    }
+    vi.advanceTimersByTime(110);
+    expect(rate).toBe(2.6);
+    for (let i = 0; i < 14; i++) {
+      faster();
+    }
+    vi.advanceTimersByTime(100);
+    expect(rate).toBe(4);
+    expect(writes).toEqual([2.2, 2.6, 2.7, 4]);
+  });
+
+  it('preserves snapping and both bounds when composing queued input', () => {
+    faster();
+    actionHandler.adjustSpeed(video, 100, { relative: true });
+    expect(manager.getMediaRateState(video).nativeRelative.target).toBe(16);
+    actionHandler.adjustSpeed(video, -100, { relative: true });
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2, 1]);
+    expect(manager.getMediaRateState(video).acceptedSpeed).toBe(1);
+    actionHandler.adjustSpeed(video, -100, { relative: true });
+    expect(rate).toBe(0.07);
+  });
+
+  it.each(['internal', 'external', 'init'])(
+    'absolute%s supersedes the queue while NaN preserves it',
+    (kind) => {
+      pending();
+      expect(actionHandler.setSpeed(video, NaN)).toBe(false);
+      expect(manager.getMediaRateState(video).nativeRelative.target).toBe(2.3);
+      actionHandler.setSpeed(video, 1.5, kind);
+      vi.advanceTimersByTime(100);
+      expect(writes).toEqual([2.2, 1.5]);
+    }
+  );
+
+  it('still flushes valid relative intent while paused and never resumes', () => {
+    pending();
+    paused = true;
+    vi.advanceTimersByTime(100);
+    expect(rate).toBe(2.3);
+    expect(video.paused).toBe(true);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('uses actual clamped readback for accepted state, UI and persistence', () => {
+    pending();
+    onWrite = () => {
+      rate = 2.25;
+    };
+    vi.advanceTimersByTime(100);
+    expect(rate).toBe(2.25);
+    expect(config.settings.lastSpeed).toBe(2.25);
+    expect(controller.speedIndicator.textContent).toBe('2.25');
+    expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2.25);
+    expect(config.save).toHaveBeenLastCalledWith({ lastSpeed: 2.25 });
+  });
+
+  it.each([
+    [
+      'source',
+      () => {
+        source = 'blob:https://x.com/foreign';
+      },
+    ],
+    [
+      'source write and restore',
+      () => {
+        const src = video.src;
+        video.src = 'blob:foreign';
+        video.src = src;
+      },
+    ],
+    [
+      'poster write and restore',
+      () => {
+        video.setAttribute('poster', 'foreign');
+        video.removeAttribute('poster');
+      },
+    ],
+    [
+      'child write and restore',
+      () => {
+        const node = document.createElement('source');
+        video.append(node);
+        node.remove();
+      },
+    ],
+    [
+      'source child attribute write and restore',
+      () => {
+        video.firstElementChild.src = 'foreign';
+        video.firstElementChild.removeAttribute('src');
+      },
+    ],
+    [
+      'external preference replacement',
+      () => {
+        config.speedPreferenceRevision++;
+      },
+    ],
+    [
+      'external preference removal',
+      () => {
+        delete config.settings.lastSpeed;
+        config.speedPreferenceRevision++;
+      },
+    ],
+    [
+      'settings replacement',
+      () => {
+        config.settings = { ...config.settings };
+      },
+    ],
+    [
+      'config replacement',
+      () => {
+        controller.config = { settings: config.settings };
+      },
+    ],
+    [
+      'controller replaced',
+      () => {
+        video.vsc = { ...controller };
+      },
+    ],
+    [
+      'disposed',
+      () => {
+        controller.disposed = true;
+      },
+    ],
+    [
+      'disabled',
+      () => {
+        config.settings.enabled = false;
+      },
+    ],
+    [
+      'setSpeed replaced',
+      () => {
+        actionHandler.setSpeed = vi.fn();
+      },
+    ],
+    [
+      'applySpeed replaced',
+      () => {
+        actionHandler.applySpeed = vi.fn();
+      },
+    ],
+    [
+      'rate descriptor replaced',
+      () => {
+        Object.defineProperty(video, 'playbackRate', {
+          configurable: true,
+          value: rate,
+          writable: true,
+        });
+      },
+    ],
+    [
+      'external native rate',
+      () => {
+        rate = 3;
+      },
+    ],
+    [
+      'adoption',
+      () => {
+        document.implementation.createHTMLDocument('other').body.append(video);
+      },
+    ],
+    [
+      'navigation',
+      () => {
+        history.replaceState(null, '', '/native-queue-other');
+      },
+    ],
+    [
+      'cooldown refreshed',
+      () => {
+        manager.refreshCoolDown(video);
+      },
+    ],
+    [
+      'source lifecycle reset',
+      () => {
+        manager.releaseMediaState(video);
+      },
+    ],
+    [
+      'teardown',
+      () => {
+        manager.cleanup();
+      },
+    ],
+    [
+      'caption pending',
+      () => {
+        controller.twitterCaptionPending = {};
+      },
+    ],
+  ])('cancels%s with no late rate/UI/persistence', (_name, change) => {
+    video.append(document.createElement('source'));
+    pending();
+    const before = config.save.mock.calls.length;
+    change();
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2]);
+    expect(config.save.mock.calls.length).toBe(before);
+    expect(controller.speedIndicator.textContent).toBe('2.20');
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('rejects transient source intent that occurs before a second relative input', () => {
+    faster();
+    video.src = 'blob:other';
+    video.src = source;
+    expect(faster()).toBe(true);
+    expect(writes).toEqual([2.2, 2.3]);
+    expect(captionBegin).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['source', 'same-value newer command', 'preference'])(
+    'does not persist old flush after reentrant%s',
+    (kind) => {
+      pending();
+      const saves = config.save.mock.calls.length;
+      onWrite = () => {
+        onWrite = null;
+        if (kind === 'source') {
+          source = 'blob:foreign';
+        } else if (kind === 'preference') {
+          config.speedPreferenceRevision++;
+        } else {
+          actionHandler.setSpeed(video, 2.3);
+        }
+      };
+      vi.advanceTimersByTime(100);
+      expect(config.save.mock.calls.length).toBe(
+        saves + (kind === 'same-value newer command' ? 1 : 0)
+      );
+      if (kind === 'same-value newer command') {
+        expect(config.settings.lastSpeed).toBe(2.3);
+      }
+    }
+  );
+
+  it('cannot revive a hint after current drains a transient source mutation', () => {
+    faster();
+    const hint = manager.getMediaRateState(video).nativeRelative;
+    video.src = 'blob:foreign';
+    video.src = source;
+    expect(hint.current()).toBe(false);
+    expect(hint.current()).toBe(false);
+    hint.queue(4, 'internal');
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2]);
+    expect(manager.getMediaRateState(video).nativeRelative).toBeNull();
+  });
+
+  it.each([false, true])(
+    'preserves a same-target newer command after release/recreate during native write (throw%s)',
+    (throws) => {
+      pending();
+      onWrite = () => {
+        onWrite = null;
+        manager.releaseMediaState(video);
+        actionHandler.setSpeed(video, 2.3);
+        if (throws) {
+          throw new Error('Old setter returns late');
+        }
+      };
+      vi.advanceTimersByTime(100);
+      expect(config.settings.lastSpeed).toBe(2.3);
+      expect(config.save).toHaveBeenCalledTimes(2);
+      expect(config.save).toHaveBeenLastCalledWith({ lastSpeed: 2.3 });
+      expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2.3);
+    }
+  );
+
+  it('restores accepted preference if release/recreate invalidates before the native setter without newer input', () => {
+    pending();
+    const refresh = manager.refreshCoolDown.bind(manager);
+    vi.spyOn(manager, 'refreshCoolDown').mockImplementation((...args) => {
+      refresh(...args);
+      manager.releaseMediaState(video);
+      manager.getOrCreateMediaRateState(video);
+    });
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2]);
+    expect(config.settings.lastSpeed).toBe(2.2);
+    expect(controller.speedIndicator.textContent).toBe('2.20');
+    expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 2.2 });
+  });
+
+  it('ignores UI-only attribute churn while retaining exact source observation', () => {
+    pending();
+    video.classList.add('site-playing');
+    video.style.opacity = '1';
+    video.setAttribute('playsinline', '');
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2, 2.3]);
+  });
+
+  it('cancels an in-flight native hint when release occurs without another command', () => {
+    pending();
+    const hint = manager.getMediaRateState(video).nativeRelative;
+    onWrite = () => {
+      manager.releaseMediaState(video);
+    };
+    vi.advanceTimersByTime(100);
+    expect(hint.cancelled).toBe(true);
+    expect(manager.getMediaRateState(video)).toBeNull();
+    expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 2.2 });
+  });
+
+  it('never invokes a later own rate setter during delayed flush', () => {
+    pending();
+    const setter = vi.fn(() => {
+      video.play();
+    });
+    Object.defineProperty(video, 'playbackRate', {
+      configurable: true,
+      get: () => rate,
+      set: setter,
+    });
+    vi.advanceTimersByTime(100);
+    expect(setter).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    expect(writes).toEqual([2.2]);
+  });
+
+  it('rejects an intermediate rate accessor instead of legitimizing it as native', () => {
+    const prototype = window.HTMLVideoElement.prototype;
+    const prior = Object.getOwnPropertyDescriptor(prototype, 'playbackRate');
+    const descriptor = Object.getOwnPropertyDescriptor(
+      window.HTMLMediaElement.prototype,
+      'playbackRate'
+    );
+    Object.defineProperty(prototype, 'playbackRate', {
+      configurable: true,
+      get: descriptor.get,
+      set: descriptor.set,
+    });
+    try {
+      faster();
+      expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+      expect(faster()).toBe(true);
+      expect(writes).toEqual([2.2, 2.3]);
+    } finally {
+      if (prior) {
+        Object.defineProperty(prototype, 'playbackRate', prior);
+      } else {
+        delete prototype.playbackRate;
+      }
+    }
+  });
+
+  it('rejects replacement of the canonical captured native setter even if its wrapper delegates', () => {
+    const prototype = window.HTMLMediaElement.prototype;
+    const prior = Object.getOwnPropertyDescriptor(prototype, 'playbackRate');
+    Object.defineProperty(prototype, 'playbackRate', {
+      ...prior,
+      set(value) {
+        prior.set.call(this, value);
+      },
+    });
+    try {
+      faster();
+      expect(manager.getMediaRateState(video).nativeRelative).toBeUndefined();
+      expect(faster()).toBe(true);
+    } finally {
+      Object.defineProperty(prototype, 'playbackRate', prior);
+    }
+  });
+
+  it('retains a native partial-write readback after throw without persisting or seeding another hint', () => {
+    pending();
+    onWrite = () => {
+      rate = 2.25;
+      throw new Error('Native partial write');
+    };
+    vi.advanceTimersByTime(100);
+    expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2.25);
+    expect(config.settings.lastSpeed).toBe(2.25);
+    expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 2.2 });
+    expect(manager.getMediaRateState(video).nativeRelative).toBeNull();
+  });
+
+  it('expires unused source hints and restores full synchronous selection for the next burst', () => {
+    faster();
+    vi.advanceTimersByTime(100);
+    expect(manager.getMediaRateState(video).nativeRelative).toBeNull();
+    expect(faster()).toBe(true);
+    expect(captionBegin).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps non-iOS relative commands immediate', () => {
+    window.VSC.IOSPlayer.isSupported.mockReturnValue(false);
+    pending();
+    vi.advanceTimersByTime(100);
+    expect(writes).toEqual([2.2, 2.3]);
+    expect(captionBegin).toHaveBeenCalledTimes(2);
   });
 });

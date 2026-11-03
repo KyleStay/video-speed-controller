@@ -4,6 +4,10 @@
  */
 
 window.VSC = window.VSC || {};
+const nativeRelativeRate = Object.getOwnPropertyDescriptor(
+  window.HTMLMediaElement?.prototype || {},
+  'playbackRate'
+);
 
 class ActionHandler {
   constructor(config, eventManager) {
@@ -25,8 +29,19 @@ class ActionHandler {
 
     // Hardware shortcuts belong to the video in the active owned player.
     // Eventless popup commands and individual controller clicks keep their scope.
-    const ownedVideo =
-      e?.type === 'keydown' ? window.VSC.IOSPlayer?.activePlayers?.get(document)?.video : null;
+    let ownedVideo = null;
+    try {
+      if (e?.type === 'keydown') {
+        const owner = window.VSC.IOSPlayer?.activePlayers?.get(document);
+        const current = owner?.presentationCurrent;
+        if (typeof current === 'function' && current.call(owner) !== true) {
+          return;
+        }
+        ownedVideo = owner?.video;
+      }
+    } catch {
+      return;
+    }
 
     // Get the controller that was used if called from a button press event
     let targetController = null;
@@ -469,15 +484,22 @@ class ActionHandler {
    */
   _adjustSpeedInternal(video, value, options) {
     const { relative = false, source = 'internal' } = options;
+    const playbackSession = window.VSC.TwitterMP4Playback?.get(video);
+    const nativeRelative = this.eventManager?.getMediaRateState(video)?.nativeRelative;
+    const nativeCurrent = nativeRelative?.current();
+    if (nativeRelative && !nativeCurrent) {
+      nativeRelative.cancel();
+    }
 
     // Calculate target speed
     let targetSpeed;
     if (relative) {
-      // Repeated speed input advances the same pending caption command even
-      // while native playback waits for its complete track to be prepared.
+      // Compose every relative input with pending source preparation or X playback input.
       const pendingSpeed =
         source !== 'external' && source !== 'init'
-          ? window.VSC.TwitterCaptionPlayback?.requestedSpeed?.(video.vsc)
+          ? (window.VSC.TwitterCaptionPlayback?.requestedSpeed?.(video.vsc) ??
+            playbackSession?.requestedSpeed?.(video.vsc) ??
+            (nativeCurrent ? nativeRelative.target : null))
           : null;
       const baseSpeed = Number.isFinite(pendingSpeed) ? pendingSpeed : video.playbackRate;
       const currentSpeed = baseSpeed < 0.1 ? 0.0 : baseSpeed;
@@ -506,9 +528,180 @@ class ActionHandler {
     // Round to 2 decimal places to avoid floating point issues
     targetSpeed = Number(targetSpeed.toFixed(2));
 
+    if (relative && playbackSession?.queueRelative?.(video.vsc, targetSpeed, source)) {
+      return false;
+    }
+
+    if (relative && source !== 'external' && source !== 'init' && nativeCurrent) {
+      nativeRelative.queue(targetSpeed, source);
+      return false;
+    }
+
     // Fight detection is enforced upstream in event-manager.js.
     // External changes that reach here have already been approved (fight surrendered or speed matched).
-    return this.setSpeed(video, targetSpeed, source);
+    return relative
+      ? this.setSpeed(video, targetSpeed, source, true)
+      : this.setSpeed(video, targetSpeed, source);
+  }
+
+  armNativeRelative(video) {
+    let hint;
+    try {
+      const controller = video.vsc,
+        doc = video.ownerDocument,
+        view = doc.defaultView;
+      const state = this.eventManager?.getMediaRateState(video);
+      if (
+        !state ||
+        !window.VSC.IOSPlayer?.isSupported(video) ||
+        video.localName !== 'video' ||
+        !video.currentSrc ||
+        video.childNodes.length > 16 ||
+        controller.twitterCaptionPending ||
+        controller.safariPlaybackPending ||
+        controller.safariPlayback ||
+        window.VSC.TwitterMP4Playback?.get(video) ||
+        window.VSC.TwitterMP4Playback?.getPending(video)
+      ) {
+        return;
+      }
+      const config = this.config,
+        settings = config.settings,
+        root = doc.documentElement,
+        url = doc.URL;
+      const source = video.currentSrc,
+        src = video.getAttribute('src'),
+        poster = video.getAttribute('poster');
+      const children = [...video.childNodes],
+        setSpeed = this.setSpeed,
+        applySpeed = this.applySpeed;
+      const preference = settings.lastSpeed,
+        revision = config.speedPreferenceRevision ?? 0,
+        rate = video.playbackRate;
+      const rateDescriptor = () => {
+        let prototype = video;
+        for (
+          let depth = 0;
+          prototype && depth < 8;
+          depth++, prototype = Object.getPrototypeOf(prototype)
+        ) {
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'playbackRate');
+          if (descriptor) {
+            return { prototype, descriptor };
+          }
+        }
+        return {};
+      };
+      const { prototype, descriptor } = rateDescriptor();
+      if (
+        prototype !== window.HTMLMediaElement.prototype ||
+        descriptor?.get !== nativeRelativeRate?.get ||
+        descriptor?.set !== nativeRelativeRate?.set
+      ) {
+        return;
+      }
+      const commandRevision = this.speedCommandRevision ?? 0;
+      const observer = new view.MutationObserver(() => hint.cancel());
+      hint = {
+        rate,
+        commandRevision,
+        target: null,
+        current: (expectedPreference = preference, expectedRate = rate) => {
+          try {
+            if (hint.cancelled) {
+              return false;
+            }
+            const current = rateDescriptor(),
+              currentDescriptor = current.descriptor;
+            const valid =
+              (this.speedCommandRevision ?? 0) === commandRevision &&
+              !observer.takeRecords().length &&
+              video.vsc === controller &&
+              !controller.disposed &&
+              controller.actionHandler === this &&
+              this.setSpeed === setSpeed &&
+              this.applySpeed === applySpeed &&
+              controller.config === config &&
+              this.config === config &&
+              config.settings === settings &&
+              settings.enabled !== false &&
+              settings.lastSpeed === expectedPreference &&
+              (config.speedPreferenceRevision ?? 0) === revision &&
+              video.isConnected &&
+              video.ownerDocument === doc &&
+              doc.documentElement === root &&
+              doc.URL === url &&
+              video.currentSrc === source &&
+              video.getAttribute('src') === src &&
+              video.getAttribute('poster') === poster &&
+              !video.srcObject &&
+              !video.mediaKeys &&
+              !video.webkitKeys &&
+              nativeRelativeRate.get.call(video) === expectedRate &&
+              current.prototype === prototype &&
+              currentDescriptor?.get === descriptor?.get &&
+              currentDescriptor?.set === descriptor?.set &&
+              currentDescriptor?.writable === descriptor?.writable &&
+              video.childNodes.length === children.length &&
+              children.every((child, i) => video.childNodes[i] === child) &&
+              this.eventManager.getMediaRateState(video) === state &&
+              !controller.twitterCaptionPending &&
+              !controller.safariPlaybackPending &&
+              !controller.safariPlayback &&
+              !window.VSC.TwitterMP4Playback?.get(video) &&
+              !window.VSC.TwitterMP4Playback?.getPending(video);
+            if (!valid) {
+              hint.cancel();
+            }
+            return valid;
+          } catch {
+            hint.cancel();
+            return false;
+          }
+        },
+        cancel: () => {
+          hint.cancelled = true;
+          view.clearTimeout(hint.timer);
+          observer.disconnect();
+          if (state.nativeRelative === hint) {
+            state.nativeRelative = null;
+          }
+        },
+        queue: (target, source) => {
+          view.clearTimeout(hint.timer);
+          hint.target = target;
+          hint.timer = view.setTimeout(() => {
+            if (state.nativeRelative !== hint) {
+              return;
+            }
+            hint.flushing = true;
+            try {
+              if (hint.current()) {
+                applySpeed.call(this, video, target, source, hint);
+              }
+            } catch {
+              // An inaccessible page API cancels this pending command.
+            } finally {
+              hint.cancel();
+            }
+          }, 100);
+        },
+      };
+      observer.observe(video, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        attributeFilter: ['src', 'poster', 'type', 'media', 'kind', 'srclang', 'label', 'default'],
+      });
+      if (!hint.current()) {
+        hint.cancel();
+        return;
+      }
+      state.nativeRelative = hint;
+      hint.timer = view.setTimeout(hint.cancel, 100);
+    } catch {
+      hint?.cancel();
+    }
   }
 
   /**
@@ -529,20 +722,49 @@ class ActionHandler {
    * @param {number} speed - Target speed
    * @param {string} source - Change source: 'internal' (user/extension) or 'external' (site)
    */
-  setSpeed(video, speed, source = 'internal') {
+  setSpeed(video, speed, source = 'internal', relative = false) {
+    return this.applySpeed(video, speed, source, null, relative);
+  }
+
+  applySpeed(video, speed, source, nativeHint = null, relative = false) {
     if (!Number.isFinite(speed)) {
       return false;
     }
+    if (nativeHint && !nativeHint.current()) {
+      return false;
+    }
+    const priorState = this.eventManager?.getMediaRateState(video);
+    if (!nativeHint) {
+      this.speedCommandRevision = (this.speedCommandRevision ?? 0) + 1;
+    }
+    if (!nativeHint) {
+      priorState?.nativeRelative?.cancel();
+    }
+    window.VSC.TwitterMP4Playback?.get(video)?.cancelRelative?.();
     let previousPlaybackRate;
     try {
-      previousPlaybackRate = video.playbackRate;
+      previousPlaybackRate = nativeHint ? nativeRelativeRate.get.call(video) : video.playbackRate;
     } catch {
       return false;
     }
     const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
     let numericSpeed = Number(Math.min(MAX, Math.max(MIN, speed)).toFixed(2));
-    const previousSpeed = this.config.settings.lastSpeed;
+    const commandConfig = this.config,
+      commandSettings = commandConfig.settings;
+    const previousSpeed = commandSettings.lastSpeed;
     const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
+
+    const rejectNative = () => {
+      if (
+        (this.speedCommandRevision ?? 0) === nativeHint.commandRevision &&
+        commandConfig.settings === commandSettings &&
+        (commandConfig.speedPreferenceRevision ?? 0) === speedPreferenceRevision &&
+        commandSettings.lastSpeed === numericSpeed
+      ) {
+        commandSettings.lastSpeed = previousSpeed;
+      }
+      return false;
+    };
 
     // 1. Update lastSpeed BEFORE touching playbackRate. The playbackRate
     //    assignment (step 3) fires a synchronous native ratechange event.
@@ -559,7 +781,7 @@ class ActionHandler {
     //    native ratechange event synchronously. Without cooldown active,
     //    handleRateChange would misclassify it as an external site change.
     if (this.eventManager) {
-      this.eventManager.refreshCoolDown(video);
+      this.eventManager.refreshCoolDown(video, undefined, nativeHint);
     }
 
     // 3. Set the actual playback rate via site handler (native ratechange fires here, blocked by cooldown)
@@ -569,12 +791,13 @@ class ActionHandler {
     }
     let playbackTransition;
     try {
-      playbackTransition =
-        window.VSC.TwitterCaptionPlayback?.begin(video.vsc, numericSpeed, source, {
-          previousSpeed,
-        }) ||
-        window.VSC.TwitterMP4Playback?.begin(video.vsc, numericSpeed, source) ||
-        window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
+      playbackTransition = nativeHint
+        ? null
+        : window.VSC.TwitterCaptionPlayback?.begin(video.vsc, numericSpeed, source, {
+            previousSpeed,
+          }) ||
+          window.VSC.TwitterMP4Playback?.begin(video.vsc, numericSpeed, source) ||
+          window.VSC.SafariHLSPlayback?.begin(video.vsc, numericSpeed, source);
       if (playbackTransition?.deferred) {
         // Preparing a source transition has not accepted a new media rate yet.
         // Retain only local command intent; leave the displayed
@@ -603,12 +826,22 @@ class ActionHandler {
         }
         return false;
       }
-      window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
-      const acceptedSpeed = video.playbackRate;
+      if (nativeHint) {
+        if (!nativeHint.current(numericSpeed, previousPlaybackRate)) {
+          return rejectNative();
+        }
+        nativeRelativeRate.set.call(video, numericSpeed);
+      } else {
+        window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
+      }
+      const acceptedSpeed = nativeHint ? nativeRelativeRate.get.call(video) : video.playbackRate;
       if (!Number.isFinite(acceptedSpeed) || acceptedSpeed <= 0) {
         playbackTransition?.abort();
         this.config.settings.lastSpeed = previousSpeed;
         return false;
+      }
+      if (nativeHint && !nativeHint.current(numericSpeed, acceptedSpeed)) {
+        return rejectNative();
       }
       // Safari can accept a request yet clamp it for a particular source (e.g.
       // an HLS quirk), or ignore it for MediaStream. Reflect that readback; it
@@ -628,13 +861,24 @@ class ActionHandler {
         mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
       }
     } catch (error) {
+      if (nativeHint) {
+        let actual;
+        try {
+          actual = nativeRelativeRate.get.call(video);
+        } catch {
+          /* Lost native receiver. */
+        }
+        if (!nativeHint.current(numericSpeed, actual)) {
+          return rejectNative();
+        }
+      }
       playbackTransition?.abort();
       let restoredSpeed =
         this.config.settings.lastSpeed === numericSpeed
           ? previousSpeed
           : this.config.settings.lastSpeed;
       try {
-        const actual = video.playbackRate;
+        const actual = nativeHint ? nativeRelativeRate.get.call(video) : video.playbackRate;
         if (Number.isFinite(actual) && actual > 0 && actual !== previousPlaybackRate) {
           // A custom setter can mutate then throw. Retain its local readback
           // even during init, without replacing an existing saved preference.
@@ -678,6 +922,10 @@ class ActionHandler {
       })
     );
 
+    if (nativeHint && !nativeHint.current(numericSpeed, numericSpeed)) {
+      return rejectNative();
+    }
+
     // A same-video format change resumes only in this command's call stack.
     // Its asynchronous callbacks never start playback or revive a stale source.
     if (playbackTransition?.finish({ speedCommand: true }) === false) {
@@ -704,9 +952,24 @@ class ActionHandler {
       );
     }
 
+    if (nativeHint && !nativeHint.current(numericSpeed, numericSpeed)) {
+      return rejectNative();
+    }
+
     // 6. Persist to storage only if rememberSpeed is enabled
     if (source !== 'external' && source !== 'init' && this.config.settings.rememberSpeed) {
       this.config.save({ lastSpeed: numericSpeed });
+    }
+
+    // Crossing 2× must still run rendition selection in the current input call stack.
+    if (
+      relative &&
+      numericSpeed > 2 &&
+      !playbackTransition &&
+      source !== 'external' &&
+      source !== 'init'
+    ) {
+      this.armNativeRelative(video);
     }
 
     // 7. Flash controller briefly for visual feedback
