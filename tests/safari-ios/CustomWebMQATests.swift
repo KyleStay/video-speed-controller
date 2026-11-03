@@ -27,13 +27,16 @@ import XCTest
             return (row["frames"] as? Int ?? 0)>2 && (row["time"] as? Double ?? 0)>0.2
         },object:status(safari))
         XCTAssertEqual(XCTWaiter.wait(for:[progressing],timeout:15),.completed)
-        if !safari.buttons["Pause video"].isHittable {
-            // WebKit exposes the video without a stable picture element. The
-            // inspected fixture places its center below/right of this control.
+        // WebKit can report a fading target hittable just before rejecting a
+        // semantic tap. Genuine touches at its observed bounds first reveal
+        // idle controls, then pause; require native state after those touches.
+        for _ in 0..<3 {
+            if status(safari).label.contains("\"paused\":true") { break }
             let frame = safari.buttons["Pause video"].frame
-            safari.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.minX + 170, dy: frame.minY + 75)).tap()
+            XCTAssertGreaterThanOrEqual(frame.width, 44)
+            safari.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
         }
-        safari.buttons["Pause video"].tap();wait(safari,["\"paused\":true"])
+        wait(safari,["\"paused\":true"])
         capture(safari,"custom-webm-inline")
         let pill=safari.buttons.matching(NSPredicate(format:"label BEGINSWITH 'Playback speed '")).firstMatch
         pill.tap();safari.switches["Set playback speed to 2 times"].tap()

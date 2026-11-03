@@ -383,7 +383,7 @@ class IOSPlayerScrubber {
       }
       const surface = this.surface;
       if (surface) {
-        this.owner.gestures?.finishScrub();
+        this.owner.gestures?.finishScrub(cancelled || !current || !resume);
       }
       try {
         (surface || this.range).releasePointerCapture?.(pointerId);

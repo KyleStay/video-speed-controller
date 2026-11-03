@@ -289,7 +289,8 @@ describe('isolated native inventory failure', () => {
     const end = source.indexOf("for (const signal of ['SIGINT', 'SIGTERM'])", start);
     const send = vi.fn(async () => {}),
       remove = vi.fn(),
-      terminate = vi.fn();
+      terminate = vi.fn(),
+      sleep = vi.fn(async () => {});
     const context = {
       fixtureOwned: {
         profile: '/tmp/owned-fixture',
@@ -301,6 +302,7 @@ describe('isolated native inventory failure', () => {
         throw new Error('native inspection denied; retained profile');
       },
       processTree: vi.fn(),
+      sleep,
       terminateExact: terminate,
       rm: remove,
       console,
@@ -311,8 +313,68 @@ describe('isolated native inventory failure', () => {
     );
     await expect(context.clean()).rejects.toThrow(/native inspection denied/);
     expect(send).toHaveBeenCalledWith('Browser.close');
+    expect(sleep).toHaveBeenCalledTimes(29);
     expect(remove).not.toHaveBeenCalled();
     expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it('retries read-only inspection while a helper exits after known browser shutdown', async () => {
+    const source = readFileSync(resolve('tests/e2e/run-isolated.js'), 'utf8');
+    const start = source.indexOf('async function cleanup()');
+    const end = source.indexOf("for (const signal of ['SIGINT', 'SIGTERM'])", start);
+    const events = [];
+    let helperAlive = true;
+    const roots = vi.fn(async () => {
+      events.push('inventory');
+      if (helperAlive) {
+        throw new Error('helper arguments unavailable during shutdown');
+      }
+      return [];
+    });
+    const remove = vi.fn();
+    const terminate = vi.fn();
+    const retained = new Map([[123, { pid: 123 }]]);
+    const context = {
+      fixtureOwned: {
+        profile: '/tmp/owned-fixture',
+        executable: '/owned/Chrome',
+        identities: retained,
+        browser: {
+          target: () => ({
+            createCDPSession: async () => ({ send: async () => events.push('Browser.close') }),
+          }),
+        },
+      },
+      processRows: async () => [],
+      profileRoots: roots,
+      processTree: vi.fn(),
+      liveOwned: async (identities) => {
+        expect([...identities.keys()]).toEqual([123]);
+        return helperAlive ? [{ pid: 123 }] : [];
+      },
+      sleep: async () => {
+        events.push('helper-exited');
+        helperAlive = false;
+      },
+      terminateExact: terminate,
+      rm: remove,
+      console: { log: vi.fn() },
+    };
+    vm.runInNewContext(
+      `let owned=fixtureOwned,cleaning=null;${source.slice(start, end)};globalThis.clean=cleanup;`,
+      context
+    );
+    await expect(context.clean()).resolves.toBeUndefined();
+    expect(events).toEqual([
+      'inventory',
+      'Browser.close',
+      'inventory',
+      'helper-exited',
+      'inventory',
+      'inventory',
+    ]);
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith('/tmp/owned-fixture', { recursive: true, force: true });
   });
 
   it('accepts a fresh empty process tree after a helper exits during saved browser close', async () => {
@@ -426,7 +488,9 @@ describe('Linux launched executable identity', () => {
     const start = source.indexOf('async function actualLaunchedExecutable(');
     const end = source.indexOf('\nasync function collectOwned(', start);
     const processRows = vi.fn();
-    for (const row of rows) {processRows.mockResolvedValueOnce([row]);}
+    for (const row of rows) {
+      processRows.mockResolvedValueOnce([row]);
+    }
     const readlink = vi.fn(async () => '/owned/firefox-bin');
     const context = {
       process: { platform: 'linux' },

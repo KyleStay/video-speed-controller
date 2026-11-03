@@ -29,12 +29,16 @@ import runTwitterMP4 from './twitter-mp4.e2e.js';
 import runTwitterLoop from './twitter-loop.e2e.js';
 import runTwitterLiveMP4 from './twitter-live-mp4.e2e.js';
 import runSiteControls from './site-controls.e2e.js';
+import runMediaPatterns from './media-patterns.e2e.js';
+import runSiteMocks from './site-mocks.e2e.js';
 
 const execFileAsync = promisify(execFile);
 const runner =
   process.env.STAYFAST_CHROME_RUNNER ||
   join(homedir(), '.codex/skills/chrome-extension-test-runner/scripts/launch_test_chrome.py');
 const suites = {
+  'site-mock-cases': runSiteMocks,
+  'media-patterns': runMediaPatterns,
   'site-controls': runSiteControls,
   'site-controls-core': (options) => runSiteControls({ ...options, popup: false }),
   'site-controls-ios': (options) => runSiteControls({ ...options, ios: true, popup: false }),
@@ -67,13 +71,19 @@ const externalSuites = {
   'fixtures-firefox': ['tests/e2e/run-browser-fixtures.js', 'firefox'],
   benchmarks: ['tests/e2e/run-performance-benchmark.js'],
 };
-const names = process.argv.slice(2);
+const names = process.argv
+  .slice(2)
+  .flatMap((name) =>
+    name === 'site-mocks'
+      ? ['site-mock-cases', 'media-patterns', 'custom-feed', 'gif-images', 'custom-webm', 'loops']
+      : [name]
+  );
 if (!names.length) {
   names.push('basic', 'youtube');
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use site-controls, site-controls-core, site-controls-ios, gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use site-mocks, site-mock-cases, media-patterns, site-controls, site-controls-core, site-controls-ios, gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 
@@ -205,11 +215,23 @@ async function cleanup() {
     // Close the known browser even when native inspection failed, but retain
     // its profile and never signal discovered identities on incomplete proof.
     if (inventoryError) {
-      // Browser.close may finish a process that exited during native inspection.
-      // Recheck once; persistent uncertainty or a live root retains the profile.
-      const remaining = await profileRoots(await processRows(), profile, owned.executable, {
-        retained: owned.identities,
-      });
+      // A closing helper can lose its argv before it disappears from inventory.
+      // Retry read-only proof briefly after closing the known browser. Persistent
+      // uncertainty or a live root still retains the profile without signaling.
+      let remaining;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          remaining = await profileRoots(await processRows(), profile, owned.executable, {
+            retained: owned.identities,
+          });
+          break;
+        } catch (error) {
+          if (!browser || attempt === 29) {
+            throw error;
+          }
+          await sleep(100);
+        }
+      }
       if (remaining.length) {
         throw inventoryError;
       }

@@ -963,11 +963,13 @@ class IOSInlinePlayer {
       if (!control) {
         return true;
       }
-      // A full-picture button is a cover surface; retain independent site controls.
+      // Full-picture links also wrap expanded attachments; only committed drags
+      // take ownership, leaving taps and independent controls with the page.
       const cover = control.getBoundingClientRect();
+      const link = control.matches('a[href]:not([download])');
       return (
-        (control.localName === 'button' || control.getAttribute('role') === 'button') &&
-        container.contains(control) &&
+        (control.localName === 'button' || control.getAttribute('role') === 'button' || link) &&
+        (container.contains(control) || (link && control.contains(container))) &&
         cover.left <= rect.left + 1 &&
         cover.top <= rect.top + 1 &&
         cover.right >= rect.right - 1 &&

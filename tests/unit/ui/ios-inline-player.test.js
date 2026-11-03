@@ -815,6 +815,100 @@ describe('owned iOS inline transport', () => {
       expect(player.scrubber.active).toBe(true);
     });
 
+    it.each(['cover', 'wrapper'])(
+      'scrubs a full-picture %s link without consuming ordinary taps',
+      (kind) => {
+        const link = document.createElement('a');
+        link.href = '#attachment';
+        link.getBoundingClientRect = () => media;
+        if (kind === 'cover') {
+          cover.replaceWith(link);
+          cover = link;
+        } else {
+          container.append(link);
+          link.append(video, cover);
+        }
+        player.refreshSurfaceContainer();
+        const clicked = vi.fn((event) => event.preventDefault());
+        link.addEventListener('click', clicked);
+        pointer('pointerdown');
+        pointer('pointerup');
+        cover.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+        expect(clicked).toHaveBeenCalledOnce();
+        pointer('pointerdown');
+        pointer('pointermove', 180);
+        expect(player.scrubber.active).toBe(true);
+        pointer('pointerup', 180, 170, window);
+        expect(video.currentTime).toBe(24);
+        cover.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+        expect(clicked).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('leaves full-picture download links independent', () => {
+      const link = document.createElement('a');
+      link.href = '#attachment';
+      link.download = 'clip.mp4';
+      link.getBoundingClientRect = () => media;
+      cover.append(link);
+      document.elementFromPoint.mockReturnValue(link);
+      pointer('pointerdown', 140, 170, link);
+      pointer('pointermove', 180, 170, link);
+      expect(player.scrubber.active).toBe(false);
+    });
+
+    it('isolates retargeted touch release and its click before document tap handlers', () => {
+      const nativeTap = vi.fn();
+      document.addEventListener('click', nativeTap, true);
+      document.addEventListener('touchend', nativeTap, true);
+      try {
+        paused = false;
+        pointer('pointerdown');
+        pointer('pointermove', 180);
+        pointer('pointerup', 180, 170, window);
+        const release = new Event('touchend', { bubbles: true, cancelable: true });
+        Object.assign(release, { touches: [], changedTouches: [{ clientX: 180, clientY: 170 }] });
+        container.dispatchEvent(release);
+        const click = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
+        container.dispatchEvent(click);
+        expect(release.defaultPrevented).toBe(true);
+        expect(click.defaultPrevented).toBe(true);
+        expect(nativeTap).not.toHaveBeenCalled();
+        expect(video.play).toHaveBeenCalledOnce();
+      } finally {
+        document.removeEventListener('click', nativeTap, true);
+        document.removeEventListener('touchend', nativeTap, true);
+      }
+    });
+
+    it.each(['fresh input', 'keyboard', 'timeout', 'source', 'handback'])(
+      'does not suppress unrelated clicks after a scrub (%s)',
+      (reason) => {
+        pointer('pointerdown');
+        pointer('pointermove', 180);
+        pointer('pointerup', 180, 170, window);
+        if (reason === 'fresh input') {
+          pointer('pointerdown', 140, 170, document.body, 8);
+        }
+        if (reason === 'timeout') {
+          vi.advanceTimersByTime(1001);
+        }
+        if (reason === 'source') {
+          video.src = 'https://example.test/new.mp4';
+        }
+        if (reason === 'handback') {
+          player.setOwned(false);
+        }
+        const click = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          detail: reason === 'keyboard' ? 0 : 1,
+        });
+        cover.dispatchEvent(click);
+        expect(click.defaultPrevented).toBe(false);
+      }
+    );
+
     it.each(['video', 'audio', 'iframe'])(
       'rejects a recycled scope containing another %s',
       (tag) => {

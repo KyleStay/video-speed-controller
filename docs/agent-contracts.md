@@ -340,6 +340,13 @@ with direct `chrome.*` access.
   treat cross-origin frames as inaccessible; never assume `parentElement`
   exists — site handlers fall back to the media's own parent
   (`VideoController.insertIntoDOM`).
+- **Generic native seeking**: retain the full `[0, duration]` timeline for finite
+  recordings. For unbounded or unavailable duration, read the latest valid native
+  `seekable` range on each input and clamp to that window. Never invent a target
+  without finite current time, finite input and usable bounds. Contain timing
+  getter/setter failures during source changes. Domain-specific seek bridges
+  retain their own contracts. The local media-profile suite covers real decoded
+  MediaSource playback with a moving window and subsequent recording handoff.
 - **Shortcut capture**: the keydown listener attaches on `window` (capture
   phase), not `document` — `window` is the top of the capture chain, so a
   `document_start` listener stays ahead of page-level handlers a site
@@ -617,9 +624,16 @@ with direct `chrome.*` access.
   styles; handback/cleanup restores marker intent and removes the style/listeners.
   Unknown inline overlays use a separate gesture-only scope: at most eight
   picture-sized ancestors, exactly one video and no audio/iframe. Revalidate on
-  input; preserve independent controls, unrelated dialogs, links, vertical scroll
+  input; preserve independent controls, unrelated dialogs, vertical scroll
   and pinch. A site's video dialog may own its picture; theater overlays outside
   a recognized player use the enclosing validated gesture scope.
+  Full-picture navigation links may commit a drag; ordinary link taps and download
+  links retain page behavior. A committed drag isolates its terminal touch and
+  compatibility click at window capture, including retargeted releases. This
+  source/session-scoped guard ends on fresh input, pagehide or cleanup, and expires
+  one second after release. Cancellation disables click suppression but retains
+  terminal-touch isolation until the remaining fingers lift. Outside lifts and
+  keyboard clicks remain available to the page.
   Fallback picture taps share menu dismissal/reveal with the video. Recheck the
   same scope, media uniqueness and current hit at the original touch point before
   committing a fallback drag; source/session checks run again afterward. Player

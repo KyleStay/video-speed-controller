@@ -52,13 +52,31 @@ class BaseSiteHandler {
    * @returns {boolean} True if handled, false for default behavior
    */
   handleSeek(video, seekSeconds) {
-    // Default implementation - use standard seeking with bounds checking (original logic)
-    if (video.currentTime !== undefined && video.duration) {
-      const newTime = Math.max(0, Math.min(video.duration, video.currentTime + seekSeconds));
-      video.currentTime = newTime;
-    } else {
-      // Fallback for videos without duration
-      video.currentTime += seekSeconds;
+    try {
+      const position = video.currentTime;
+      const target = position + seekSeconds;
+      if (!Number.isFinite(position) || !Number.isFinite(seekSeconds) || !Number.isFinite(target)) {
+        return true;
+      }
+      let start = 0;
+      let end = video.duration;
+      if (!Number.isFinite(end) || end <= 0) {
+        // Live timelines move; use the newest complete native window per input.
+        const ranges = video.seekable;
+        const index = ranges.length - 1;
+        if (index < 0) {
+          return true;
+        }
+        start = ranges.start(index);
+        end = ranges.end(index);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+          return true;
+        }
+      }
+      video.currentTime = Math.max(start, Math.min(end, target));
+    } catch {
+      // A source can lose native timing between the read and the seek write.
+      return false;
     }
     return true;
   }

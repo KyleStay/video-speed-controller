@@ -19,11 +19,30 @@ class IOSPlayerGestures {
     this.surfaceTouchCommitted = false;
     this.trailingTouchView = null;
     this.trailingTouchTarget = null;
-    this.onOutsideTouchEnd = (event) => {
-      if (!event.touches?.length && !event.composedPath().includes(this.trailingTouchTarget)) {
+    this.trailingScope = null;
+    this.trailingClick = false;
+    this.trailingSource = null;
+    this.trailingSession = null;
+    this.trailingTimer = null;
+    this.onOutsideTouchEnd = (event) => this.endNativeTouch(event);
+    this.onTrailingClick = (event) => {
+      if (!this.currentTrailingTouch() || !this.trailingClick || event.detail === 0) {
+        return;
+      }
+      if (this.isTrailingTarget(event)) {
+        this.claim(event);
+        this.suppressClick = false;
         this.clearTrailingTouch();
       }
     };
+    this.onFreshPointer = () => {
+      if (this.surfaceTouchCommitted && this.points.size > 0) {
+        return; // A second finger cancels seeking, but its touch releases still belong to this drag.
+      }
+      this.suppressClick = false;
+      this.clearTrailingTouch();
+    };
+    this.onTrailingPageHide = () => this.clearTrailingTouch();
     this.onNativeMove = (event) => this.preventNativeScroll(event);
     this.onNativeEnd = (event) => this.endNativeTouch(event);
     this.onDown = (event) => this.down(event);
@@ -192,31 +211,89 @@ class IOSPlayerGestures {
   }
 
   endNativeTouch(event) {
-    if (!this.surfaceTouchCommitted) {
+    if (!this.surfaceTouchCommitted || !this.currentTrailingTouch()) {
       return;
     }
     // Pointer-up finishes seeking before the browser delivers touchend. A site
     // tap recognizer must not reinterpret that committed drag as Play/Pause.
-    this.claim(event);
-    if (!event.touches?.length) {
-      this.clearTrailingTouch();
+    if (this.isTrailingTarget(event)) {
+      this.claim(event);
     }
+    if (!event.touches?.length) {
+      this.surfaceTouchCommitted = false;
+      if (event.type === 'touchcancel' || !this.trailingClick) {
+        this.clearTrailingTouch();
+      }
+    }
+  }
+
+  isTrailingTarget(event) {
+    const path = event.composedPath();
+    const target = event.target;
+    return (
+      path.includes(this.stage) ||
+      path.includes(this.trailingTouchTarget) ||
+      path.includes(this.trailingScope) ||
+      (!target?.matches?.('body,html') &&
+        (target?.contains?.(this.stage) || target?.contains?.(this.trailingTouchTarget)))
+    );
+  }
+
+  currentTrailingTouch() {
+    try {
+      if (
+        this.trailingTouchView &&
+        this.owner.active &&
+        this.owner.session === this.trailingSession &&
+        this.owner.ui?.stage === this.stage &&
+        this.owner.scrubber?.matchesSource(this.trailingSource)
+      ) {
+        return true;
+      }
+    } catch {
+      // A source or presentation can disappear during input dispatch.
+    }
+    this.clearTrailingTouch();
+    return false;
   }
 
   clearTrailingTouch() {
     this.trailingTouchView?.removeEventListener('touchend', this.onOutsideTouchEnd, true);
     this.trailingTouchView?.removeEventListener('touchcancel', this.onOutsideTouchEnd, true);
+    this.trailingTouchView?.removeEventListener('click', this.onTrailingClick, true);
+    this.trailingTouchView?.removeEventListener('pointerdown', this.onFreshPointer, true);
+    this.trailingTouchView?.removeEventListener('pagehide', this.onTrailingPageHide, true);
+    if (this.trailingTimer !== null) {
+      this.trailingTouchView?.clearTimeout(this.trailingTimer);
+    }
+    this.trailingTimer = null;
     this.trailingTouchView = null;
     this.trailingTouchTarget = null;
+    this.trailingScope = null;
+    this.trailingClick = false;
+    this.trailingSource = null;
+    this.trailingSession = null;
     this.surfaceTouchCommitted = false;
   }
 
-  finishScrub() {
+  finishScrub(cancelled = false) {
     this.points.clear();
     this.clearTapChain();
     this.scrubStart = null;
     this.lastTouchAt = this.now();
     this.suppressClick = true;
+    this.trailingClick = !cancelled;
+    if (!this.currentTrailingTouch()) {
+      return;
+    }
+    if (!cancelled) {
+      // Keep only this gesture's compatibility click, even when capture
+      // retargets the release. Fresh input and cleanup end the guard sooner.
+      this.trailingTimer = this.trailingTouchView.setTimeout(() => {
+        this.suppressClick = false;
+        this.clearTrailingTouch();
+      }, 1000);
+    }
   }
 
   startScrub(event) {
@@ -257,13 +334,20 @@ class IOSPlayerGestures {
     this.suppressClick = true;
     this.surfaceTouchCommitted = true;
     this.trailingTouchTarget = event.target;
+    this.trailingScope = event.currentTarget;
+    this.trailingClick = true;
     this.trailingTouchView = this.owner.view;
+    this.trailingSource = start.source;
+    this.trailingSession = start.session;
     for (const type of ['touchend', 'touchcancel']) {
       this.trailingTouchView?.addEventListener(type, this.onOutsideTouchEnd, {
         capture: true,
-        passive: true,
+        passive: false,
       });
     }
+    this.trailingTouchView?.addEventListener('click', this.onTrailingClick, true);
+    this.trailingTouchView?.addEventListener('pointerdown', this.onFreshPointer, true);
+    this.trailingTouchView?.addEventListener('pagehide', this.onTrailingPageHide, true);
     return true;
   }
 

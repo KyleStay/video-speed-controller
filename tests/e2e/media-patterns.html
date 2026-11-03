@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' chrome-extension: moz-extension: safari-web-extension:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; frame-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Local media patterns</title>
+    <style>
+      body {
+        max-width: 720px;
+        margin: 24px auto;
+        padding: 0 12px;
+        font: 16px system-ui;
+      }
+      button,
+      textarea {
+        min-height: 44px;
+        font: inherit;
+      }
+      button {
+        margin: 4px;
+      }
+      article {
+        margin: 16px 0;
+        padding: 12px;
+        border: 1px solid #aaa;
+      }
+      .player {
+        position: relative;
+        width: 100%;
+        max-width: 640px;
+      }
+      video,
+      iframe {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+      }
+      iframe {
+        height: 600px;
+        border: 1px solid #aaa;
+      }
+      .thumbnail {
+        width: 160px;
+        height: 90px;
+        background: #ddd;
+      }
+      textarea {
+        display: block;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Local media patterns</h1>
+    <main></main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const layout = params.get('layout') || 'board';
+      const main = document.querySelector('main');
+      const format = params.has('mp4') ? 'mp4' : 'webm';
+      const source = (asset, rendition = 'base') =>
+        `/sample.${format}?asset=${asset}&rendition=${rendition}`;
+      function media(id, asset) {
+        const video = document.createElement('video');
+        video.id = id;
+        video.controls = video.loop = video.muted = video.playsInline = true;
+        video.preload = 'auto';
+        const child = document.createElement('source');
+        child.src = source(asset);
+        child.type = `video/${format}`;
+        const track = document.createElement('track');
+        track.kind = 'captions';
+        track.label = 'Example captions';
+        track.srclang = 'en';
+        track.src = '/mock-captions.vtt';
+        video.append(child, track);
+        return video;
+      }
+      if (layout === 'board') {
+        for (const id of [1, 2]) {
+          const post = document.createElement('article');
+          post.innerHTML = `<h2>Attachment ${id}</h2>
+            <button id="expand-${id}"><span class="thumbnail">Open clip</span></button>
+            <button id="collapse-${id}" hidden>Collapse</button>
+            <a href="${source(id)}" download>Save clip</a><div class="player"></div>`;
+          const expand = post.querySelector(`#expand-${id}`);
+          const collapse = post.querySelector(`#collapse-${id}`);
+          expand.addEventListener('click', () => {
+            post.querySelector('.player').append(media(`clip-${id}`, id));
+            expand.hidden = true;
+            collapse.hidden = false;
+          });
+          collapse.addEventListener('click', () => {
+            const video = post.querySelector('video');
+            video.pause();
+            video.remove();
+            expand.hidden = false;
+            collapse.hidden = true;
+          });
+          main.append(post);
+        }
+        const reply = document.createElement('textarea');
+        reply.id = 'reply';
+        reply.setAttribute('aria-label', 'Reply');
+        main.append(reply);
+      } else if (layout === 'watch' || layout === 'portal') {
+        main.innerHTML = `<div class="player ${layout === 'watch' ? 'video-js' : 'jwplayer'}">
+          <div class="${layout === 'watch' ? 'vjs-control-bar' : 'jw-controls'}">
+            <button id="site-play">Play or pause</button><button id="quality">Change quality</button>
+          </div></div>
+          <button id="skip-preview">Skip preview</button><button id="next">Next clip</button>
+          <a id="details" href="#details">Clip details</a><p id="status" role="status">Preview</p>`;
+        const player = main.querySelector('.player');
+        const status = main.querySelector('#status');
+        let asset = 0;
+        let rendition = 0;
+        const replace = () => {
+          const old = player.querySelector('video');
+          if (old) {
+            old.pause();
+            old.remove();
+          }
+          player.prepend(media('watch-video', asset));
+          status.textContent = asset ? `Clip ${asset}` : 'Preview';
+        };
+        replace();
+        main.querySelector('#site-play').addEventListener('click', () => {
+          const video = player.querySelector('video');
+          if (video.paused)
+            video.play().catch((error) => {
+              status.textContent = error.name;
+            });
+          else video.pause();
+        });
+        main.querySelector('#quality').addEventListener('click', () => {
+          const video = player.querySelector('video');
+          const resume = !video.paused;
+          video.querySelector('source').src = source(asset, ++rendition);
+          video.load();
+          if (resume)
+            video.play().catch((error) => {
+              status.textContent = error.name;
+            });
+        });
+        for (const id of ['skip-preview', 'next']) {
+          main.querySelector(`#${id}`).addEventListener('click', () => {
+            asset++;
+            replace();
+            main.querySelector('#skip-preview').hidden = true;
+            history.replaceState(
+              {},
+              '',
+              `?layout=${layout}&clip=${asset}${params.has('mp4') ? '&mp4' : ''}`
+            );
+          });
+        }
+      } else if (layout === 'embed') {
+        main.innerHTML =
+          '<button id="open-embed">Load embedded clip</button><button id="close-embed">Remove embedded clip</button>';
+        const port = params.get('framePort') || location.port;
+        main.querySelector('#open-embed').addEventListener('click', () => {
+          if (
+            !/^\d+$/.test(port) ||
+            Number(port) < 1 ||
+            Number(port) > 65535 ||
+            main.querySelector('iframe')
+          )
+            return;
+          const frame = document.createElement('iframe');
+          frame.title = 'Local embedded player';
+          frame.allowFullscreen = true;
+          frame.src = `http://127.0.0.1:${port}/media-patterns.html?layout=watch${params.has('mp4') ? '&mp4' : ''}`;
+          main.append(frame);
+        });
+        main
+          .querySelector('#close-embed')
+          .addEventListener('click', () => main.querySelector('iframe')?.remove());
+      } else {
+        main.textContent = 'Unknown local layout';
+      }
+    </script>
+  </body>
+</html>
