@@ -840,8 +840,21 @@ export function summarizePlaybackObservations(record, verifiedEvidence = {}) {
         totals.every(finite) &&
         totals.every((value, at) => at === 0 || value >= totals[at - 1])
       ) {
+        // A closing frame cannot certify continuity through the preceding hole.
+        let lastProgressMs = before.elapsedMs;
+        let maximumCounterGapMs = 0;
+        for (let at = 1; at < during.length; at++) {
+          if (totals[at] > totals[at - 1]) {
+            maximumCounterGapMs = Math.max(
+              maximumCounterGapMs,
+              during[at].elapsedMs - lastProgressMs
+            );
+            lastProgressMs = during[at].elapsedMs;
+          }
+        }
+        maximumCounterGapMs = Math.max(maximumCounterGapMs, after.elapsedMs - lastProgressMs);
         classification =
-          totals.at(-1) > totals[0]
+          maximumCounterGapMs < 150
             ? 'counter-progress-during-callback-hole'
             : 'no-observed-counter-progress';
       }
