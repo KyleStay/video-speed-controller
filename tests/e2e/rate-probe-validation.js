@@ -652,6 +652,7 @@ export function summarizePlaybackObservations(record, verifiedEvidence = {}) {
   const positiveDisplacements = [];
   const naturalWraps = [];
   const wrapTimesMs = [];
+  const wrapObservations = [];
   const counterResets = [];
   const counterAdvances = {
     totalVideoFrames: 0,
@@ -685,6 +686,7 @@ export function summarizePlaybackObservations(record, verifiedEvidence = {}) {
       nativeAdvance += delta + period;
       actualWraps++;
       wrapTimesMs.push(current.elapsedMs);
+      wrapObservations.push(current);
       naturalWraps.push({
         fromMs: previous.elapsedMs,
         toMs: current.elapsedMs,
@@ -731,6 +733,7 @@ export function summarizePlaybackObservations(record, verifiedEvidence = {}) {
     ) {
       actualWraps++;
       wrapTimesMs.push(current.elapsedMs);
+      wrapObservations.push(current);
     }
   }
   const rawFrameAdvance = frames.reduce((sum, frame, index) => {
@@ -875,12 +878,13 @@ export function summarizePlaybackObservations(record, verifiedEvidence = {}) {
     frameRate: frameAdvance / (elapsedMs / 1000),
     actualWraps,
     wrapTimesMs,
-    postWrapFrameProgress: wrapTimesMs.map((atMs) =>
+    postWrapFrameProgress: wrapObservations.map((wrap) =>
       currentFrames.some((frame, index) => {
         const before = currentFrames[index - 1];
         return (
           before &&
-          before.elapsedMs > atMs &&
+          before.elapsedMs > wrap.elapsedMs &&
+          sameEpoch(before, wrap) &&
           sameEpoch(before, frame) &&
           !before.seeking &&
           !frame.seeking &&
@@ -933,6 +937,9 @@ export function validateLiveRateProbeReport(report, requirements = {}, verifiedE
       matches.length !== 1 ||
       !summary.valid ||
       summary.elapsedMs < minimumDurationMs ||
+      summary.callbackGaps.some(
+        (gap) => gap.classification !== 'counter-progress-during-callback-hole'
+      ) ||
       !Number.isFinite(summary.terminalNativeRate) ||
       Math.abs(summary.terminalNativeRate / requested - 1) > 0.001 ||
       summary.actualWraps < minimumWraps ||
@@ -941,7 +948,7 @@ export function validateLiveRateProbeReport(report, requirements = {}, verifiedE
       Math.abs(summary.frameRate / requested - 1) > 0.1
     ) {
       failures.push(
-        `${requested}x: incomplete window/wraps or incorrect signed native/presented progress`
+        `${requested}x: incomplete window/wraps, unexplained gaps or incorrect signed native/presented progress`
       );
     }
     return { requested, summary };

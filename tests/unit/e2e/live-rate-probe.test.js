@@ -235,6 +235,52 @@ describe('signed live playback accounting', () => {
     ).toBe(false);
   });
 
+  it('does not use a replacement asset to prove post-wrap progress', () => {
+    const raw = observation(4);
+    raw.observations.forEach((item) => {
+      item.uiTime = item.nativeTime % 15;
+      item.duration = 15;
+      if (item.elapsedMs >= 18900) {
+        item.sourceIdentity = 'replacement-asset';
+        item.sourceEpoch = 1;
+        item.targetEpoch = 1;
+      }
+    });
+    raw.frames = raw.observations
+      .filter((item) => item.elapsedMs <= 18700 || item.elapsedMs >= 18900)
+      .map((item, index) => ({ ...item, mediaTime: item.nativeTime, presentedFrames: index * 3 }));
+    const summary = summarizePlaybackObservations(raw);
+    expect(summary.actualWraps).toBe(5);
+    expect(summary.postWrapFrameProgress[4]).toBe(false);
+    expect(
+      validateLiveRateProbeReport(report(4, raw), { rates: [4], shortLoop: true }).passed
+    ).toBe(false);
+  });
+
+  it('rejects an observed startup freeze even when later overspeed compensates the average', () => {
+    const raw = observation(4);
+    raw.observations.forEach((item) => {
+      const advancingMs = Math.max(0, item.elapsedMs - 10000);
+      item.nativeTime = item.uiTime = advancingMs * 0.008;
+      item.paused = item.elapsedMs < 10000;
+      item.rate = item.elapsedMs < 10000 || item.elapsedMs === 20000 ? 4 : 8;
+      item.quality.totalVideoFrames = advancingMs / 10;
+    });
+    raw.frames = raw.observations
+      .filter((item) => item.elapsedMs >= 10000)
+      .map((item, index) => ({ ...item, mediaTime: item.nativeTime, presentedFrames: index * 3 }));
+    const result = validateLiveRateProbeReport(report(4, raw), { rates: [4] });
+    expect(result.samples[0].summary).toMatchObject({
+      nativeRate: 4,
+      frameRate: 4,
+      initialFrameGapMs: 10000,
+    });
+    expect(result.samples[0].summary.callbackGaps[0].classification).toBe(
+      'no-observed-counter-progress'
+    );
+    expect(result.passed).toBe(false);
+  });
+
   it('does not turn frame counter resets into negative or huge decoded throughput', () => {
     const raw = observation();
     raw.observations[1].quality.totalVideoFrames = 999;
@@ -288,6 +334,7 @@ describe('signed live playback accounting', () => {
     expect(summarizePlaybackObservations(raw).callbackGaps[0].classification).toBe(
       'counter-progress-during-callback-hole'
     );
+    expect(validateLiveRateProbeReport(report(2.1, raw), { rates: [2.1] }).passed).toBe(true);
     raw.observations.forEach((item) => {
       item.quality.totalVideoFrames = 0;
     });

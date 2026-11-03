@@ -42,6 +42,8 @@ need at least twenty seconds; short loops need five observed wraps and subsequen
 advancement. Native prototype clocks, UI time, frame timestamps/counters, source/seek
 epochs and handoff positions remain separate. Callback holes alone do not prove a
 decoder stall, and near-requested endpoint averages do not establish smooth output.
+Callback gaps of 150 ms or more remain incomplete unless sampled counters show
+progress. Post-wrap frame advancement must belong to that wrap's source and epochs.
 The six-second seven-rate fixture remains a structural regression only.
 Cached-head exclusion is available only to a caller that independently verifies
 the prior raw tail. The acceptance CLI currently supplies no such certificate;
