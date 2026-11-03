@@ -29,6 +29,35 @@ window.VSC = window.VSC || {};
     }
     return descriptor?.value;
   };
+  const noDownload = (object) =>
+    object &&
+    own(object, 'downloadUrl') === undefined &&
+    (Object.hasOwn(object, 'downloadUrl') || !('downloadUrl' in object));
+  const loopEligible = (object) => {
+    if (own(object, 'forceLoop') === true || own(object, 'loop') === true) {
+      return true;
+    }
+    const duration = own(object, 'durationMs'),
+      threshold = own(object, 'loopingThresholdMs');
+    return (
+      Number.isFinite(duration) &&
+      duration > 0 &&
+      Number.isFinite(threshold) &&
+      threshold >= duration
+    );
+  };
+  const unlimitedLoop = (props, content, selected) =>
+    own(props, 'loop') === true ||
+    [content, selected].every(
+      (object) =>
+        loopEligible(object) &&
+        ['maxLoopCount', 'maxLoopingThresholdSeconds'].every((key) => {
+          const limit = Object.getOwnPropertyDescriptor(object, key);
+          return limit
+            ? Object.hasOwn(limit, 'value') && (limit.value === null || limit.value === undefined)
+            : !(key in object);
+        })
+    );
   const clear = (object) => {
     if (!object || typeof object !== 'object') {
       return false;
@@ -147,7 +176,161 @@ window.VSC = window.VSC || {};
     );
   }
 
-  function nativeSafe(video, doc, originalUrl, identityOnly = false, sourceBinding = null) {
+  // Bind the original caption state; presentation also permits an empty track set.
+  function captionRoleFor(video, purpose = 'loop') {
+    const tracks = video.textTracks,
+      nodes = video.querySelectorAll('track'),
+      audio = video.audioTracks;
+    const noCaptions = purpose === 'presentation' && tracks?.length === 0 && nodes.length === 0;
+    const count = noCaptions ? 0 : 1;
+    if (tracks?.length !== count || nodes.length !== count || audio?.length !== 1) {
+      return null;
+    }
+    const track = noCaptions ? null : tracks[0],
+      node = noCaptions ? null : nodes[0],
+      audioTrack = audio[0],
+      duration = video.duration;
+    const values = (object, keys) =>
+      keys.every((key) => {
+        const field = Object.getOwnPropertyDescriptor(object, key);
+        return !field || Object.hasOwn(field, 'value');
+      });
+    if (
+      (!noCaptions && !values(track, ['kind', 'language', 'label', 'mode'])) ||
+      !values(audioTrack, ['enabled'])
+    ) {
+      return null;
+    }
+    const language = track?.language,
+      label = track?.label;
+    if (
+      (!noCaptions &&
+        (track.kind !== 'subtitles' ||
+          track.mode !== 'showing' ||
+          typeof language !== 'string' ||
+          !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language) ||
+          typeof label !== 'string' ||
+          !label.trim() ||
+          label.length > 256 ||
+          node.parentElement !== video ||
+          node.track !== track ||
+          node.getAttribute('src') !== 'data:,WEBVTT' ||
+          node.kind !== 'subtitles' ||
+          node.srclang !== language ||
+          node.label !== label ||
+          node.attributes.length > 8)) ||
+      audioTrack.enabled !== true ||
+      !Number.isFinite(duration) ||
+      duration < 1 ||
+      duration > (purpose === 'presentation' ? 3600 : 60)
+    ) {
+      return null;
+    }
+    const attributes = node ? Array.from(node.attributes, ({ name, value }) => [name, value]) : [];
+    const metadataShape = (metadata) => {
+      if (!metadata || typeof metadata !== 'object') {
+        return null;
+      }
+      const keys = Reflect.ownKeys(metadata);
+      if (keys.length > 16 || (!keys.includes('captionInsets') && 'captionInsets' in metadata)) {
+        return null;
+      }
+      const fields = [];
+      for (const key of keys) {
+        const field = Object.getOwnPropertyDescriptor(metadata, key);
+        if (!field || !Object.hasOwn(field, 'value')) {
+          return null;
+        }
+        // The SDK replaces this presentation field without changing captions.
+        if (key !== 'captionInsets') {
+          fields.push([key, field.value, field.enumerable, field.configurable, field.writable]);
+        }
+      }
+      return { prototype: Object.getPrototypeOf(metadata), fields };
+    };
+    const sameMetadata = (left, right) =>
+      left.prototype === right.prototype &&
+      left.fields.length === right.fields.length &&
+      left.fields.every(([key, ...values]) => {
+        const next = right.fields.find(([name]) => name === key);
+        return next && values.every((value, index) => Object.is(value, next[index + 1]));
+      });
+    let metadata, entries, record;
+    const role = {
+      purpose,
+      track,
+      node,
+      language,
+      label,
+      duration,
+      nativeCurrent() {
+        return (
+          video.textTracks === tracks &&
+          tracks.length === count &&
+          video.querySelectorAll('track').length === count &&
+          (noCaptions ||
+            (tracks[0] === track &&
+              node.parentElement === video &&
+              node.track === track &&
+              node.attributes.length === attributes.length &&
+              attributes.every(([name, value]) => node.getAttribute(name) === value) &&
+              values(track, ['kind', 'language', 'label', 'mode']) &&
+              track.kind === 'subtitles' &&
+              track.language === language &&
+              track.label === label &&
+              track.mode === 'showing')) &&
+          (purpose !== 'presentation' || video.loop === false) &&
+          video.duration === duration &&
+          video.audioTracks === audio &&
+          audio.length === 1 &&
+          audio[0] === audioTrack &&
+          values(audioTrack, ['enabled']) &&
+          audioTrack.enabled === true
+        );
+      },
+      sdkCurrent(state) {
+        const nextMetadata = own(state, 'textTracks'),
+          nextShape = metadataShape(nextMetadata),
+          nextEntries = own(nextMetadata, 'tracks'),
+          nextRecord = noCaptions ? null : own(nextEntries, '0');
+        if (
+          !nextShape ||
+          !Array.isArray(nextEntries) ||
+          own(nextEntries, 'length') !== count ||
+          (purpose === 'presentation' && !relayClear(nextMetadata)) ||
+          (!noCaptions &&
+            (!nextRecord ||
+              Reflect.ownKeys(nextRecord).length !== 4 ||
+              own(nextRecord, 'id') !== 0 ||
+              own(nextRecord, 'kind') !== 'subtitles' ||
+              own(nextRecord, 'language') !== language ||
+              own(nextRecord, 'label') !== label))
+        ) {
+          return false;
+        }
+        if (!entries) {
+          metadata = nextShape;
+          entries = nextEntries;
+          record = nextRecord;
+        }
+        return (
+          sameMetadata(metadata, nextShape) && entries === nextEntries && record === nextRecord
+        );
+      },
+    };
+    return role.nativeCurrent() ? role : null;
+  }
+
+  function nativeSafe(
+    video,
+    doc,
+    originalUrl,
+    identityOnly = false,
+    sourceBinding = null,
+    captionRole = null,
+    readyFloor = 2
+  ) {
+    const captionCurrent = !captionRole || captionRole.nativeCurrent();
     const page = new URL(doc.URL);
     const current = video.currentSrc || video.src;
     const blob = new URL(current);
@@ -162,9 +345,9 @@ window.VSC = window.VSC || {};
       blob.href === current &&
       (!originalUrl || originalUrl === current) &&
       assignedSourceCurrent(video, current, sourceBinding) &&
-      // Seeking the retained producer can temporarily drop decoded readiness.
-      // Its loaded metadata and exact SDK/source identity still permit handback.
-      video.readyState >= (identityOnly ? 1 : 2) &&
+      // A retained producer seek can temporarily drop decoded readiness.
+      // Lower readiness still requires every full capability check below.
+      video.readyState >= (identityOnly ? 1 : readyFloor) &&
       Number.isFinite(video.duration) &&
       video.duration > 0 &&
       Number.isFinite(video.currentTime) &&
@@ -172,8 +355,9 @@ window.VSC = window.VSC || {};
       (identityOnly ||
         (!video.mediaKeys &&
           !video.webkitKeys &&
-          video.textTracks?.length === 0 &&
-          video.querySelectorAll('track').length === 0 &&
+          (captionRole
+            ? captionCurrent
+            : video.textTracks?.length === 0 && video.querySelectorAll('track').length === 0) &&
           !(video.audioTracks?.length > 1) &&
           !(video.videoTracks?.length > 1)))
     );
@@ -196,6 +380,200 @@ window.VSC = window.VSC || {};
       }
     }
     return found || portal;
+  }
+
+  function fullscreenBoundary(video, binding, companion, current) {
+    const doc = video.ownerDocument;
+    const root = doc.documentElement;
+    const url = doc.URL;
+    const controller = own(binding.sdk, 'controller');
+    const data = (object, key) => {
+      const value = own(object, key);
+      if (object && !Object.hasOwn(object, key) && key in Object(object)) {
+        throw Error('Inherited group data');
+      }
+      return value;
+    };
+    const method = (object, key) => {
+      const seen = new Set();
+      for (let depth = 0; object && depth < 4; depth++, object = Object.getPrototypeOf(object)) {
+        if (seen.has(object)) {
+          throw Error('Group prototype cycle');
+        }
+        seen.add(object);
+        if (Object.getOwnPropertyDescriptor(object, key)) {
+          return own(object, key);
+        }
+      }
+    };
+    const read = () => {
+      const reads = [],
+        maps = [],
+        fibers = new Set(),
+        registries = new Set();
+      let contexts = 0,
+        entriesRead = 0,
+        found;
+      const capture = (object, key) => {
+        const value = data(object, key);
+        reads.push([object, key, value]);
+        return value;
+      };
+      if (
+        capture(binding.sdk, 'controller') !== controller ||
+        capture(controller, 'api') !== binding.api ||
+        capture(binding.api, 'getMediaElement') !== binding.getMediaElement
+      ) {
+        return null;
+      }
+      for (const node of new Set([video.parentElement, binding.scope])) {
+        const keys = Object.getOwnPropertyNames(node);
+        if (keys.length > 64) {
+          return null;
+        }
+        for (const key of keys.filter((key) => key.startsWith('__reactFiber$'))) {
+          let fiber = capture(node, key);
+          const path = new Set();
+          while (fiber) {
+            if (path.has(fiber)) {
+              throw Error('Group fiber budget');
+            }
+            path.add(fiber);
+            if (fibers.has(fiber)) {
+              break;
+            }
+            if (fibers.size >= 24) {
+              break;
+            }
+            fibers.add(fiber);
+            let context = capture(capture(fiber, 'dependencies'), 'firstContext');
+            const seen = new Set();
+            while (context) {
+              if (seen.has(context) || ++contexts > 64) {
+                throw Error('Group context budget');
+              }
+              seen.add(context);
+              const value = capture(context, 'memoizedValue');
+              const registry = capture(value, 'registry');
+              if (registry !== undefined && !registries.has(registry)) {
+                registries.add(registry);
+                const entries = capture(registry, 'entries');
+                const notifyPlay = method(registry, 'notifyPlay');
+                const size = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(
+                  entries
+                );
+                if (typeof notifyPlay !== 'function' || size > 32 || entriesRead + size > 32) {
+                  return null;
+                }
+                const rows = [];
+                for (const [id, entry] of Map.prototype.entries.call(entries)) {
+                  if (++entriesRead > 32) {
+                    return null;
+                  }
+                  rows.push([id, entry]);
+                  const entryController = capture(entry, 'controller');
+                  const element = capture(entry, 'element');
+                  const instanceId = capture(entry, 'instanceId');
+                  const api = capture(entryController, 'api');
+                  if (
+                    typeof id !== 'string' ||
+                    !id ||
+                    id.length > 256 ||
+                    instanceId !== id ||
+                    (api === binding.api && entryController !== controller) ||
+                    (element instanceof doc.defaultView.HTMLElement &&
+                      element.contains(video) &&
+                      entryController !== controller)
+                  ) {
+                    return null;
+                  }
+                  if (entryController === controller) {
+                    if (found || api !== binding.api) {
+                      return null;
+                    }
+                    found = { registry, entries, entry, id, notifyPlay, element };
+                  }
+                }
+                maps.push([entries, size, rows]);
+              }
+              context = capture(context, 'next');
+            }
+            fiber = capture(fiber, 'return');
+          }
+        }
+      }
+      if (!found) {
+        return null;
+      }
+      const { element } = found;
+      const domCurrent = () =>
+        video.ownerDocument === doc &&
+        doc.documentElement === root &&
+        doc.URL === url &&
+        element instanceof doc.defaultView.HTMLElement &&
+        element !== video &&
+        element !== companion &&
+        element !== doc.body &&
+        element !== root &&
+        element.ownerDocument === doc &&
+        element.isConnected &&
+        element.contains(video) &&
+        mediaScopeSafe(element, video, companion, false);
+      const stable = () =>
+        reads.every(([object, key, value]) => data(object, key) === value) &&
+        maps.every(
+          ([entries, size, rows]) =>
+            Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(entries) === size &&
+            rows.every(([id, entry]) => Map.prototype.get.call(entries, id) === entry)
+        ) &&
+        method(found.registry, 'notifyPlay') === found.notifyPlay &&
+        domCurrent();
+      return { ...found, stable, parent: element.parentNode, originalParent: video.parentNode };
+    };
+    const initial = read();
+    if (!initial || !current() || !initial.stable()) {
+      return null;
+    }
+    const valid = () => {
+      try {
+        if (!current()) {
+          return false;
+        }
+        const next = read();
+        return Boolean(
+          next &&
+          [
+            'registry',
+            'entries',
+            'entry',
+            'id',
+            'notifyPlay',
+            'element',
+            'parent',
+            'originalParent',
+          ].every((key) => next[key] === initial[key]) &&
+          current() &&
+          next.stable()
+        );
+      } catch {
+        return false;
+      }
+    };
+    return {
+      element: initial.element,
+      current: valid,
+      activate() {
+        try {
+          if (!valid()) {
+            return false;
+          }
+          initial.notifyPlay.call(initial.registry, initial.id);
+          return valid();
+        } catch {
+          return false;
+        }
+      },
+    };
   }
 
   const relayClear = (value) =>
@@ -337,7 +715,8 @@ window.VSC = window.VSC || {};
       };
     });
     if (
-      !variants.some((item) => item.content_type === 'video/mp4' && item.url === download) ||
+      (download !== undefined &&
+        !variants.some((item) => item.content_type === 'video/mp4' && item.url === download)) ||
       reads.some(
         ([object, key, value]) =>
           own(object, key) !== value ||
@@ -357,7 +736,9 @@ window.VSC = window.VSC || {};
     companion,
     identityOnly = false,
     restored = false,
-    expectedDuration = video.duration
+    expectedDuration = video.duration,
+    requireUnlimitedLoop = false,
+    captionRole = null
   ) {
     const scope = scopeFor(video, originParent, restored);
     if (
@@ -369,24 +750,40 @@ window.VSC = window.VSC || {};
     }
     const fibers = [];
     const seen = new Set();
+    const captionReads = [],
+      captionRoots = [],
+      originalParent = video.parentElement;
+    const retain = (object, key, value = own(object, key)) => {
+      if (captionRole) {
+        captionReads.push([object, key, value]);
+      }
+      return value;
+    };
     for (const node of new Set([video.parentElement, scope])) {
       const keys = Object.getOwnPropertyNames(node);
       if (keys.length > 64) {
         return null;
       }
+      if (captionRole) {
+        captionRoots.push([node, keys.filter((key) => key.startsWith('__reactFiber$'))]);
+      }
       for (const key of keys) {
         if (!key.startsWith('__reactFiber$')) {
           continue;
         }
-        let fiber = own(node, key);
+        let fiber = retain(node, key);
         while (fiber && !seen.has(fiber) && fibers.length < 8) {
           seen.add(fiber);
           fibers.push(fiber);
-          fiber = own(fiber, 'return');
+          if (captionRole) {
+            retain(fiber, 'memoizedProps');
+            retain(fiber, 'memoizedState');
+          }
+          fiber = retain(fiber, 'return');
         }
       }
     }
-    let result;
+    let result, captionCurrent, captionVariants;
     for (const fiber of fibers) {
       let hook = own(fiber, 'memoizedState');
       const hooks = new Set();
@@ -395,16 +792,17 @@ window.VSC = window.VSC || {};
           return null;
         }
         hooks.add(hook);
-        const sdk = own(hook, 'memoizedState');
-        if (sdk && own(sdk, 'element') === video) {
-          const controller = own(sdk, 'controller');
-          const api = own(controller, 'api');
-          const store = own(sdk, 'store');
-          const getMediaElement = own(api, 'getMediaElement');
-          const getState = own(api, 'getState');
-          const getSnapshot = own(store, 'getSnapshot');
-          const subscribe = own(store, 'subscribe');
-          const seekTo = own(api, 'seekTo');
+        const sdk = retain(hook, 'memoizedState');
+        const nextHook = captionRole ? retain(hook, 'next') : undefined;
+        if (sdk && retain(sdk, 'element') === video) {
+          const controller = retain(sdk, 'controller');
+          const api = retain(controller, 'api');
+          const store = retain(sdk, 'store');
+          const getMediaElement = retain(api, 'getMediaElement');
+          const getState = retain(api, 'getState');
+          const getSnapshot = retain(store, 'getSnapshot');
+          const subscribe = retain(store, 'subscribe');
+          const seekTo = retain(api, 'seekTo');
           if (
             typeof getMediaElement !== 'function' ||
             getMediaElement.call(api) !== video ||
@@ -421,51 +819,55 @@ window.VSC = window.VSC || {};
           if (snapshot !== state) {
             return null;
           }
-          const props = own(fiber, 'memoizedProps');
-          const content = own(props, 'content');
-          const selected = own(state, 'content');
-          const sourceUrl = own(sdk, 'src');
-          const source = own(state, 'source');
+          const props = retain(fiber, 'memoizedProps');
+          const content = retain(props, 'content');
+          const selected = retain(state, 'content');
+          const sourceUrl = retain(sdk, 'src');
+          const source = retain(state, 'source');
           const sourceAsset = asset(sourceUrl, 'hls');
-          const contentId = own(content, 'contentId');
-          const post = own(content, 'sourceId');
-          const hostKey = own(props, 'hostKey');
-          const sessionId = own(own(state, 'session'), 'id');
+          const contentId = retain(content, 'contentId');
+          const post = retain(content, 'sourceId');
+          const hostKey = retain(props, 'hostKey');
+          const sessionId = retain(retain(state, 'session'), 'id');
           if (
             !sourceAsset ||
             !id(contentId) ||
             sourceAsset.id !== contentId ||
             !id(post) ||
-            own(content, 'tweetId') !== post ||
+            retain(content, 'tweetId') !== post ||
             hostKey !== `${post}:${contentId}` ||
-            own(props, 'src') !== sourceUrl ||
-            own(content, 'mediaAssetUrl') !== sourceUrl ||
-            own(content, 'contentType') !== 'video' ||
-            own(content, 'sourceType') !== 'tweet' ||
-            own(selected, 'contentId') !== contentId ||
-            own(selected, 'sourceId') !== post ||
-            own(selected, 'tweetId') !== post ||
-            own(selected, 'mediaAssetUrl') !== sourceUrl ||
-            own(selected, 'contentType') !== 'video' ||
-            own(selected, 'sourceType') !== 'tweet' ||
-            own(source, 'kind') !== 'hls' ||
-            own(source, 'src') !== sourceUrl ||
+            retain(props, 'src') !== sourceUrl ||
+            retain(content, 'mediaAssetUrl') !== sourceUrl ||
+            retain(content, 'contentType') !== 'video' ||
+            retain(content, 'sourceType') !== 'tweet' ||
+            retain(selected, 'contentId') !== contentId ||
+            retain(selected, 'sourceId') !== post ||
+            retain(selected, 'tweetId') !== post ||
+            retain(selected, 'mediaAssetUrl') !== sourceUrl ||
+            retain(selected, 'contentType') !== 'video' ||
+            retain(selected, 'sourceType') !== 'tweet' ||
+            retain(source, 'kind') !== 'hls' ||
+            retain(source, 'src') !== sourceUrl ||
             typeof sessionId !== 'string' ||
             !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sessionId) ||
-            !near(own(content, 'durationMs') / 1000, expectedDuration) ||
-            !near(own(selected, 'durationMs') / 1000, expectedDuration) ||
-            !near(own(source, 'playlistDurationSec'), expectedDuration) ||
+            !near(retain(content, 'durationMs') / 1000, expectedDuration) ||
+            !near(retain(selected, 'durationMs') / 1000, expectedDuration) ||
+            !near(retain(source, 'playlistDurationSec'), expectedDuration) ||
             (!identityOnly && ![props, content, selected, source, state].every(clear))
           ) {
             return null;
           }
           for (const value of [state, snapshot]) {
-            const tracks = identityOnly ? null : own(own(value, 'textTracks'), 'tracks');
+            const tracks = identityOnly ? null : retain(retain(value, 'textTracks'), 'tracks');
             if (
-              (!identityOnly && (!Array.isArray(tracks) || tracks.length !== 0 || !clear(value))) ||
-              own(own(value, 'session'), 'id') !== sessionId ||
-              own(own(value, 'content'), 'contentId') !== contentId ||
-              own(own(value, 'source'), 'src') !== sourceUrl
+              (!identityOnly &&
+                (!clear(value) ||
+                  (captionRole
+                    ? !captionRole.sdkCurrent(value)
+                    : !Array.isArray(tracks) || tracks.length !== 0))) ||
+              retain(retain(value, 'session'), 'id') !== sessionId ||
+              retain(retain(value, 'content'), 'contentId') !== contentId ||
+              retain(retain(value, 'source'), 'src') !== sourceUrl
             ) {
               return null;
             }
@@ -485,18 +887,179 @@ window.VSC = window.VSC || {};
             contentId,
             sessionId,
             scope,
+            ...(captionRole ? { fiber, post } : {}),
           };
-          if (result && result.sdk !== sdk) {
+          if (result && (result.sdk !== sdk || (captionRole && result.fiber !== fiber))) {
             return null;
           }
           if (identityOnly) {
             result = binding;
-            hook = own(hook, 'next');
+            hook = retain(hook, 'next');
             continue;
           }
-          const loop = own(own(state, 'playback'), 'shouldLoop');
-          if (typeof loop !== 'boolean') {
+          const loop = retain(retain(state, 'playback'), 'shouldLoop');
+          // SDK shouldLoop can permit only a finite number of remaining repeats.
+          if (
+            typeof loop !== 'boolean' ||
+            (captionRole && loop !== (captionRole.purpose !== 'presentation')) ||
+            (requireUnlimitedLoop && loop && !unlimitedLoop(props, content, selected))
+          ) {
             return null;
+          }
+          // Presentation retains the renderer, so an alternative-source catalog is optional.
+          if (captionRole?.purpose === 'presentation') {
+            const owners = [sdk, controller, state, props, content, selected, source];
+            const claim = (object, key) => {
+              const value = retain(object, key);
+              if (object && !Object.hasOwn(object, key) && key in Object(object)) {
+                throw Error('Inherited native metadata');
+              }
+              return value;
+            };
+            const optional = (object, key, valid) => {
+              const value = claim(object, key);
+              return value === undefined || valid(value);
+            };
+            const sameAsset = (url, kind) => {
+              const parsed = asset(url, kind);
+              return parsed?.id === contentId && parsed.type === sourceAsset.type;
+            };
+            const owner = (object) => {
+              if (
+                !object ||
+                typeof object !== 'object' ||
+                Array.isArray(object) ||
+                !relayClear(object)
+              ) {
+                return false;
+              }
+              owners.push(object);
+              return (
+                [
+                  ['src', sourceUrl],
+                  ['mediaAssetUrl', sourceUrl],
+                  ['hostKey', hostKey],
+                  ['contentId', contentId],
+                  ['id_str', contentId],
+                  ['sourceId', post],
+                  ['tweetId', post],
+                  ['contentType', 'video'],
+                  ['sourceType', 'tweet'],
+                  ['content', content],
+                ].every(([key, expected]) =>
+                  optional(object, key, (value) => value === expected)
+                ) &&
+                ['durationMs', 'duration_millis'].every((key) =>
+                  optional(object, key, (value) => near(value / 1000, expectedDuration))
+                ) &&
+                ['downloadUrl', 'video_download_url'].every((key) =>
+                  optional(object, key, (value) => value === null || sameAsset(value, 'mp4'))
+                )
+              );
+            };
+            const child = (object, key) => {
+              const value = claim(object, key);
+              if (value === undefined || value === null || value === false) {
+                return null;
+              }
+              if (!owner(value)) {
+                throw Error('Native metadata contradiction');
+              }
+              return value;
+            };
+            for (const ancestor of fibers) {
+              const metadata = claim(ancestor, 'memoizedProps');
+              const keys = ['poppedOutSource', 'timeRemainingAccessory', 'downloadUrl'];
+              const values = keys.map((key) => claim(metadata, key));
+              if (!metadata || !keys.some((key) => Object.hasOwn(metadata, key))) {
+                continue;
+              }
+              if (!owner(metadata)) {
+                return null;
+              }
+              const popped = child(metadata, 'poppedOutSource');
+              if (popped) {
+                child(popped, 'playerProps');
+              }
+              const accessory = values[1];
+              if (accessory !== undefined && accessory !== null && accessory !== false) {
+                if (!owner(accessory)) {
+                  return null;
+                }
+                const uiProps = child(accessory, 'props');
+                const media = uiProps && child(uiProps, 'media');
+                const info = media && child(media, 'video_info');
+                const variants = info && claim(info, 'variants');
+                if (variants !== undefined && variants !== null && variants !== false) {
+                  const count = claim(variants, 'length');
+                  if (
+                    !Array.isArray(variants) ||
+                    !Number.isSafeInteger(count) ||
+                    count < 0 ||
+                    count > 8
+                  ) {
+                    return null;
+                  }
+                  for (let i = 0; i < count; i++) {
+                    const item = claim(variants, String(i));
+                    if (!owner(item)) {
+                      return null;
+                    }
+                    const type = claim(item, 'content_type'),
+                      url = claim(item, 'url');
+                    if (
+                      type === 'video/mp4'
+                        ? !sameAsset(url, 'mp4')
+                        : !['application/x-mpegURL', 'application/vnd.apple.mpegurl'].includes(
+                            type
+                          ) || !sameAsset(url, 'hls')
+                    ) {
+                      return null;
+                    }
+                  }
+                }
+              }
+            }
+            const doc = video.ownerDocument,
+              root = doc.documentElement,
+              url = doc.URL;
+            const nativeUrl = video.currentSrc || video.src,
+              assigned = video.getAttribute('src'),
+              poster = video.getAttribute('poster');
+            const stable = () =>
+              captionReads.every(
+                ([object, key, value]) =>
+                  own(object, key) === value &&
+                  !(object && !Object.hasOwn(object, key) && key in Object(object))
+              ) &&
+              owners.every(relayClear) &&
+              captionRole.nativeCurrent() &&
+              captionRole.sdkCurrent(state) &&
+              video.ownerDocument === doc &&
+              doc.documentElement === root &&
+              doc.URL === url &&
+              video.isConnected &&
+              (video.currentSrc || video.src) === nativeUrl &&
+              video.getAttribute('src') === assigned &&
+              video.getAttribute('poster') === poster &&
+              !video.srcObject &&
+              !video.mediaKeys &&
+              !video.webkitKeys &&
+              own(own(state, 'playback'), 'shouldLoop') === false;
+            captionCurrent = () =>
+              stable() &&
+              getState.call(api) === state &&
+              stable() &&
+              getSnapshot.call(store) === state &&
+              stable() &&
+              getMediaElement.call(api) === video &&
+              stable();
+            if (!captionCurrent()) {
+              return null;
+            }
+            result = { ...binding, loop, scope };
+            hook = nextHook;
+            continue;
           }
           let modern;
           const metadataSeen = new Set();
@@ -524,8 +1087,13 @@ window.VSC = window.VSC || {};
             !Object.getOwnPropertyDescriptor(modern, 'timeRemainingAccessory') &&
             !('timeRemainingAccessory' in modern)
           );
-          if (cached) {
-            // Without countdown UI, the same post's renditions live in Relay.
+          const missingDownload = cached && [modern, supplied].every(noDownload);
+          if (cached && download === undefined && !missingDownload) {
+            return null;
+          }
+          let current;
+          if (cached || captionRole) {
+            // Retain the metadata authority through the last rendition read.
             const doc = video.ownerDocument,
               root = doc.documentElement,
               url = doc.URL;
@@ -565,6 +1133,7 @@ window.VSC = window.VSC || {};
               [supplied, 'src', 'content', 'downloadUrl'],
             ].flatMap(([object, ...keys]) => keys.map((key) => [object, key, own(object, key)]));
             const stable = () =>
+              (!missingDownload || [modern, supplied].every(noDownload)) &&
               own(sdk, 'controller') === controller &&
               own(sdk, 'store') === store &&
               own(controller, 'api') === api &&
@@ -574,6 +1143,15 @@ window.VSC = window.VSC || {};
               own(store, 'getSnapshot') === getSnapshot &&
               own(store, 'subscribe') === subscribe &&
               fields.every(([object, key, value]) => own(object, key) === value) &&
+              (!captionRole ||
+                cached ||
+                (own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media') === media &&
+                  own(media, 'video_info') === info &&
+                  own(info, 'variants') === variants &&
+                  own(media, 'id_str') === contentId &&
+                  own(media, 'video_download_url') === download &&
+                  near(own(info, 'duration_millis') / 1000, expectedDuration) &&
+                  [media, info].every(relayClear))) &&
               video.ownerDocument === doc &&
               doc.documentElement === root &&
               doc.URL === url &&
@@ -584,8 +1162,9 @@ window.VSC = window.VSC || {};
               !video.srcObject &&
               !video.mediaKeys &&
               !video.webkitKeys &&
-              video.textTracks?.length === 0 &&
-              video.querySelectorAll('track').length === 0 &&
+              (captionRole
+                ? captionRole.nativeCurrent()
+                : video.textTracks?.length === 0 && video.querySelectorAll('track').length === 0) &&
               !(video.audioTracks?.length > 1) &&
               !(video.videoTracks?.length > 1) &&
               [
@@ -602,8 +1181,11 @@ window.VSC = window.VSC || {};
               ].every(relayClear) &&
               own(own(state, 'session'), 'id') === sessionId &&
               own(own(state, 'playback'), 'shouldLoop') === loop &&
-              own(own(state, 'textTracks'), 'tracks')?.length === 0;
-            const current = () =>
+              (!requireUnlimitedLoop || !loop || unlimitedLoop(props, content, selected)) &&
+              (captionRole
+                ? captionRole.sdkCurrent(state)
+                : own(own(state, 'textTracks'), 'tracks')?.length === 0);
+            current = () =>
               stable() &&
               getState.call(api) === state &&
               stable() &&
@@ -611,6 +1193,12 @@ window.VSC = window.VSC || {};
               stable() &&
               getMediaElement.call(api) === video &&
               stable();
+            if (captionRole) {
+              captionCurrent = current;
+            }
+          }
+          if (cached) {
+            // Without countdown UI, the same post's renditions live in Relay.
             if (!current()) {
               return null;
             }
@@ -619,7 +1207,7 @@ window.VSC = window.VSC || {};
               return null;
             }
           }
-          const variantCount = own(variants, 'length');
+          const variantCount = retain(variants, 'length');
           if (
             !modern ||
             ![modern, popped, supplied].every(clear) ||
@@ -627,14 +1215,15 @@ window.VSC = window.VSC || {};
             own(supplied, 'src') !== sourceUrl ||
             own(supplied, 'content') !== content ||
             own(supplied, 'downloadUrl') !== download ||
+            (missingDownload && ![modern, supplied].every(noDownload)) ||
             (!cached &&
               (!clear(media) ||
                 !clear(info) ||
                 own(media, 'id_str') !== contentId ||
                 !near(own(info, 'duration_millis') / 1000, expectedDuration) ||
                 own(media, 'video_download_url') !== download)) ||
-            downloadAsset?.id !== contentId ||
-            downloadAsset.type !== sourceAsset.type ||
+            (!missingDownload &&
+              (downloadAsset?.id !== contentId || downloadAsset.type !== sourceAsset.type)) ||
             !Array.isArray(variants) ||
             !Number.isSafeInteger(variantCount) ||
             variantCount < 0 ||
@@ -646,7 +1235,7 @@ window.VSC = window.VSC || {};
           // array. Neither validation nor ranking may follow a growing length.
           const variantEntries = [];
           for (let variant = 0; variant < variantCount; variant++) {
-            variantEntries.push(own(variants, String(variant)));
+            variantEntries.push(retain(variants, String(variant)));
           }
           let matchedHls = false;
           let best;
@@ -654,8 +1243,8 @@ window.VSC = window.VSC || {};
             if (!clear(item)) {
               return null;
             }
-            const type = own(item, 'content_type');
-            const url = own(item, 'url');
+            const type = retain(item, 'content_type');
+            const url = retain(item, 'url');
             if (
               url === sourceUrl &&
               typeof type === 'string' &&
@@ -672,7 +1261,7 @@ window.VSC = window.VSC || {};
             if (!parsed || parsed.id !== contentId || parsed.type !== sourceAsset.type) {
               return null;
             }
-            const bitrate = own(item, 'bitrate');
+            const bitrate = retain(item, 'bitrate');
             const ranked = {
               url,
               height: parsed.height,
@@ -693,9 +1282,12 @@ window.VSC = window.VSC || {};
             own(variants, 'length') !== variantCount ||
             !matchedHls ||
             !best ||
-            (result && result.sdk !== sdk)
+            (result && (result.sdk !== sdk || (captionRole && result.fiber !== fiber)))
           ) {
             return null;
+          }
+          if (captionRole) {
+            captionVariants = variantEntries;
           }
           result = {
             ...binding,
@@ -705,10 +1297,255 @@ window.VSC = window.VSC || {};
             scope,
           };
         }
-        hook = own(hook, 'next');
+        hook = captionRole ? nextHook : own(hook, 'next');
       }
     }
+    if (
+      captionRole &&
+      (video.parentElement !== originalParent ||
+        !captionRole.nativeCurrent() ||
+        captionReads.some(([object, key, value]) => own(object, key) !== value) ||
+        captionRoots.some(([node, keys]) => {
+          const next = Object.getOwnPropertyNames(node).filter((key) =>
+            key.startsWith('__reactFiber$')
+          );
+          return next.length !== keys.length || next.some((key, index) => key !== keys[index]);
+        }) ||
+        (captionVariants && !captionVariants.every(clear)) ||
+        (captionCurrent && !captionCurrent()))
+    ) {
+      return null;
+    }
     return result;
+  }
+
+  function resolvePlayer(
+    video,
+    originParent,
+    { allowSourceChild = false } = {},
+    captionRole = null
+  ) {
+    try {
+      const doc = video?.ownerDocument;
+      if (!doc) {
+        return null;
+      }
+      const originalUrl = video.currentSrc || video.src;
+      // Automatic child-source entry requires the same-post cache route below.
+      // Retain the exact node and its representation throughout the session.
+      const sourceBinding = sourceChild(video, originalUrl);
+      if (!nativeSafe(video, doc, originalUrl, false, sourceBinding, captionRole)) {
+        return null;
+      }
+      const root = doc.documentElement;
+      const documentUrl = doc.URL;
+      const initial = inspect(
+        video,
+        originParent,
+        undefined,
+        false,
+        false,
+        undefined,
+        true,
+        captionRole
+      );
+      if (
+        !initial ||
+        (sourceBinding && !allowSourceChild && !initial.cached) ||
+        !nativeSafe(video, doc, originalUrl, false, sourceBinding, captionRole)
+      ) {
+        return null;
+      }
+      const scopeRoot = initial.scope.getRootNode();
+      let companion;
+      const candidate = {
+        originalUrl,
+        sourceNode: sourceBinding?.node,
+        progressiveUrl: initial.progressiveUrl,
+        sourceUrl: initial.sourceUrl,
+        contentId: initial.contentId,
+        sessionId: initial.sessionId,
+        sdk: initial.sdk,
+        api: initial.api,
+        store: initial.store,
+        loop: initial.loop,
+        fullscreenBoundary() {
+          try {
+            return fullscreenBoundary(video, initial, companion, () => current());
+          } catch {
+            return null;
+          }
+        },
+        current(allowed) {
+          try {
+            // Only an already-bound caption producer may be temporarily seeking.
+            const readyFloor = captionRole && (companion || captionRole.presentationBound) ? 1 : 2;
+            let currentCompanion = companion;
+            if (allowed !== undefined) {
+              if (companion && allowed !== companion) {
+                return false;
+              }
+              if (!companion) {
+                if (
+                  allowed === video ||
+                  allowed?.localName !== 'video' ||
+                  allowed.ownerDocument !== doc ||
+                  allowed.isConnected
+                ) {
+                  return false;
+                }
+                currentCompanion = allowed;
+                if (!captionRole) {
+                  companion = allowed;
+                }
+              }
+            }
+            if (currentCompanion && currentCompanion.ownerDocument !== doc) {
+              return false;
+            }
+            if (
+              doc.documentElement !== root ||
+              doc.URL !== documentUrl ||
+              !nativeSafe(video, doc, originalUrl, false, sourceBinding, captionRole, readyFloor) ||
+              initial.scope.getRootNode() !== scopeRoot
+            ) {
+              return false;
+            }
+            const next = inspect(
+              video,
+              originParent,
+              currentCompanion,
+              false,
+              true,
+              undefined,
+              true,
+              captionRole
+            );
+            const valid = Boolean(
+              next &&
+              (!captionRole ||
+                (nativeSafe(
+                  video,
+                  doc,
+                  originalUrl,
+                  false,
+                  sourceBinding,
+                  captionRole,
+                  readyFloor
+                ) &&
+                  (!currentCompanion ||
+                    (currentCompanion.ownerDocument === doc &&
+                      (!companion || companion === currentCompanion) &&
+                      (companion || !currentCompanion.isConnected))))) &&
+              [
+                'sdk',
+                'api',
+                'store',
+                'getState',
+                'getSnapshot',
+                'getMediaElement',
+                'seekTo',
+                'subscribe',
+                'content',
+                'selected',
+                'sourceUrl',
+                'contentId',
+                'sessionId',
+                'progressiveUrl',
+                'cached',
+                'loop',
+                'scope',
+                ...(captionRole ? ['fiber', 'post'] : []),
+              ].every((key) => next[key] === initial[key])
+            );
+            if (valid && captionRole && !companion) {
+              companion = currentCompanion;
+            }
+            return valid;
+          } catch {
+            return false;
+          }
+        },
+        identityCurrent() {
+          try {
+            if (
+              doc.documentElement !== root ||
+              doc.URL !== documentUrl ||
+              !nativeSafe(video, doc, originalUrl, true, sourceBinding) ||
+              initial.scope.getRootNode() !== scopeRoot ||
+              (companion && companion.ownerDocument !== doc)
+            ) {
+              return false;
+            }
+            const next = inspect(video, originParent, companion, true, true);
+            return Boolean(
+              next &&
+              [
+                'sdk',
+                'api',
+                'store',
+                'getState',
+                'getSnapshot',
+                'getMediaElement',
+                'seekTo',
+                'subscribe',
+                'content',
+                'selected',
+                'sourceUrl',
+                'contentId',
+                'sessionId',
+                'scope',
+              ].every((key) => next[key] === initial[key])
+            );
+          } catch {
+            return false;
+          }
+        },
+        subscribe(callback) {
+          try {
+            if (typeof callback !== 'function') {
+              return null;
+            }
+            const dispose = initial.subscribe.call(initial.store, callback);
+            if (typeof dispose !== 'function') {
+              return null;
+            }
+            let active = true;
+            return () => {
+              if (active) {
+                active = false;
+                try {
+                  dispose();
+                } catch {
+                  /* Release is best effort. */
+                }
+              }
+            };
+          } catch {
+            return null;
+          }
+        },
+      };
+      const current = candidate.current;
+      if (captionRole) {
+        const sourceAsset = asset(initial.sourceUrl, 'hls');
+        candidate.captionBinding = {
+          original: video,
+          track: captionRole.track,
+          node: captionRole.node,
+          hlsUrl: initial.sourceUrl,
+          assetType: sourceAsset.type,
+          assetId: sourceAsset.id,
+          duration: captionRole.duration,
+          language: captionRole.language,
+          label: captionRole.label,
+          isCurrent: (allowed) => current(allowed),
+        };
+      }
+      return candidate;
+    } catch {
+      return null;
+    }
   }
 
   window.VSC.TwitterPlayer = {
@@ -838,158 +1675,92 @@ window.VSC = window.VSC || {};
         return null;
       }
     },
-    resolve(video, originParent, { allowSourceChild = false } = {}) {
+    resolve(video, originParent, options) {
+      return resolvePlayer(video, originParent, options);
+    },
+    resolveNativePresentation(video, originParent) {
       try {
-        const doc = video?.ownerDocument;
-        if (!doc) {
-          return null;
-        }
-        const originalUrl = video.currentSrc || video.src;
-        // Automatic child-source entry requires the same-post cache route below.
-        // Retain the exact node and its representation throughout the session.
-        const sourceBinding = sourceChild(video, originalUrl);
-        if (!nativeSafe(video, doc, originalUrl, false, sourceBinding)) {
-          return null;
-        }
-        const root = doc.documentElement;
-        const documentUrl = doc.URL;
-        const initial = inspect(video, originParent);
         if (
-          !initial ||
-          (sourceBinding && !allowSourceChild && !initial.cached) ||
-          !nativeSafe(video, doc, originalUrl, false, sourceBinding)
+          originParent !== undefined &&
+          originParent !== null &&
+          originParent !== video?.parentNode
         ) {
           return null;
         }
-        const scopeRoot = initial.scope.getRootNode();
-        let companion;
-        return {
-          originalUrl,
-          sourceNode: sourceBinding?.node,
-          progressiveUrl: initial.progressiveUrl,
-          sourceUrl: initial.sourceUrl,
-          contentId: initial.contentId,
-          sessionId: initial.sessionId,
-          sdk: initial.sdk,
-          api: initial.api,
-          store: initial.store,
-          loop: initial.loop,
-          current(allowed) {
-            try {
-              if (allowed !== undefined) {
-                if (companion && allowed !== companion) {
-                  return false;
-                }
-                if (!companion) {
-                  if (
-                    allowed === video ||
-                    allowed?.localName !== 'video' ||
-                    allowed.ownerDocument !== doc ||
-                    allowed.isConnected
-                  ) {
-                    return false;
-                  }
-                  companion = allowed;
-                }
-              }
-              if (companion && companion.ownerDocument !== doc) {
-                return false;
-              }
-              if (
-                doc.documentElement !== root ||
-                doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl, false, sourceBinding) ||
-                initial.scope.getRootNode() !== scopeRoot
-              ) {
-                return false;
-              }
-              const next = inspect(video, originParent, companion, false, true);
-              return Boolean(
-                next &&
-                [
-                  'sdk',
-                  'api',
-                  'store',
-                  'getState',
-                  'getSnapshot',
-                  'getMediaElement',
-                  'seekTo',
-                  'subscribe',
-                  'content',
-                  'selected',
-                  'sourceUrl',
-                  'contentId',
-                  'sessionId',
-                  'progressiveUrl',
-                  'cached',
-                  'loop',
-                  'scope',
-                ].every((key) => next[key] === initial[key])
-              );
-            } catch {
-              return false;
-            }
-          },
-          identityCurrent() {
-            try {
-              if (
-                doc.documentElement !== root ||
-                doc.URL !== documentUrl ||
-                !nativeSafe(video, doc, originalUrl, true, sourceBinding) ||
-                initial.scope.getRootNode() !== scopeRoot ||
-                (companion && companion.ownerDocument !== doc)
-              ) {
-                return false;
-              }
-              const next = inspect(video, originParent, companion, true, true);
-              return Boolean(
-                next &&
-                [
-                  'sdk',
-                  'api',
-                  'store',
-                  'getState',
-                  'getSnapshot',
-                  'getMediaElement',
-                  'seekTo',
-                  'subscribe',
-                  'content',
-                  'selected',
-                  'sourceUrl',
-                  'contentId',
-                  'sessionId',
-                  'scope',
-                ].every((key) => next[key] === initial[key])
-              );
-            } catch {
-              return false;
-            }
-          },
+        const role = captionRoleFor(video, 'presentation');
+        if (!role) {
+          return null;
+        }
+        const candidate = resolvePlayer(video, null, { allowSourceChild: true }, role);
+        const boundary = candidate?.fullscreenBoundary();
+        if (!boundary?.current() || !candidate.current()) {
+          return null;
+        }
+        const element = boundary.element,
+          parent = element.parentNode,
+          originalParent = video.parentNode;
+        // This is a retained native renderer certificate, never a transport.
+        role.presentationBound = true;
+        const current = () => {
+          try {
+            return Boolean(
+              candidate.current() &&
+              boundary.current() &&
+              candidate.current() &&
+              element.parentNode === parent &&
+              video.parentNode === originalParent
+            );
+          } catch {
+            return false;
+          }
+        };
+        let subscription = null;
+        const presentation = Object.freeze({
+          element,
+          current,
+          activate: current,
           subscribe(callback) {
-            try {
-              if (typeof callback !== 'function') {
-                return null;
-              }
-              const dispose = initial.subscribe.call(initial.store, callback);
-              if (typeof dispose !== 'function') {
-                return null;
-              }
-              let active = true;
-              return () => {
-                if (active) {
-                  active = false;
-                  try {
-                    dispose();
-                  } catch {
-                    /* Release is best effort. */
-                  }
-                }
-              };
-            } catch {
+            if (typeof callback !== 'function' || subscription || !current()) {
               return null;
             }
+            const token = {};
+            subscription = token;
+            let active = true;
+            const dispose = candidate.subscribe(() => {
+              if (active) {
+                try {
+                  callback(current());
+                } catch {
+                  /* A presentation callback must not interrupt the SDK store. */
+                }
+              }
+            });
+            const release = () => {
+              if (!active) {
+                return;
+              }
+              active = false;
+              if (subscription === token) {
+                subscription = null;
+              }
+              dispose?.();
+            };
+            if (typeof dispose !== 'function' || !current()) {
+              release();
+              return null;
+            }
+            return release;
           },
-        };
+        });
+        return current() ? presentation : null;
+      } catch {
+        return null;
+      }
+    },
+    resolveCaptionedLoop(video, originParent, options) {
+      try {
+        const role = captionRoleFor(video);
+        return role ? resolvePlayer(video, originParent, options, role) : null;
       } catch {
         return null;
       }

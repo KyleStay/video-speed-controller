@@ -1,0 +1,700 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Continuous X loop fixture</title>
+<style>
+  body {
+    font: 16px system-ui;
+    margin: 16px;
+  }
+  #player {
+    position: relative;
+    width: 340px;
+    max-width: 100%;
+    aspect-ratio: 16/9;
+  }
+  video {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  button {
+    min-height: 44px;
+  }
+  .actions {
+    position: fixed;
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    z-index: 2147483646;
+    background: white;
+  }
+  body[data-owned='true'] .actions {
+    display: none;
+  }
+  .caption-only {
+    display: none;
+  }
+  body[data-caption-fixture='true'] .caption-only {
+    display: inline-block;
+  }
+  pre {
+    font-size: 10px;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow: auto;
+  }
+</style>
+<h1>Continuous X loop</h1>
+<p>
+  Local generated AVC/AAC media. Chrome emulates iOS eligibility APIs; native decoding and the
+  production transport remain real.
+</p>
+<div id="player"><video id="original" muted loop playsinline></video></div>
+<div class="actions">
+  <button id="play">Play original</button>
+  <button id="fullscreen">Open owned player</button>
+  <button id="site">Use site player</button>
+  <button id="captions">Supply captions</button>
+  <button id="replace">Replace source</button>
+  <button id="caption-source-write" class="caption-only">Replace companion caption source</button>
+  <button id="caption-start" class="caption-only">Position original at 0.8 seconds</button>
+</div>
+<pre id="status">Loading</pre>
+<script>
+  (async () => {
+    const original = document.querySelector('#original'),
+      parent = original.parentElement;
+    const asset = '2041611432752742400',
+      post = '2041611432752742401';
+    const root = `https://video.twimg.com/amplify_video/${asset}/`;
+    const parameters = new URLSearchParams(location.search);
+    const captionFixture = parameters.has('caption');
+    const emulatedCaptionFields = [];
+    // Chromium lacks these Safari VTTCue IDLs. Emulate only missing fields;
+    // native cue timing, parsing, identities and activeCues remain real.
+    if (captionFixture && typeof VTTCue === 'function') {
+      for (const [key, value] of [
+        ['lineAlign', 'start'],
+        ['positionAlign', 'auto'],
+        ['region', null],
+      ]) {
+        if (!(key in VTTCue.prototype)) {
+          Object.defineProperty(VTTCue.prototype, key, {
+            configurable: true,
+            writable: true,
+            value,
+          });
+          emulatedCaptionFields.push([key, value]);
+        }
+      }
+    }
+    document.body.dataset.captionFixture = String(captionFixture);
+    if (captionFixture) original.loop = false;
+    const dimensions = parameters.has('portrait') ? '720x1280' : '1280x720';
+    const hlsDimensions = parameters.has('mismatch') ? '720x1280' : dimensions;
+    parent.style.aspectRatio = dimensions.replace('x', '/');
+    const sourceUrl = `${root}pl/${hlsDimensions}/current.m3u8`,
+      mp4 = `${root}vid/avc1/${dimensions}/current.mp4`;
+    const content = {
+      contentId: asset,
+      contentType: 'video',
+      sourceType: 'tweet',
+      sourceId: post,
+      tweetId: post,
+      durationMs: 5000,
+      mediaAssetUrl: sourceUrl,
+      ...(parameters.has('finite') ? { maxLoopCount: 2 } : {}),
+      ...(parameters.has('uncapped') || captionFixture
+        ? { maxLoopingThresholdSeconds: null, loopingThresholdMs: 60000 }
+        : {}),
+    };
+    const state = {
+      content,
+      source: { kind: 'hls', src: sourceUrl, playlistDurationSec: 5 },
+      session: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+      textTracks: {
+        tracks: captionFixture
+          ? [
+              {
+                id: parameters.has('caption-unknown') ? 1 : 0,
+                kind: 'subtitles',
+                label: 'en (auto-generated)',
+                language: 'en',
+              },
+            ]
+          : [],
+      },
+      playback: { shouldLoop: true },
+      media: { muted: true, volume: 0.5, paused: true },
+    };
+    const subscribers = new Set(),
+      ownedURLs = new Set(),
+      revokedURLs = new Set();
+    const createURL = URL.createObjectURL,
+      revokeURL = URL.revokeObjectURL;
+    const createOwnedURL = function (value) {
+      const url = createURL.call(this, value);
+      ownedURLs.add(url);
+      return url;
+    };
+    const revokeOwnedURL = function (url) {
+      revokedURLs.add(url);
+      return revokeURL.call(this, url);
+    };
+    URL.createObjectURL = createOwnedURL;
+    URL.revokeObjectURL = revokeOwnedURL;
+    // Safari-only eligibility surfaces are emulated; SourceBuffers and all media clocks are native.
+    window.ManagedMediaSource = window.MediaSource;
+    if (!original.audioTracks?.length)
+      Object.defineProperty(original, 'audioTracks', {
+        configurable: true,
+        value: [{ enabled: true, kind: 'main' }],
+      });
+    const calls = { play: 0, load: 0 },
+      nativePlay = original.play,
+      nativeLoad = original.load;
+    original.play = function (...args) {
+      calls.play++;
+      return nativePlay.apply(this, args);
+    };
+    original.load = function (...args) {
+      calls.load++;
+      return nativeLoad.apply(this, args);
+    };
+    const api = {
+      getMediaElement: () => original,
+      getState: () => state,
+      seekTo: (time) => {
+        original.currentTime = time;
+      },
+    };
+    const store = {
+      getSnapshot: () => state,
+      subscribe: (callback) => {
+        subscribers.add(callback);
+        return () => subscribers.delete(callback);
+      },
+    };
+    const sdk = { controller: { api }, element: original, store, src: sourceUrl };
+    const props = {
+      content,
+      src: sourceUrl,
+      hostKey: `${post}:${asset}`,
+      ...(parameters.has('uncapped') || captionFixture ? {} : { loop: !parameters.has('finite') }),
+    };
+    const metadata = {
+      downloadUrl: mp4,
+      poppedOutSource: {
+        hostKey: props.hostKey,
+        playerProps: { content, src: sourceUrl, downloadUrl: mp4 },
+      },
+      timeRemainingAccessory: {
+        props: {
+          media: {
+            id_str: asset,
+            video_download_url: mp4,
+            video_info: {
+              duration_millis: 5000,
+              variants: [
+                { content_type: 'application/x-mpegURL', url: sourceUrl },
+                { content_type: 'video/mp4', url: mp4, bitrate: 700000 },
+              ],
+            },
+          },
+        },
+      },
+    };
+    parent.__reactFiber$fixture = {
+      memoizedState: { memoizedState: sdk, next: null },
+      memoizedProps: props,
+      return: { memoizedState: null, memoizedProps: metadata, return: null },
+    };
+    let mse,
+      buffer,
+      initialMSE,
+      initialBuffer,
+      initialSource,
+      ready = false,
+      error = null,
+      session = null,
+      loop = null,
+      originalCaption = null,
+      originalCaptionFingerprint = null,
+      trustedActionStack = null,
+      actionAuditRestore = null,
+      interval;
+    const current = () => (session?.committed && !session.closed ? session.video : original);
+    const frames = [],
+      lifecycle = [],
+      captionFrames = [],
+      captionStages = [],
+      companionPlays = [],
+      companionPlayRestores = [],
+      frameHandles = new Map(),
+      frameListeners = [];
+    let measurementStart = null;
+    const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime').get;
+    const nativeRate = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      'playbackRate'
+    ).get;
+    const cueFingerprint = (cue) =>
+      Object.fromEntries(
+        [
+          'id',
+          'startTime',
+          'endTime',
+          'text',
+          'vertical',
+          'snapToLines',
+          'line',
+          'lineAlign',
+          'position',
+          'positionAlign',
+          'size',
+          'align',
+          'pauseOnExit',
+          'region',
+        ].map((key) => [key, cue[key]])
+      );
+    const trackFingerprint = (track) => Array.from(track?.cues || [], cueFingerprint);
+    const ranges = (value) =>
+      Array.from({ length: value.length }, (_, i) => [value.start(i), value.end(i)]);
+    const notify = () => {
+      for (const callback of [...subscribers]) callback();
+    };
+    const snapshot = () => {
+      const video = current(),
+        transport = session?.loopPlayback;
+      return {
+        at: performance.now(),
+        measurementStartedAt: measurementStart,
+        ready,
+        error,
+        scope: 'local Chrome MediaSource/iOS-API emulation, not iPhone acceptance',
+        suppliedMP4: mp4,
+        suppliedHLS: sourceUrl,
+        suppliedDimensions: dimensions,
+        progressiveURL: session?.candidate.progressiveUrl,
+        native: video !== original,
+        playing: !video.paused,
+        muted: video.muted,
+        volume: video.volume,
+        rate: video.playbackRate,
+        time: video.currentTime,
+        nativeTime: native.call(video),
+        duration: video.duration,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        source: video.currentSrc,
+        owned: !!video.vsc?.iosPlayer?.active,
+        controllers: VSC?.stateManager?.controllers.size,
+        originalSourceUnchanged: original.currentSrc === initialSource,
+        originalParentUnchanged: original.parentElement === parent,
+        sameProducer:
+          mse === initialMSE && buffer === initialBuffer && mse?.sourceBuffers[0] === initialBuffer,
+        originalPaused: original.paused,
+        originalRate: original.playbackRate,
+        originalLoop: original.loop,
+        creatorOwnLoop: Object.hasOwn(props, 'loop'),
+        creatorLoop: props.loop,
+        creatorOwnMaxLoopCount: Object.hasOwn(content, 'maxLoopCount'),
+        creatorMaxLoopCount: content.maxLoopCount,
+        creatorOwnMaxLoopSeconds: Object.hasOwn(content, 'maxLoopingThresholdSeconds'),
+        creatorMaxLoopSeconds: content.maxLoopingThresholdSeconds,
+        creatorLoopingThresholdMs: content.loopingThresholdMs,
+        selectedContentSame: state.content === props.content,
+        sdkShouldLoop: state.playback.shouldLoop,
+        videoCount: document.querySelectorAll('video').length,
+        originalMuted: original.muted,
+        originalVolume: original.volume,
+        originalTime: original.currentTime,
+        originalDuration: original.duration,
+        producerDuration: mse?.duration,
+        originalCalls: { ...calls },
+        originalSource: original.currentSrc,
+        sessionSource: session?.video.currentSrc,
+        sessionClosed: session?.closed,
+        loopFallback: !!session?.loopFallback,
+        period: transport?.period,
+        removedBefore: transport?.removedBefore,
+        nextCycle: transport?.nextCycle,
+        sourceCurrent: transport?.sourceCurrent(),
+        decodedFrames: frames.length,
+        decodedMediaSpan: frames.length > 1 ? frames.at(-1).mediaTime - frames[0].mediaTime : 0,
+        measurementScope:
+          'raw startup/transition frames and media-time span; deliberate seeks are in lifecycle, not an acceptance-rate calculation',
+        frameGaps150ms: frames
+          .slice(1)
+          .flatMap((frame, index) =>
+            frame.at - frames[index].at >= 150
+              ? [{ at: frame.at, ms: frame.at - frames[index].at, mediaTime: frame.mediaTime }]
+              : []
+          ),
+        negativeFrameDeltas: frames
+          .slice(1)
+          .flatMap((frame, index) =>
+            frame.mediaTime < frames[index].mediaTime
+              ? [{ at: frame.at, from: frames[index].mediaTime, to: frame.mediaTime }]
+              : []
+          ),
+        frameCounterResets: frames
+          .slice(1)
+          .flatMap((frame, index) =>
+            frame.presentedFrames < frames[index].presentedFrames
+              ? [{ at: frame.at, from: frames[index].presentedFrames, to: frame.presentedFrames }]
+              : []
+          ),
+        firstFrameMs: frames[0]?.at,
+        tracks: transport?.tracks.map((track) => ({
+          ranges: ranges(track.buffer.buffered),
+          updating: track.buffer.updating,
+        })),
+        mediaSourceState: transport?.mediaSource.readyState,
+        loopClosed: loop?.closed,
+        loopChildren: loop?.video.children.length,
+        loopProperties: loop
+          ? ['currentTime', 'duration', 'buffered', 'seekable'].filter((key) =>
+              Object.hasOwn(loop.video, key)
+            )
+          : [],
+        loopURLRevoked: !!loop && revokedURLs.has(loop.ownedURL),
+        subscribers: subscribers.size,
+        captionFixture,
+        captionStages: [...captionStages],
+        captionNativeIDL: originalCaption?.track.cues?.[0]
+          ? Object.fromEntries(
+              ['region', 'lineAlign', 'positionAlign'].map((key) => {
+                const value = originalCaption.track.cues[0][key];
+                return [
+                  key,
+                  { type: typeof value, value: value === undefined ? '<undefined>' : value },
+                ];
+              })
+            )
+          : null,
+        emulatedCaptionFields: emulatedCaptionFields.map(([key]) => key),
+        sessionCommitted: !!session?.committed,
+        sessionPending: !!session && !session.closed && !session.committed,
+        sessionTime: session?.time,
+        companionNativeTime: session ? native.call(session.video) : null,
+        companionNativeRate: session ? nativeRate.call(session.video) : null,
+        companionPaused: session?.video.paused,
+        companionPlays: [...companionPlays],
+        originalCaptionReady: originalCaption?.readyState,
+        originalCaptionMode: originalCaption?.track.mode,
+        originalCaptionCues: trackFingerprint(originalCaption?.track),
+        originalCaptionUnchanged:
+          !!originalCaption &&
+          originalCaption.parentNode === original &&
+          originalCaption.getAttribute('src') === 'data:,WEBVTT' &&
+          JSON.stringify(trackFingerprint(originalCaption.track)) === originalCaptionFingerprint,
+        captionOwnerMode: session?.captionOwner?.mode,
+        captionTrackMode: session?.video.querySelector('track')?.track.mode,
+        captionTrackReady: session?.video.querySelector('track')?.readyState,
+        captionTrackSource: session?.video.querySelector('track')?.getAttribute('src'),
+        captionCues: trackFingerprint(session?.video.querySelector('track')?.track),
+        activeCaptionCues: Array.from(
+          session?.video.querySelector('track')?.track.activeCues || [],
+          cueFingerprint
+        ),
+        captionEpochVerified:
+          !!session?.committed &&
+          !!transport?.period &&
+          session.captionOwner?.verifyEpoch(
+            Math.floor(native.call(session.video) / transport.period)
+          ),
+      };
+    };
+    const draw = () => {
+      const value = snapshot();
+      document.body.dataset.owned = String(value.owned);
+      document.querySelector('#status').textContent = JSON.stringify(value);
+    };
+    const once = (target, type) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          target.removeEventListener(type, done);
+          reject(Error(type + ' timeout'));
+        }, 10000);
+        function done() {
+          clearTimeout(timer);
+          resolve();
+        }
+        target.addEventListener(type, done, { once: true });
+      });
+    async function loadMSE() {
+      mse = new MediaSource();
+      const url = URL.createObjectURL(mse),
+        opened = once(mse, 'sourceopen');
+      original.src = url;
+      await opened;
+      buffer = mse.addSourceBuffer('video/mp4; codecs="avc1.42c01f,mp4a.40.2"');
+      const data = await (
+          await fetch(dimensions === '720x1280' ? '/portrait.mp4' : '/sample.mp4')
+        ).arrayBuffer(),
+        appended = once(buffer, 'updateend');
+      buffer.appendBuffer(data);
+      await appended;
+      // Finalize the parsed media end without trimming the generated AAC tail.
+      mse.endOfStream();
+      if (original.readyState < 2) await once(original, 'loadeddata');
+      original.currentTime = 0.2;
+      if (!initialMSE) {
+        initialMSE = mse;
+        initialBuffer = buffer;
+        initialSource = url;
+      }
+    }
+    async function loadCaptionFixture() {
+      if (!captionFixture) return;
+      // Public HLS generateCueId vectors: backwards DJB2(5381, *33 XOR char),
+      // concatenated hashes of start, end and trimmed text. No application helper.
+      const vectors = [
+        [0, 0.5, 'Fixture caption 1', '1775571933555981271461275'],
+        [0.5, 1, 'Fixture caption 2', '1933555981775562644046168'],
+        [1, 1.5, 'Fixture caption 3', '177556193355599309840281'],
+        [1.5, 2, 'Fixture caption 4', '1933555991775593960577118'],
+        [2, 2.5, 'Fixture caption 5', '1775591933555961626371231'],
+        [2.5, 3, 'Fixture caption 6', '1933555961775582998956124'],
+        [3, 3.5, 'Fixture caption 7', '177558193355597664750237'],
+        [3.5, 4, 'Fixture caption 8', '1933555971775534149581138'],
+        [4, 4.5, 'Fixture caption 9', '1775531933555941815375251'],
+      ];
+      originalCaption = document.createElement('track');
+      originalCaption.kind = 'subtitles';
+      originalCaption.srclang = 'en';
+      originalCaption.label = 'en (auto-generated)';
+      originalCaption.src = 'data:,WEBVTT';
+      const loaded = once(originalCaption, 'load');
+      original.append(originalCaption);
+      originalCaption.track.mode = 'hidden';
+      await loaded;
+      for (const [start, end, text, id] of vectors) {
+        const cue = Object.assign(new VTTCue(start, end, text), {
+          id,
+          line: 85,
+          snapToLines: false,
+          position: 15,
+          size: 70,
+          align: 'start',
+        });
+        originalCaption.track.addCue(cue);
+      }
+      originalCaption.track.mode = 'showing';
+      originalCaptionFingerprint = JSON.stringify(trackFingerprint(originalCaption.track));
+    }
+    document.querySelector('#play').onclick = () => {
+      void original.play();
+    };
+    document.querySelector('#fullscreen').onclick = () => current().vsc.iosPlayer.open();
+    document.querySelector('#site').onclick = () => current().vsc.iosPlayer.restoreSitePlayer();
+    document.querySelector('#captions').onclick = () => {
+      state.textTracks.tracks = [{ kind: 'captions', id: 'fixture-caption' }];
+      notify();
+    };
+    document.querySelector('#replace').onclick = () => {
+      state.session = { id: 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+      notify();
+      void loadMSE().catch((failure) => {
+        error = failure.message;
+        draw();
+      });
+    };
+    document.querySelector('#caption-source-write').onclick = () => {
+      const owned = session?.video.querySelector('track');
+      if (owned) owned.src = 'data:,WEBVTT';
+    };
+    document.querySelector('#caption-start').onclick = () => {
+      original.currentTime = 0.8;
+    };
+    window.__twitterLoopFixture = {
+      original,
+      current,
+      state,
+      snapshot,
+      notify,
+      frames,
+      lifecycle,
+      captionFrames,
+      auditSpeedInput() {
+        if (actionAuditRestore) return;
+        const handler = original.vsc.actionHandler;
+        const runAction = handler.runAction;
+        const auditedAction = function (action, value, event) {
+          const previous = trustedActionStack;
+          trustedActionStack =
+            event?.isTrusted && event.type === 'click' && event.eventPhase > 0
+              ? { action, trusted: true, phase: event.eventPhase, type: event.type }
+              : null;
+          try {
+            return runAction.call(this, action, value, event);
+          } finally {
+            trustedActionStack = previous;
+          }
+        };
+        handler.runAction = auditedAction;
+        actionAuditRestore = () => {
+          if (handler.runAction === auditedAction) handler.runAction = runAction;
+        };
+      },
+      get session() {
+        return session;
+      },
+      get loop() {
+        return loop;
+      },
+    };
+    try {
+      for (
+        let i = 0;
+        (!window.VSC?.TwitterPlayer || !window.VSC_controller?.initialized) && i < 100;
+        i++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!window.VSC?.TwitterPlayer) throw Error('Production modules unavailable');
+      VSC_controller.config.settings.lastSpeed = 1;
+      const isTwitter = VSC.EventManager.isTwitterHost;
+      VSC.EventManager.isTwitterHost = (hostname) =>
+        hostname === location.hostname || isTwitter(hostname);
+      const manager = VSC.TwitterMP4Playback,
+        begin = manager.begin;
+      const observeBegin = function (...args) {
+        const result = begin.apply(this, args);
+        if (result?.original === original) {
+          if (captionFixture && session !== result) {
+            for (const [stage, promise] of [
+              ['original-certificate', result.captionOwner?.promise],
+              ['companion-track', result.captionAttachment],
+              ['loop-initialization', result.loopPlayback?.initialization],
+            ]) {
+              if (promise && captionFixture) {
+                Promise.resolve(promise).then(
+                  () => captionStages.push({ at: performance.now(), stage, result: 'fulfilled' }),
+                  (failure) =>
+                    captionStages.push({
+                      at: performance.now(),
+                      stage,
+                      result: 'rejected',
+                      error: failure?.message || String(failure),
+                      stack: failure?.stack,
+                    })
+                );
+              }
+            }
+            const play = result.video.play;
+            const observedPlay = function (...playArgs) {
+              companionPlays.push({
+                at: performance.now(),
+                trusted: trustedActionStack?.trusted === true,
+                beforeHandlerReturn: !!trustedActionStack,
+                eventPhase: trustedActionStack?.phase || 0,
+                action: trustedActionStack?.action || null,
+                event: trustedActionStack?.type || window.event?.type || null,
+                windowEventTrusted: window.event?.isTrusted === true,
+                userActivation: navigator.userActivation?.isActive ?? null,
+                committed: result.committed,
+                nativeTime: native.call(this),
+                nativeRate: nativeRate.call(this),
+              });
+              return play.apply(this, playArgs);
+            };
+            result.video.play = observedPlay;
+            companionPlayRestores.push(() => {
+              if (result.video.play === observedPlay) result.video.play = play;
+            });
+          }
+          session = result;
+          loop = result.loopPlayback || loop;
+          if (measurementStart === null) {
+            measurementStart = performance.now();
+            for (const type of [
+              'seeking',
+              'seeked',
+              'loadstart',
+              'emptied',
+              'playing',
+              'pause',
+              'waiting',
+              'ratechange',
+            ]) {
+              const listener = () =>
+                lifecycle.push({
+                  at: performance.now() - measurementStart,
+                  type,
+                  time: native.call(result.video),
+                  source: result.video.currentSrc,
+                  rate: result.video.playbackRate,
+                  nativeRate: nativeRate.call(result.video),
+                  originalTime: original.currentTime,
+                  committed: result.committed,
+                });
+              result.video.addEventListener(type, listener);
+              frameListeners.push(() => result.video.removeEventListener(type, listener));
+            }
+            const sample = (_now, metadata) => {
+              frameHandles.delete(result.video);
+              if (result.closed) return;
+              frames.push({
+                at: performance.now() - measurementStart,
+                mediaTime: metadata.mediaTime,
+                presentedFrames: metadata.presentedFrames,
+                rate: result.video.playbackRate,
+              });
+              const period = result.loopPlayback?.period;
+              const active = result.video.querySelector('track')?.track.activeCues;
+              if (result.committed && period && active?.length) {
+                captionFrames.push({
+                  at: performance.now() - measurementStart,
+                  nativeTime: native.call(result.video),
+                  epoch: Math.floor(native.call(result.video) / period),
+                  period,
+                  mode: result.video.querySelector('track').track.mode,
+                  cues: Array.from(active, cueFingerprint),
+                });
+              }
+              if (frames.length < 2500)
+                frameHandles.set(result.video, result.video.requestVideoFrameCallback(sample));
+            };
+            frameHandles.set(result.video, result.video.requestVideoFrameCallback(sample));
+          }
+        }
+        return result;
+      };
+      manager.begin = observeBegin;
+      await loadMSE();
+      await loadCaptionFixture();
+      ready = true;
+      draw();
+      interval = setInterval(draw, 100);
+      addEventListener(
+        'pagehide',
+        () => {
+          if (manager.begin === observeBegin) manager.begin = begin;
+          clearInterval(interval);
+          for (const [video, handle] of frameHandles) video.cancelVideoFrameCallback(handle);
+          frameHandles.clear();
+          for (const remove of frameListeners) remove();
+          for (const restore of companionPlayRestores) restore();
+          actionAuditRestore?.();
+          for (const [key, value] of emulatedCaptionFields) {
+            if (Object.getOwnPropertyDescriptor(VTTCue.prototype, key)?.value === value) {
+              delete VTTCue.prototype[key];
+            }
+          }
+          for (const url of ownedURLs) revokeURL.call(URL, url);
+          if (URL.createObjectURL === createOwnedURL) URL.createObjectURL = createURL;
+          if (URL.revokeObjectURL === revokeOwnedURL) URL.revokeObjectURL = revokeURL;
+        },
+        { once: true }
+      );
+    } catch (failure) {
+      error = failure.message;
+      draw();
+    }
+  })();
+</script>

@@ -227,6 +227,535 @@ describe('iOS player ownership, playback, and restoration', () => {
     vi.restoreAllMocks();
   });
 
+  describe('certified original in-place presentation', () => {
+    const restore = [];
+    function property(object, key, value) {
+      restore.push([object, key, Object.getOwnPropertyDescriptor(object, key)]);
+      Object.defineProperty(object, key, { configurable: true, writable: true, value });
+    }
+    afterEach(() => {
+      for (const { player } of created) {
+        player.close();
+      }
+      for (const [object, key, descriptor] of restore.splice(0).reverse()) {
+        if (descriptor) {
+          Object.defineProperty(object, key, descriptor);
+        } else {
+          delete object[key];
+        }
+      }
+    });
+    function nativePlayer({ requestResult, playing = true } = {}) {
+      const item = makeController();
+      const { player, video, parent } = item;
+      player.attach();
+      if (playing) {
+        video.play();
+      }
+      video.play.mockClear();
+      video.pause.mockClear();
+      let valid = true;
+      let notify;
+      const unsubscribe = vi.fn();
+      const boundary = Object.freeze({
+        element: parent,
+        current: vi.fn(() => valid),
+        activate: vi.fn(() => valid),
+        subscribe: vi.fn((callback) => {
+          notify = callback;
+          return unsubscribe;
+        }),
+      });
+      property(
+        window.VSC.TwitterPlayer,
+        'resolveNativePresentation',
+        vi.fn(() => boundary)
+      );
+      property(document, 'fullscreenEnabled', true);
+      property(document, 'fullscreenElement', null);
+      property(
+        document,
+        'exitFullscreen',
+        vi.fn(() => {
+          document.fullscreenElement = null;
+          document.dispatchEvent(new Event('fullscreenchange'));
+          return Promise.resolve();
+        })
+      );
+      parent.requestFullscreen = vi.fn(() => {
+        if (requestResult) {
+          return requestResult;
+        }
+        document.fullscreenElement = parent;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        return Promise.resolve();
+      });
+      return {
+        ...item,
+        boundary,
+        unsubscribe,
+        invalidate() {
+          valid = false;
+          notify?.();
+        },
+      };
+    }
+
+    it('enters exact native container with a transparent nonmodal HUD and no media or ancestor writes', async () => {
+      const { player, video, parent, boundary, unsubscribe } = nativePlayer();
+      const originalTree = Array.from(parent.childNodes);
+      const originalStyle = video.getAttribute('style');
+      const rootStyle = document.documentElement.getAttribute('style');
+      const source = video.src;
+      const time = video.currentTime;
+      const rate = video.playbackRate;
+      const modal = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
+      const load = vi.spyOn(video, 'load');
+      const observer = new MutationObserver(() => {});
+      observer.observe(video, { attributes: true, childList: true });
+      expect(player.open({ play: true })).toBe(true);
+      await Promise.resolve();
+      const ui = player.ui;
+      expect(parent.requestFullscreen).toHaveBeenCalledOnce();
+      expect(ui.host.parentNode).toBe(parent);
+      expect(video.parentNode).toBe(parent);
+      expect(originalTree.every((node, index) => parent.childNodes[index] === node)).toBe(true);
+      expect(ui.dialog.getAttribute('aria-modal')).toBe('false');
+      expect(ui.dialog.open).toBe(true);
+      expect(modal).not.toHaveBeenCalled();
+      expect(boundary.activate).toHaveBeenCalledOnce();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      expect(video.getAttribute('style')).toBe(originalStyle);
+      expect(document.documentElement.getAttribute('style')).toBe(rootStyle);
+      expect(video.src).toBe(source);
+      expect(video.currentTime).toBe(time);
+      expect(video.playbackRate).toBe(rate);
+      expect(observer.takeRecords()).toEqual([]);
+      player.close();
+      expect(ui.host.isConnected).toBe(false);
+      expect(Array.from(parent.childNodes)).toEqual(originalTree);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      observer.disconnect();
+    });
+
+    it.each(['close', 'source loss', 'denied entry'])(
+      'hides the retained inline host inside the native container and restores it after %s',
+      async (ending) => {
+        const { player, video, parent, div, invalidate } = nativePlayer({
+          requestResult:
+            ending === 'denied entry' ? Promise.reject(new Error('denied')) : undefined,
+        });
+        div.style.setProperty('display', 'inline-flex');
+        div.style.setProperty('color', 'red');
+        expect(parent.contains(div)).toBe(true);
+        expect(parent.contains(video)).toBe(true);
+        player.open();
+        expect(div.style.getPropertyValue('display')).toBe('none');
+        expect(div.style.getPropertyPriority('display')).toBe('important');
+        player.ui.host.setAttribute('data-controls-hidden', '');
+        video.dispatchEvent(new Event('timeupdate'));
+        expect(div.style.display).toBe('none');
+        if (ending === 'source loss') {
+          invalidate();
+        } else if (ending === 'close') {
+          player.close();
+        }
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(div.style.display).toBe('inline-flex');
+        expect(div.style.getPropertyPriority('display')).toBe('');
+        expect(div.style.color).toBe('red');
+        expect(video.parentNode).toBe(parent);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+      }
+    );
+
+    it('preserves a newer site display style on the retained inline host', () => {
+      const { player, div } = nativePlayer();
+      player.open();
+      expect(div.style.display).toBe('none');
+      div.style.setProperty('display', 'grid', 'important');
+      player.close();
+      expect(div.style.display).toBe('grid');
+      expect(div.style.getPropertyPriority('display')).toBe('important');
+    });
+
+    it('routes Pause, seek, speed and explicit Fit on the original, then removes its HUD', () => {
+      const { player, video, controller } = nativePlayer();
+      player.open();
+      const ui = player.ui;
+      ui.refs.play.click();
+      expect(video.pause).toHaveBeenCalledOnce();
+      ui.refs.forward.click();
+      expect(controller.actionHandler.seek).toHaveBeenCalledWith(video, 10);
+      ui.refs.normal.click();
+      expect(controller.actionHandler.setSpeed).toHaveBeenCalledWith(video, 1, 'user');
+      const before = video.style.objectFit;
+      ui.refs.fit.click();
+      expect(video.style.objectFit).toBe('cover');
+      player.close();
+      expect(video.style.objectFit).toBe(before);
+      expect(ui.host.isConnected).toBe(false);
+    });
+
+    it('does not Play an initially paused original even for a play:true request', () => {
+      const { player, video, boundary } = nativePlayer({ playing: false });
+      expect(player.open({ play: true })).toBe(true);
+      expect(video.paused).toBe(true);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(boundary.activate).not.toHaveBeenCalled();
+    });
+
+    it('removes ordinary dynamic caption/audio options on native exit without changing original tracks', async () => {
+      const { player, video } = nativePlayer();
+      const caption = { kind: 'subtitles', label: 'English', language: 'en', mode: 'showing' };
+      property(video, 'textTracks', [caption]);
+      property(video, 'audioTracks', [
+        { id: 'a', enabled: true },
+        { id: 'b', enabled: false },
+      ]);
+      player.open();
+      const ui = player.ui;
+      expect(ui.refs.captions.options).toHaveLength(2);
+      await document.exitFullscreen();
+      expect(player.active).toBe(false);
+      expect(ui.host.isConnected).toBe(false);
+      expect(caption.mode).toBe('showing');
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('closes only its HUD after an SDK capability loss, exiting its exact authored container', () => {
+      const { player, video, controller, invalidate } = nativePlayer();
+      player.open();
+      const ui = player.ui;
+      invalidate();
+      expect(player.active).toBe(false);
+      expect(ui.host.isConnected).toBe(false);
+      expect(document.exitFullscreen).toHaveBeenCalledOnce();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(controller.remove).not.toHaveBeenCalled();
+    });
+
+    it('checks current SDK authority before a same-stack button write, even without notification', () => {
+      const { player, video, boundary } = nativePlayer();
+      player.open();
+      boundary.current.mockReturnValue(false);
+      player.ui.refs.mute.click();
+      expect(video.muted).toBe(false);
+      expect(player.active).toBe(false);
+    });
+
+    it('rejects native fullscreen without falling back to a portal or starting playback', async () => {
+      const { player, video, parent } = nativePlayer({
+        requestResult: Promise.reject(new Error('denied')),
+      });
+      player.open({ play: true });
+      const ui = player.ui;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(player.active).toBe(false);
+      expect(ui.host.isConnected).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it('exits a late authored request after pending source loss without Play or reacquiring the host', async () => {
+      let resolve;
+      const pending = new Promise((yes) => {
+        resolve = yes;
+      });
+      const { player, video, parent, invalidate } = nativePlayer({ requestResult: pending });
+      player.open();
+      const ui = player.ui;
+      invalidate();
+      expect(ui.host.isConnected).toBe(false);
+      expect(document.exitFullscreen).not.toHaveBeenCalled();
+      document.fullscreenElement = parent;
+      resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(document.exitFullscreen).toHaveBeenCalledOnce();
+      expect(ui.host.isConnected).toBe(false);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it.each(['video', 'source', 'track'])(
+      'revokes delivered %s src write/restore history even when the final SDK certificate matches',
+      async (kind) => {
+        const { player, video, boundary } = nativePlayer();
+        const node = kind === 'video' ? video : document.createElement(kind);
+        if (node !== video) {
+          node.setAttribute('src', 'https://media.example.test/selected');
+          video.append(node);
+        }
+        player.open();
+        const ui = player.ui;
+        const original = node.getAttribute('src');
+        node.setAttribute('src', 'https://example.invalid/replacement');
+        node.setAttribute('src', original);
+        expect(boundary.current()).toBe(true);
+        await Promise.resolve();
+        expect(player.active).toBe(false);
+        expect(ui.host.isConnected).toBe(false);
+        expect(video.pause).not.toHaveBeenCalled();
+        expect(video.play).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['video', 'src'],
+      ['video', 'poster'],
+      ['source', 'src'],
+      ['source', 'type'],
+      ['source', 'media'],
+      ['track', 'src'],
+      ['track', 'kind'],
+      ['track', 'srclang'],
+      ['track', 'label'],
+      ['track', 'default'],
+    ])('drains pending %s %s history before a same-stack input write', (kind, attribute) => {
+      const { player, video, boundary } = nativePlayer();
+      const node = kind === 'video' ? video : document.createElement(kind);
+      if (node !== video) {
+        video.append(node);
+      }
+      node.setAttribute(attribute, 'original');
+      player.open();
+      node.setAttribute(attribute, 'replacement');
+      node.setAttribute(attribute, 'original');
+      expect(boundary.current()).toBe(true);
+      player.ui.refs.mute.click();
+      expect(video.muted).toBe(false);
+      expect(player.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it.each(['source', 'track'])(
+      'revokes a same-task %s insertion/removal before input',
+      (kind) => {
+        const { player, video } = nativePlayer();
+        player.open();
+        const foreign = document.createElement(kind);
+        video.append(foreign);
+        foreign.remove();
+        player.ui.refs.normal.click();
+        expect(player.controller.actionHandler.setSpeed).not.toHaveBeenCalled();
+        expect(player.active).toBe(false);
+      }
+    );
+
+    it('does not restore an old explicit Fit style after pending source history revoked authority', () => {
+      const { player, video } = nativePlayer();
+      video.style.objectFit = 'contain';
+      player.open();
+      player.ui.refs.fit.click();
+      expect(video.style.objectFit).toBe('cover');
+      const source = video.getAttribute('src');
+      video.setAttribute('src', 'https://example.invalid/replacement');
+      video.setAttribute('src', source);
+      const observer = new MutationObserver(() => {});
+      observer.observe(video, { attributes: true });
+      player.close();
+      expect(video.style.objectFit).toBe('cover');
+      expect(observer.takeRecords()).toEqual([]);
+      observer.disconnect();
+    });
+
+    it('drains source history created by a late SDK certificate read before authorizing input', () => {
+      const { player, video, boundary } = nativePlayer();
+      player.open();
+      const source = video.getAttribute('src');
+      boundary.current.mockImplementationOnce(() => {
+        video.setAttribute('src', 'https://example.invalid/replacement');
+        video.setAttribute('src', source);
+        return true;
+      });
+      player.ui.refs.mute.click();
+      expect(video.muted).toBe(false);
+      expect(player.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('drains source history created by the cleanup certificate before restoring Fit', () => {
+      const { player, video, boundary } = nativePlayer();
+      video.style.objectFit = 'contain';
+      player.open();
+      player.ui.refs.fit.click();
+      const source = video.getAttribute('src');
+      boundary.current.mockImplementationOnce(() => {
+        video.setAttribute('src', 'https://example.invalid/replacement');
+        video.setAttribute('src', source);
+        return true;
+      });
+      player.close();
+      expect(video.style.objectFit).toBe('cover');
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+    });
+
+    it('retains presentation across clock and ordinary style updates', async () => {
+      const { player, video } = nativePlayer();
+      player.open();
+      video.currentTime += 1;
+      video.dispatchEvent(new Event('timeupdate'));
+      video.style.opacity = '0.9';
+      await Promise.resolve();
+      expect(player.presentationCurrent()).toBe(true);
+      player.ui.refs.mute.click();
+      expect(video.muted).toBe(true);
+      expect(player.active).toBe(true);
+    });
+
+    it('does not let an older rejected request close a newer UI or its fullscreen', async () => {
+      let reject;
+      const pending = new Promise((yes, no) => {
+        reject = no;
+      });
+      const { player, parent } = nativePlayer({ requestResult: pending });
+      player.open();
+      player.close();
+      parent.requestFullscreen = vi.fn(() => {
+        document.fullscreenElement = parent;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        return Promise.resolve();
+      });
+      player.open();
+      const ui = player.ui;
+      reject(new Error('older denied'));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(player.active).toBe(true);
+      expect(player.ui).toBe(ui);
+      expect(ui.host.parentNode).toBe(parent);
+      expect(document.fullscreenElement).toBe(parent);
+      expect(document.exitFullscreen).not.toHaveBeenCalled();
+    });
+
+    it('releases a subscription that synchronously invalidates setup without leaving an observer', () => {
+      const { player, boundary, unsubscribe } = nativePlayer();
+      boundary.subscribe.mockImplementation((callback) => {
+        boundary.current.mockReturnValue(false);
+        callback();
+        return unsubscribe;
+      });
+      expect(player.open()).toBe(false);
+      expect(player.active).toBe(false);
+      expect(player.originObserver).toBeNull();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    });
+
+    it('never exits a newer foreign fullscreen target after source loss', () => {
+      const { player, invalidate } = nativePlayer();
+      player.open();
+      const foreign = document.createElement('div');
+      document.body.append(foreign);
+      document.fullscreenElement = foreign;
+      invalidate();
+      expect(document.exitFullscreen).not.toHaveBeenCalled();
+      expect(document.fullscreenElement).toBe(foreign);
+      foreign.remove();
+    });
+
+    it('does not reopen native presentation after pagehide/pageshow', () => {
+      const { player, parent } = nativePlayer();
+      player.open();
+      window.dispatchEvent(new Event('pagehide'));
+      window.dispatchEvent(new Event('pageshow'));
+      expect(player.active).toBe(false);
+      expect(parent.requestFullscreen).toHaveBeenCalledOnce();
+    });
+
+    it('closes UI only on a recycled original source event', () => {
+      const { player, video, controller } = nativePlayer();
+      player.open();
+      const observer = new MutationObserver(() => {});
+      observer.observe(video, { attributes: true });
+      video.dispatchEvent(new Event('loadstart'));
+      expect(player.active).toBe(false);
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(video.play).not.toHaveBeenCalled();
+      expect(controller.remove).not.toHaveBeenCalled();
+      expect(observer.takeRecords()).toEqual([]);
+      observer.disconnect();
+    });
+
+    it.each(['video', 'ancestor'])(
+      'removes its empty native HUD after a connected site %s moves elsewhere',
+      async (kind) => {
+        const { player, video, parent, controller } = nativePlayer();
+        player.open();
+        const ui = player.ui;
+        const destination = document.createElement('section');
+        document.body.append(destination);
+        destination.append(kind === 'video' ? video : parent);
+        await Promise.resolve();
+        expect(player.active).toBe(false);
+        expect(destination.contains(video)).toBe(true);
+        expect(video.isConnected).toBe(true);
+        expect(ui.host.childNodes).toHaveLength(0);
+        expect(ui.ownsTree()).toBe(true);
+        expect(ui.host.isConnected).toBe(false);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+        expect(controller.remove).not.toHaveBeenCalled();
+        parent.append(video);
+        document.body.append(parent);
+        destination.remove();
+      }
+    );
+
+    it('retains a foreign SVG caption subtree instead of treating tag names as ownership', () => {
+      const { player } = nativePlayer();
+      player.open();
+      const ui = player.ui;
+      const foreign = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.textContent = 'Foreign caption';
+      foreign.append(text);
+      ui.stage.append(foreign);
+      player.close();
+      expect(foreign.isConnected).toBe(true);
+      expect(foreign.parentNode).toBe(ui.stage);
+      ui.host.remove();
+    });
+
+    it.each(['light', 'closed shadow', 'owned closed shadow'])(
+      'retains a foreign tree if the original is adopted into its %s DOM',
+      (kind) => {
+        const { player, video } = nativePlayer();
+        player.open();
+        const ui = player.ui;
+        const target = kind === 'owned closed shadow' ? ui.stage : document.createElement('div');
+        if (target !== ui.stage) {
+          ui.host.append(target);
+        }
+        const destination = kind === 'light' ? target : target.attachShadow({ mode: 'closed' });
+        destination.append(video);
+        player.close();
+        expect(video.parentNode).toBe(destination);
+        expect(video.isConnected).toBe(true);
+        expect(ui.host.isConnected).toBe(true);
+        expect(video.pause).not.toHaveBeenCalled();
+        destination.removeChild(video);
+        document.body.append(video);
+        ui.host.remove();
+        video.remove();
+      }
+    );
+  });
+
   describe('scroll preservation across presentation boundaries', () => {
     function scrollingWindow(x = 25, y = 650) {
       vi.spyOn(window, 'scrollX', 'get').mockImplementation(() => x);

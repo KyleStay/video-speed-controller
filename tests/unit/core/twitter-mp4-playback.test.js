@@ -193,6 +193,2604 @@ describe('X retained MediaSource MP4 playback', () => {
     document.body.replaceChildren();
   });
 
+  describe('continuous-loop companion integration', () => {
+    let previousLoop, loopCtor, loops;
+
+    beforeEach(() => {
+      previousLoop = window.VSC.TwitterLoopPlayback;
+      loops = [];
+      original.currentTime = 1.25;
+      Object.defineProperty(original, 'duration', { configurable: true, value: 5 });
+      loopCtor = vi.fn(function (owner, callbacks) {
+        const video = owner.video;
+        this.owner = owner;
+        this.callbacks = callbacks;
+        this.ready = false;
+        this.holdingInitialRate = true;
+        video.playbackRate = 0;
+        this.readyState = 0;
+        this.closed = false;
+        this.time = owner.time;
+        this.source = `blob:https://x.com/continuous-${loops.length}`;
+        this.sources = [document.createElement('source'), document.createElement('source')];
+        this.sources[0].src = this.source;
+        this.sources[0].type = 'video/mp4';
+        this.sources[1].src = owner.candidate.sourceUrl;
+        this.sources[1].type = 'application/x-mpegURL';
+        video.append(...this.sources);
+        const transport = this;
+        // These getters model native source/readiness; only currentTime belongs to the transport.
+        Object.defineProperties(video, {
+          currentSrc: {
+            configurable: true,
+            get: () => video.getAttribute('src') || video.firstElementChild?.src || '',
+          },
+          readyState: { configurable: true, get: () => transport.readyState },
+          currentTime: {
+            configurable: true,
+            get: () => transport.time,
+            set: (value) => {
+              if (transport.seekError) {
+                throw transport.seekError;
+              }
+              transport.time = value;
+            },
+          },
+        });
+        this.sourceCurrent = () =>
+          !this.closed &&
+          !video.hasAttribute('src') &&
+          video.children.length === 2 &&
+          this.sources.every(
+            (source, index) =>
+              video.children[index] === source &&
+              source.src === (index === 0 ? this.source : owner.candidate.sourceUrl) &&
+              source.type === (index === 0 ? 'video/mp4' : 'application/x-mpegURL')
+          );
+        this.cleanup = vi.fn(() => {
+          if (this.closed) {
+            return;
+          }
+          this.closed = true;
+          delete video.currentTime;
+          for (const [index, source] of this.sources.entries()) {
+            if (
+              source.src === (index === 0 ? this.source : owner.candidate.sourceUrl) &&
+              source.type === (index === 0 ? 'video/mp4' : 'application/x-mpegURL')
+            ) {
+              source.remove();
+            }
+          }
+        });
+        this.prepared = () => {
+          if (this.closed || !owner.originCurrent() || !this.sourceCurrent()) {
+            return;
+          }
+          this.readyState = 4;
+          video.playbackRate = owner.rate;
+          this.holdingInitialRate = false;
+          this.ready = true;
+          callbacks.ready();
+        };
+        loops.push(this);
+      });
+      loopCtor.canUse = vi.fn(() => true);
+      window.VSC.TwitterLoopPlayback = loopCtor;
+    });
+
+    afterEach(() => {
+      window.VSC.TwitterLoopPlayback = previousLoop;
+    });
+
+    const deferPlay = () => {
+      let resolve, reject;
+      const promise = new Promise((accepted, refused) => {
+        resolve = accepted;
+        reject = refused;
+      });
+      nativePlay.mockImplementationOnce(function () {
+        mediaState(this).paused = false;
+        return promise;
+      });
+      return { resolve, reject };
+    };
+
+    describe('caption-owned MMS session', () => {
+      let caption, originalTrack, proveSource, proveAttachment;
+      beforeEach(() => {
+        originalTrack = { mode: 'showing' };
+        candidate.captionBinding = {
+          original,
+          track: originalTrack,
+          isCurrent: () => candidate.current(),
+        };
+        candidate.current.mockImplementation(
+          () => original.src === MSE && original.isConnected && originalTrack.mode === 'showing'
+        );
+        window.VSC.TwitterPlayer.resolve.mockReturnValue(null);
+        window.VSC.TwitterPlayer.resolveCaptionedLoop = vi.fn(() => candidate);
+        vi.spyOn(window.VSC.TwitterCaptionPlayback, 'createLoopOwner').mockImplementation(
+          (_binding, video) => {
+            const node = document.createElement('track'),
+              track = { mode: 'showing' };
+            let sourceReady = false,
+              attachmentReady = false;
+            caption = {
+              node,
+              track,
+              closed: false,
+              assigned: false,
+              promise: new Promise((resolve) => {
+                proveSource = () => {
+                  sourceReady = true;
+                  if (!caption.closed) {
+                    caption.assigned = true;
+                    node.src = 'blob:https://x.com/owned-caption';
+                  }
+                  resolve(caption);
+                };
+              }),
+              get mode() {
+                return caption.modeCertified === false ? undefined : track.mode;
+              },
+              attach: vi.fn(() => {
+                video.append(node);
+                Object.defineProperty(video, 'textTracks', { configurable: true, value: [track] });
+                return new Promise((resolve) => {
+                  proveAttachment = () => {
+                    attachmentReady = true;
+                    resolve();
+                  };
+                });
+              }),
+              setInvalidated: vi.fn((callback) => {
+                caption.invalidate = callback;
+              }),
+              isCurrent: () => !caption.closed && candidate.current(),
+              ownsTrack: (value) =>
+                !caption.closed &&
+                node.parentNode === value &&
+                (caption.assigned
+                  ? node.src === 'blob:https://x.com/owned-caption'
+                  : !node.hasAttribute('src')) &&
+                value.textTracks.length === 1 &&
+                value.textTracks[0] === track,
+              attestsInitialTrackWrite: (record) =>
+                record.type === 'attributes' &&
+                record.attributeName === 'src' &&
+                record.target === node &&
+                record.oldValue === null &&
+                caption.assigned &&
+                node.src === 'blob:https://x.com/owned-caption',
+              verifyEpoch: () => sourceReady && attachmentReady,
+              readyToPlay: () => sourceReady && attachmentReady,
+              cleanup: vi.fn(() => {
+                caption.closed = true;
+                node.remove();
+              }),
+            };
+            return caption;
+          }
+        );
+        vi.spyOn(window.VSC.TwitterCaptionPlayback, 'isLoopOwner').mockImplementation(
+          (value) => !!value && value === caption
+        );
+        const construct = loopCtor.getMockImplementation();
+        loopCtor.mockImplementation(function (owner, callbacks) {
+          construct.call(this, owner, callbacks);
+          const loop = this,
+            video = owner.video;
+          this.sourceCurrent = () =>
+            !loop.closed &&
+            !video.hasAttribute('src') &&
+            video.children.length === 3 &&
+            this.sources.every(
+              (source, index) =>
+                video.querySelectorAll('source')[index] === source &&
+                source.src === (index ? owner.candidate.sourceUrl : this.source)
+            ) &&
+            caption.ownsTrack(video);
+          this.nativeTime = () => this.time;
+          this.maybeReady = () => {
+            if (
+              loop.closed ||
+              !caption.verifyEpoch(0) ||
+              !caption.readyToPlay(this.time) ||
+              !owner.prepareLoopRelease()
+            ) {
+              return;
+            }
+            this.prepared();
+          };
+        });
+      });
+      async function prepared(session) {
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        loops[0].readyState = 4;
+        loops[0].maybeReady();
+        await Promise.resolve();
+        return session;
+      }
+
+      function nativeReadiness(session) {
+        const loop = loops[0],
+          video = session.video;
+        let seeking = false;
+        loop.video = video;
+        loop.captionOwner = caption;
+        loop.primed = true;
+        loop.authorityCurrent = () => session.current();
+        loop.verify = () => {
+          if (!session.current()) {
+            throw new Error('Session authority ended');
+          }
+        };
+        loop.native = {
+          playbackRate: {
+            get() {
+              return this.playbackRate;
+            },
+            set(value) {
+              this.playbackRate = value;
+            },
+          },
+        };
+        Object.defineProperty(original, 'seeking', {
+          configurable: true,
+          get: () => !!mediaState(original).seeking,
+        });
+        Object.defineProperty(video, 'seeking', { configurable: true, get: () => seeking });
+        Object.defineProperty(video, 'currentTime', {
+          configurable: true,
+          get: () => loop.time,
+          set(value) {
+            loop.time = value;
+            seeking = true;
+          },
+        });
+        loop.maybeReady = previousLoop.prototype.maybeReady.bind(loop);
+        session.listen(video, 'seeked', () => loop.maybeReady());
+        return {
+          loop,
+          settleSeek() {
+            seeking = false;
+            video.dispatchEvent(new Event('seeked'));
+          },
+        };
+      }
+
+      it('retains pending unlimited end-pause intent through the site restart and real native B seek readiness', async () => {
+        original.currentTime = 4.75;
+        const session = begin(4),
+          video = session.video;
+        const native = nativeReadiness(session);
+        session.finish();
+        await Promise.resolve();
+        mediaState(original).ended = true;
+        mediaState(original).paused = true;
+        original.currentTime = 5;
+        original.dispatchEvent(new Event('pause'));
+        expect(session.closed).toBe(false);
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        await Promise.resolve();
+        native.loop.readyState = 4;
+        native.loop.maybeReady();
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(video.playbackRate).toBe(0);
+        mediaState(original).ended = false;
+        mediaState(original).seeking = true;
+        original.currentTime = 0;
+        original.dispatchEvent(new Event('seeking'));
+        original.play();
+        original.dispatchEvent(new Event('playing'));
+        expect(session.closed).toBe(false);
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(video.playbackRate).toBe(0);
+        mediaState(original).seeking = false;
+        original.currentTime = 0.17;
+        original.dispatchEvent(new Event('seeked'));
+        expect(session.captionProducerPaused).toBe(true);
+        expect(video.currentTime).toBe(0.17);
+        expect(video.seeking).toBe(true);
+        expect(video.playbackRate).toBe(0);
+        expect(session.committed).toBe(false);
+        native.settleSeek();
+        expect(session.committed).toBe(true);
+        expect(video.playbackRate).toBe(4);
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(session.originalPause).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it('defers readiness in the ended gap even before pause delivery, and waits through seeked until actual site playing', async () => {
+        const session = begin(4),
+          native = nativeReadiness(session);
+        session.finish();
+        await Promise.resolve();
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        await Promise.resolve();
+        native.loop.readyState = 4;
+        original.currentTime = 5;
+        mediaState(original).ended = true;
+        mediaState(original).paused = true;
+        native.loop.maybeReady();
+        expect(session.closed).toBe(false);
+        expect(session.captionAwaitingRestart).toBe(true);
+        original.dispatchEvent(new Event('pause'));
+        mediaState(original).ended = false;
+        original.currentTime = 0;
+        mediaState(original).seeking = true;
+        original.dispatchEvent(new Event('seeking'));
+        mediaState(original).seeking = false;
+        original.dispatchEvent(new Event('seeked'));
+        expect(session.closed).toBe(false);
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(session.video.playbackRate).toBe(0);
+        original.play();
+        original.currentTime = 0.23;
+        original.dispatchEvent(new Event('playing'));
+        expect(session.time).toBe(0.23);
+        expect(session.video.seeking).toBe(true);
+        expect(session.video.playbackRate).toBe(0);
+        native.settleSeek();
+        expect(session.committed).toBe(true);
+        expect(nativePlay).toHaveBeenCalledOnce();
+        expect(originalPlay).toHaveBeenCalledOnce();
+      });
+
+      it('defers an in-flight producer seek and retries real B readiness only after settled original and B seeks', async () => {
+        const session = begin(4),
+          native = nativeReadiness(session);
+        session.finish();
+        await Promise.resolve();
+        mediaState(original).seeking = true;
+        original.currentTime = 3;
+        original.dispatchEvent(new Event('seeking'));
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        await Promise.resolve();
+        native.loop.readyState = 4;
+        native.loop.maybeReady();
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(session.video.playbackRate).toBe(0);
+        mediaState(original).seeking = false;
+        original.currentTime = 3.05;
+        original.dispatchEvent(new Event('seeked'));
+        expect(session.time).toBe(3.05);
+        expect(session.video.playbackRate).toBe(0);
+        expect(session.committed).toBe(false);
+        native.settleSeek();
+        expect(session.committed).toBe(true);
+        expect(nativePlay).toHaveBeenCalledOnce();
+        expect(originalPlay).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        'wrapped Pause',
+        'non-ended captured Pause',
+        'finite policy',
+        'source replacement',
+        'caption choice',
+        'DRM',
+        'live policy',
+        'timeout',
+      ])(
+        'does not implicitly resume or rewind a pre-ownership producer after %s during natural restart wait',
+        async (reason) => {
+          const capturedPause = original.pause,
+            session = begin(4),
+            native = nativeReadiness(session);
+          session.finish();
+          await Promise.resolve();
+          original.currentTime = 5;
+          mediaState(original).ended = true;
+          mediaState(original).paused = true;
+          original.dispatchEvent(new Event('pause'));
+          expect(session.closed).toBe(false);
+          if (reason === 'wrapped Pause') {
+            original.pause();
+          }
+          if (reason === 'non-ended captured Pause') {
+            mediaState(original).ended = false;
+            mediaState(original).paused = false;
+            capturedPause.call(original);
+            original.dispatchEvent(new Event('pause'));
+          }
+          if (reason === 'finite policy') {
+            candidate.loop = false;
+            candidate.current.mockReturnValue(false);
+            notify();
+          }
+          if (reason === 'source replacement') {
+            original.src = 'blob:https://x.com/replaced';
+            await Promise.resolve();
+          }
+          if (reason === 'caption choice') {
+            originalTrack.mode = 'disabled';
+            caption.invalidate();
+          }
+          if (reason === 'DRM') {
+            original.dispatchEvent(new Event('encrypted'));
+          }
+          if (reason === 'live policy') {
+            candidate.current.mockReturnValue(false);
+            notify();
+          }
+          if (reason === 'timeout') {
+            await vi.advanceTimersByTimeAsync(10001);
+          }
+          expect(session.closed).toBe(true);
+          expect(session.captionProducerPaused).toBe(false);
+          proveSource();
+          proveAttachment();
+          await Promise.resolve();
+          native.loop.maybeReady();
+          expect(session.committed).toBe(false);
+          expect(originalPlay).not.toHaveBeenCalled();
+          expect(original.load).not.toHaveBeenCalled();
+          expect(candidate.api.seekTo).not.toHaveBeenCalled();
+          expect(original.currentTime).toBe(5);
+          expect(nativePlay).toHaveBeenCalledOnce();
+        }
+      );
+
+      it('does not wait at EOF without an issued positive B Play intent or for a finite candidate', async () => {
+        const session = begin(4);
+        mediaState(original).ended = true;
+        mediaState(original).paused = true;
+        original.dispatchEvent(new Event('pause'));
+        expect(session.closed).toBe(true);
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+      });
+
+      it('retains producer playback until full caption proof and hands off its latest wrapped position using one B Play', async () => {
+        const session = begin(4),
+          video = session.video;
+        session.finish();
+        await Promise.resolve();
+        expect(caption.attach).toHaveBeenCalledOnce();
+        expect(caption.node.parentNode).toBe(video);
+        expect(video.playbackRate).toBe(0);
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(original.paused).toBe(false);
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        original.currentTime = 0.15;
+        original.dispatchEvent(new Event('seeking'));
+        original.play();
+        original.dispatchEvent(new Event('playing'));
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        expect(session.closed).toBe(false);
+        proveSource();
+        await Promise.resolve();
+        loops[0].readyState = 4;
+        loops[0].maybeReady();
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(video.playbackRate).toBe(0);
+        proveAttachment();
+        await Promise.resolve();
+        loops[0].maybeReady();
+        expect(session.originalPause).toHaveBeenCalledOnce();
+        expect(video.currentTime).toBe(0.15);
+        expect(video.playbackRate).toBe(4);
+        expect(session.committed).toBe(true);
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it.each([false, true])(
+        'retains a captured native Pause during caption preparation (event queued %s)',
+        async (queued) => {
+          const capturedPause = original.pause;
+          const session = begin(4),
+            video = session.video;
+          session.finish();
+          await Promise.resolve();
+          capturedPause.call(original);
+          if (!queued) {
+            original.dispatchEvent(new Event('pause'));
+          }
+          if (queued) {
+            await prepared(session);
+          }
+          expect(session.closed).toBe(true);
+          if (!queued) {
+            proveSource();
+            proveAttachment();
+            await Promise.resolve();
+            loops[0].maybeReady();
+          }
+          expect(session.committed).toBe(false);
+          expect(original.paused).toBe(true);
+          expect(nativePlay.mock.contexts).toEqual([video]);
+          expect(originalPlay).not.toHaveBeenCalled();
+          expect(original.load).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each([false, true])(
+        'recognizes only its issued native pause during release (event delayed %s)',
+        async (delayed) => {
+          original.pause.mockImplementation(function () {
+            mediaState(this).paused = true;
+            if (delayed) {
+              queueMicrotask(() => this.dispatchEvent(new Event('pause')));
+            } else {
+              this.dispatchEvent(new Event('pause'));
+            }
+          });
+          const request = deferPlay();
+          const session = begin(4);
+          session.finish();
+          await prepared(session);
+          expect(session.closed).toBe(false);
+          expect(session.committed).toBe(false);
+          request.resolve();
+          await Promise.resolve();
+          expect(session.committed).toBe(true);
+          expect(session.video.paused).toBe(false);
+          expect(nativePlay).toHaveBeenCalledOnce();
+          expect(originalPlay).not.toHaveBeenCalled();
+        }
+      );
+
+      it('keeps an initially paused caption handoff paused without issuing a pause-event exemption', async () => {
+        mediaState(original).paused = true;
+        const session = begin(4);
+        session.finish();
+        await prepared(session);
+        expect(session.committed).toBe(true);
+        expect(session.video.paused).toBe(true);
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+      });
+
+      it('does not treat a current metadata binding as full caption authority during preparation', async () => {
+        const session = begin(4);
+        session.finish();
+        caption.isCurrent = () => false;
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        loops[0].readyState = 4;
+        loops[0].maybeReady();
+        expect(candidate.current()).toBe(true);
+        expect(session.identityCurrent()).toBe(true);
+        expect(session.current()).toBe(false);
+        expect(session.video.playbackRate).toBe(0);
+        expect(session.originalPause).not.toHaveBeenCalled();
+        expect(session.committed).toBe(false);
+        caption.invalidate();
+      });
+
+      it('never replays B for a producer SDK Play after proof but before the first Play settles', async () => {
+        const request = deferPlay();
+        const session = begin(4),
+          video = session.video;
+        session.finish();
+        await prepared(session);
+        expect(session.captionProducerPaused).toBe(true);
+        expect(session.committed).toBe(false);
+        original.play();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        request.resolve();
+        await Promise.resolve();
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        expect(original.paused).toBe(false);
+      });
+
+      it('permits only the owner-certified asynchronous track source write during preparation', async () => {
+        const session = begin(4),
+          video = session.video;
+        session.finish();
+        proveSource();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(session.closed).toBe(false);
+        expect(session.nativeSourceIntent()).toBe(false);
+        expect(video.playbackRate).toBe(0);
+        caption.node.src = 'https://example.test/foreign.vtt';
+        expect(session.nativeSourceIntent()).toBe(true);
+        session.playbackFailed();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it('guards a throwing caption write certificate and does not resume the retained producer from that metadata failure', async () => {
+        const session = begin(4);
+        session.finish();
+        caption.attestsInitialTrackWrite = () => {
+          throw new Error('Caption certificate unavailable');
+        };
+        proveSource();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it('rejects a repeated track URL write even when it repeats the owned Blob', async () => {
+        const session = begin(4);
+        session.finish();
+        proveSource();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(session.closed).toBe(false);
+        caption.node.src = 'blob:https://x.com/owned-caption';
+        expect(session.nativeSourceIntent()).toBe(true);
+        session.playbackFailed();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).not.toHaveBeenCalled();
+      });
+
+      it('lets a newer producer Pause cancel pending caption preparation without a late Play or pause reversal', async () => {
+        const session = begin(4),
+          video = session.video;
+        session.finish();
+        await Promise.resolve();
+        original.pause();
+        expect(original.paused).toBe(true);
+        expect(session.closed).toBe(true);
+        expect(caption.cleanup).toHaveBeenCalledOnce();
+        proveSource();
+        proveAttachment();
+        await Promise.resolve();
+        loops[0].maybeReady();
+        expect(nativePlay.mock.contexts).toEqual([video]);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(video.getAttribute('src')).not.toBe(MP4);
+      });
+
+      it('rejects a foreign caption owner without invoking its cleanup or any media operation', () => {
+        const foreign = { cleanup: vi.fn(), attach: vi.fn() };
+        window.VSC.TwitterCaptionPlayback.createLoopOwner.mockReturnValueOnce(foreign);
+        expect(begin(4)).toBeNull();
+        expect(foreign.cleanup).not.toHaveBeenCalled();
+        expect(foreign.attach).not.toHaveBeenCalled();
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.pause).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it('does not copy technical pending B caption mode during a failed uncommitted handoff', async () => {
+        const request = deferPlay();
+        const session = begin(4);
+        session.finish();
+        await prepared(session);
+        expect(session.committed).toBe(false);
+        caption.track.mode = 'hidden';
+        session.playbackFailed();
+        expect(originalTrack.mode).toBe('showing');
+        request.resolve();
+        await Promise.resolve();
+        expect(originalTrack.mode).toBe('showing');
+      });
+
+      it.each(['unsupported', 'constructor failure', 'precommit failure'])(
+        'never falls back to progressive MP4 after caption MMS %s',
+        async (failure) => {
+          if (failure === 'unsupported') {
+            loopCtor.canUse.mockReturnValue(false);
+          }
+          if (failure === 'constructor failure') {
+            loopCtor.mockImplementationOnce(() => {
+              throw new Error('MMS unavailable');
+            });
+          }
+          const session = begin(4);
+          if (failure === 'precommit failure') {
+            session.finish();
+            await Promise.resolve();
+            loops[0].callbacks.failed(new Error('Caption append failed'));
+            expect(session.closed).toBe(true);
+            expect(session.video.getAttribute('src')).not.toBe(MP4);
+          } else {
+            expect(session).toBeNull();
+          }
+          expect(caption.cleanup).toHaveBeenCalledOnce();
+          expect(original.pause).not.toHaveBeenCalled();
+          expect(originalPlay).not.toHaveBeenCalled();
+          expect(original.load).not.toHaveBeenCalled();
+          expect(original.src).toBe(MSE);
+        }
+      );
+
+      it('hands a committed caption failure back with latest B caption mode without reloading MP4', async () => {
+        const session = begin(4);
+        session.finish();
+        await prepared(session);
+        caption.track.mode = 'hidden';
+        loops[0].callbacks.failed(new Error('Future caption epoch failed'));
+        expect(session.closed).toBe(true);
+        expect(originalTrack.mode).toBe('hidden');
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(session.video.getAttribute('src')).not.toBe(MP4);
+        expect(caption.cleanup).toHaveBeenCalledOnce();
+      });
+
+      it('hands back a committed B caption-off intent even when disabled native cues become null', async () => {
+        const session = begin(4);
+        session.finish();
+        await prepared(session);
+        caption.track.mode = 'disabled';
+        caption.track.cues = null;
+        caption.invalidate();
+        expect(originalTrack.mode).toBe('disabled');
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(caption.cleanup).toHaveBeenCalledOnce();
+      });
+
+      it.each(['refused cue certificate', 'invalid mode'])(
+        'does not grant an original caption-mode write for %s',
+        async (change) => {
+          const session = begin(4);
+          session.finish();
+          await prepared(session);
+          const writes = [];
+          let mode = 'showing';
+          Object.defineProperty(originalTrack, 'mode', {
+            configurable: true,
+            get: () => mode,
+            set: (value) => {
+              writes.push(value);
+              mode = value;
+            },
+          });
+          caption.track.mode = change === 'invalid mode' ? 'foreign-mode' : 'disabled';
+          if (change === 'refused cue certificate') {
+            caption.modeCertified = false;
+          }
+          caption.invalidate();
+          expect(writes).toEqual([]);
+          expect(originalTrack.mode).toBe('showing');
+          expect(original.load).not.toHaveBeenCalled();
+        }
+      );
+
+      it('preserves guarded position and playback handback when native caption mode assignment throws', async () => {
+        const session = begin(4);
+        session.finish();
+        await prepared(session);
+        session.video.currentTime = 3.5;
+        caption.track.mode = 'hidden';
+        Object.defineProperty(originalTrack, 'mode', {
+          configurable: true,
+          get: () => 'showing',
+          set: () => {
+            throw new Error('Native caption mode unavailable');
+          },
+        });
+        session.playbackFailed();
+        expect(original.currentTime).toBe(3.5);
+        expect(original.playbackRate).toBe(4);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+      });
+
+      it.each(['mode', 'source'])(
+        'preserves newer original %s intent when the caption owner invalidates',
+        async (change) => {
+          const session = begin(4);
+          session.finish();
+          await prepared(session);
+          caption.track.mode = 'disabled';
+          if (change === 'mode') {
+            originalTrack.mode = 'hidden';
+          } else {
+            original.src = 'blob:new-post';
+          }
+          caption.invalidate();
+          expect(session.closed).toBe(true);
+          expect(originalTrack.mode).toBe(change === 'mode' ? 'hidden' : 'showing');
+          expect(originalPlay).toHaveBeenCalledTimes(change === 'mode' ? 1 : 0);
+          expect(original.load).not.toHaveBeenCalled();
+          expect(caption.cleanup).toHaveBeenCalledOnce();
+        }
+      );
+    });
+
+    it('issues the single gesture-stack Play at native zero and commits only after preparation releases the requested rate', async () => {
+      const started = [];
+      nativePlay.mockImplementationOnce(function () {
+        started.push({ rate: this.playbackRate, time: this.currentTime });
+        mediaState(this).paused = false;
+        return Promise.resolve();
+      });
+      original.muted = false;
+      const session = begin(4);
+      const loop = loops[0];
+      expect(session.video.playbackRate).toBe(0);
+      session.finish();
+      await loaded(session);
+      expect(started).toEqual([{ rate: 0, time: 1.25 }]);
+      expect(session.committed).toBe(false);
+      expect(original.vsc).toBe(controller);
+      expect(session.video).toMatchObject({ muted: false, volume: 0.4, loop: true });
+      loop.prepared();
+      expect(session.committed).toBe(true);
+      expect(session.video.playbackRate).toBe(4);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(session.video.defaultPlaybackRate).toBe(1);
+      expect(original.src).toBe(MSE);
+    });
+
+    it('keeps absolute and genuine relative input on the retained producer while the companion rate is held', async () => {
+      controller.config.settings.lastSpeed = 2.1;
+      controller.config.save = vi.fn();
+      const handler = new window.VSC.ActionHandler(controller.config, null);
+      controller.actionHandler = handler;
+      vi.spyOn(handler, 'flashController').mockImplementation(() => {});
+      expect(handler.adjustSpeed(original, 2.1)).toBe(true);
+      const session = api().getPending(original),
+        loop = loops[0];
+      expect(session.video.playbackRate).toBe(0);
+      expect(handler.adjustSpeed(original, 0.1, { relative: true })).toBe(true);
+      expect(handler.adjustSpeed(original, 0.1, { relative: true })).toBe(true);
+      expect(original.playbackRate).toBe(2.3);
+      expect(session.video.playbackRate).toBe(0);
+      loop.prepared();
+      await Promise.resolve();
+      expect(session.committed).toBe(true);
+      expect(session.video.playbackRate).toBe(2.3);
+      expect(controller.config.settings.lastSpeed).toBe(2.3);
+      expect(nativePlay).toHaveBeenCalledOnce();
+    });
+
+    it('releases the latest rate after a genuine Pause without replaying a stale Play', async () => {
+      const pending = deferPlay();
+      const session = begin(2.1),
+        loop = loops[0];
+      session.finish();
+      begin(4);
+      original.pause();
+      expect(session.video.playbackRate).toBe(0);
+      loop.prepared();
+      expect(session.committed).toBe(true);
+      expect(session.video).toMatchObject({ playbackRate: 4, paused: true });
+      pending.resolve();
+      await Promise.resolve();
+      expect(session.video.paused).toBe(true);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+    });
+
+    it('uses the latest requested rate for verified MP4 fallback while native MMS is held at zero', async () => {
+      original.muted = false;
+      const session = begin(2.1),
+        loop = loops[0];
+      session.finish();
+      begin(4);
+      session.video.currentTime = 2.75;
+      expect(session.video.playbackRate).toBe(0);
+      loop.callbacks.failed(new Error('Native hold reset'));
+      expect(session.video).toMatchObject({
+        src: MP4,
+        playbackRate: 4,
+        currentTime: 2.75,
+        muted: false,
+        volume: 0.4,
+      });
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(original.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('retains the actual released native rate on precommit fallback after an accepted rate changed locally', async () => {
+      const waiting = deferPlay();
+      const session = begin(4),
+        loop = loops[0];
+      session.finish();
+      loop.prepared();
+      session.video.playbackRate = 3.6;
+      loop.callbacks.failed(new Error('Append failed after release'));
+      expect(session.video.playbackRate).toBe(3.6);
+      expect(session.video.src).toBe(MP4);
+      waiting.reject(new DOMException('Old MMS request', 'AbortError'));
+      await Promise.resolve();
+      expect(session.closed).toBe(false);
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(session.video.playbackRate).toBe(3.6);
+    });
+
+    it.each([false, true])(
+      'hands back the latest requested positive rate while native preparation is held (paused %s)',
+      (paused) => {
+        const session = begin(2.1);
+        original.playbackRate = 2.1;
+        session.finish();
+        begin(4);
+        original.playbackRate = 4;
+        if (paused) {
+          original.pause();
+        }
+        expect(session.video.playbackRate).toBe(0);
+        // The retained paused producer still owns position until companion commit.
+        original.currentTime = 2.75;
+        session.cleanup();
+        expect(original.playbackRate).toBe(4);
+        expect(original.currentTime).toBe(2.75);
+        expect(original.paused).toBe(paused);
+        expect(originalPlay).toHaveBeenCalledTimes(paused ? 0 : 1);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(original.src).toBe(MSE);
+      }
+    );
+
+    it('falls back synchronously on unsupported native zero without a partial Play or original load', async () => {
+      loopCtor.mockImplementationOnce((owner) => {
+        owner.video.playbackRate = 1;
+        throw new Error('Native zero rate unsupported');
+      });
+      const session = begin(4);
+      expect(session.video).toMatchObject({ src: MP4, playbackRate: 4 });
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+      session.finish();
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(original.src).toBe(MSE);
+    });
+
+    it.each(['original source', 'capability', 'teardown'])(
+      'does not release or commit held preparation after %s loss and a late Play result',
+      async (loss) => {
+        const waiting = deferPlay();
+        const session = begin(4),
+          loop = loops[0];
+        session.finish();
+        if (loss === 'original source') {
+          original.src = 'blob:new-post';
+          original.dispatchEvent(new Event('loadstart'));
+        }
+        if (loss === 'capability') {
+          candidate.current.mockReturnValue(false);
+        }
+        if (loss === 'teardown') {
+          session.cleanup({ resume: false });
+        }
+        loop.prepared();
+        waiting.resolve();
+        await Promise.resolve();
+        expect(session.video.playbackRate).toBe(0);
+        expect(session.committed).toBe(false);
+        expect(companionCtor).not.toHaveBeenCalled();
+        expect(nativePlay).toHaveBeenCalledOnce();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('requires both complete loop preparation and native Play acceptance before replacing the producer', async () => {
+      const pending = deferPlay();
+      const session = begin();
+      const loop = loops[0];
+      session.finish();
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(false);
+      expect(controller.remove).not.toHaveBeenCalled();
+      loop.prepared();
+      expect(session.committed).toBe(false);
+      expect(api().getPending(original)).toBe(session);
+      pending.resolve();
+      await Promise.resolve();
+      expect(session.committed).toBe(true);
+      expect(session.video.currentSrc).toBe(loop.source);
+      expect(controller.remove).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    const pendingLoopSeek = (session, loop) => {
+      let seeking = true;
+      Object.defineProperty(session.video, 'seeking', { configurable: true, get: () => seeking });
+      loop.readyState = 4;
+      return () => {
+        seeking = false;
+        session.video.dispatchEvent(new Event('seeked'));
+        loop.prepared();
+      };
+    };
+
+    it('keeps the producer controls while native Play is accepted but startup seeking is not ready', async () => {
+      const session = begin();
+      const loop = loops[0];
+      const settleSeek = pendingLoopSeek(session, loop);
+      session.finish();
+      await loaded(session);
+      expect(session.playReady).toBe(true);
+      expect(session.video.readyState).toBe(4);
+      expect(session.video.seeking).toBe(true);
+      expect(session.ready).toBe(false);
+      expect(session.committed).toBe(false);
+      expect(original.vsc).toBe(controller);
+      expect(controller.remove).not.toHaveBeenCalled();
+      settleSeek();
+      expect(session.video.seeking).toBe(false);
+      expect(session.committed).toBe(true);
+      expect(controller.remove).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('retains a newer Pause when startup seek readiness arrives before the old Play settles', async () => {
+      const pending = deferPlay();
+      const session = begin();
+      const loop = loops[0];
+      const settleSeek = pendingLoopSeek(session, loop);
+      session.finish();
+      await loaded(session);
+      original.pause();
+      expect(session.committed).toBe(false);
+      expect(session.video.paused).toBe(true);
+      settleSeek();
+      expect(session.committed).toBe(true);
+      expect(session.video.paused).toBe(true);
+      pending.reject(new DOMException('Initial Play was interrupted by Pause', 'AbortError'));
+      await Promise.resolve();
+      expect(session.closed).toBe(false);
+      expect(session.video.paused).toBe(true);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['producer source replacement', 'explicit teardown'])(
+      'ignores late startup readiness after %s',
+      async (reason) => {
+        const pending = deferPlay();
+        const session = begin();
+        const loop = loops[0];
+        const settleSeek = pendingLoopSeek(session, loop);
+        session.finish();
+        await loaded(session);
+        if (reason === 'producer source replacement') {
+          original.src = 'blob:https://x.com/new-item';
+          original.dispatchEvent(new Event('loadstart'));
+        } else {
+          session.cleanup({ resume: false });
+        }
+        expect(session.closed).toBe(true);
+        settleSeek();
+        pending.resolve();
+        await Promise.resolve();
+        expect(session.committed).toBe(false);
+        expect(controller.remove).not.toHaveBeenCalled();
+        expect(companionCtor).not.toHaveBeenCalled();
+        expect(loop.cleanup).toHaveBeenCalledOnce();
+        expect(api().getPending(original)).toBeNull();
+        expect(session.video.isConnected).toBe(false);
+        expect(nativePlay).toHaveBeenCalledOnce();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(original.src).toBe(
+          reason === 'producer source replacement' ? 'blob:https://x.com/new-item' : MSE
+        );
+      }
+    );
+
+    it('commits the latest requested speed after startup seeking completes without another Play', async () => {
+      const session = begin(2.1);
+      const loop = loops[0];
+      const settleSeek = pendingLoopSeek(session, loop);
+      original.playbackRate = 2.1;
+      session.finish();
+      await loaded(session);
+      expect(begin(4)).toBe(session);
+      original.playbackRate = 4;
+      session.finish({ speedCommand: true });
+      expect(session.committed).toBe(false);
+      expect(session.video.playbackRate).toBe(0);
+      settleSeek();
+      expect(session.committed).toBe(true);
+      expect(session.video.playbackRate).toBe(4);
+      expect(companionCtor.mock.calls[0].at(-1)).toBe(4);
+      expect(loopCtor).toHaveBeenCalledOnce();
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('starts first Play from the actual paused position and never rewinds it on a repeated finish', () => {
+      original.pause.mockImplementation(function () {
+        this.currentTime = 2.75;
+        mediaState(this).paused = true;
+      });
+      const session = begin();
+      const loop = loops[0];
+      expect(session.time).toBe(1.25);
+      original.currentTime = 2.25;
+      const starts = [];
+      nativePlay.mockImplementationOnce(function () {
+        starts.push(this.currentTime);
+        mediaState(this).paused = false;
+        return Promise.resolve();
+      });
+      expect(session.finish()).toBe(true);
+      expect(starts).toEqual([2.75]);
+      expect(session.time).toBe(2.75);
+      expect(loop.time).toBe(2.75);
+      expect(original.currentTime).toBe(2.75);
+      session.video.currentTime = 3.5;
+      expect(session.finish({ speedCommand: true })).toBe(true);
+      expect(session.video.currentTime).toBe(3.5);
+      expect(session.time).toBe(2.75);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      expect(session.originalPause).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('retains the latest paused position without starting playback', async () => {
+      mediaState(original).paused = true;
+      const session = begin();
+      const loop = loops[0];
+      original.currentTime = 2.75;
+      expect(session.finish()).toBe(true);
+      expect(session.time).toBe(2.75);
+      expect(session.video.currentTime).toBe(2.75);
+      loop.prepared();
+      await Promise.resolve();
+      expect(session.committed).toBe(true);
+      expect(session.video).toMatchObject({ currentTime: 2.75, paused: true });
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['no-op', 'exception'])(
+      'does not start a companion or rewind a still-playing producer after a %s Pause',
+      (failure) => {
+        original.pause.mockImplementation(() => {
+          if (failure === 'exception') {
+            throw new Error('Site Pause failed');
+          }
+        });
+        const session = begin();
+        const loop = loops[0];
+        original.currentTime = 2.75;
+        expect(() => session.finish()).not.toThrow();
+        expect(session.closed).toBe(true);
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({ src: MSE, currentTime: 2.75, paused: false });
+        expect(loop.cleanup).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('recovers the actual paused position if the first-play native target update throws', () => {
+      original.pause.mockImplementation(function () {
+        this.currentTime = 2.75;
+        mediaState(this).paused = true;
+      });
+      const session = begin();
+      const loop = loops[0];
+      loop.seekError = new Error('Native target update failed');
+      expect(() => session.finish()).not.toThrow();
+      expect(session.closed).toBe(true);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original).toMatchObject({ src: MSE, currentTime: 2.75, paused: false });
+      expect(candidate.api.seekTo.mock.calls.every(([time]) => time === 2.75)).toBe(true);
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('does not copy a replacement source position into the companion during handoff Pause', () => {
+      original.pause.mockImplementation(function () {
+        mediaState(this).paused = true;
+        this.src = 'blob:https://x.com/new-item';
+        this.currentTime = 4.25;
+      });
+      const session = begin();
+      const loop = loops[0];
+      expect(session.finish()).toBe(false);
+      expect(session.closed).toBe(true);
+      expect(loop.time).toBe(1.25);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(original).toMatchObject({ src: 'blob:https://x.com/new-item', currentTime: 4.25 });
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('recovers the actual paused position when capabilities change but the producer identity remains current', () => {
+      original.pause.mockImplementation(function () {
+        this.currentTime = 2.75;
+        mediaState(this).paused = true;
+        candidate.current.mockReturnValue(false);
+      });
+      const session = begin();
+      expect(session.finish()).toBe(false);
+      expect(session.closed).toBe(true);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original).toMatchObject({ src: MSE, currentTime: 2.75, paused: false });
+      expect(candidate.api.seekTo.mock.calls.every(([time]) => time === 2.75)).toBe(true);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('leaves the producer untouched when the initial native target setter rejects before finish', () => {
+      const constructLoop = loopCtor.getMockImplementation();
+      loopCtor.mockImplementationOnce(function (...args) {
+        constructLoop.apply(this, args);
+        this.seekError = new Error('Initial native target failed');
+      });
+      expect(begin()).toBeNull();
+      const loop = loops[0];
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+      expect(loop.closed).toBe(true);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(original.pause).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(original).toMatchObject({ src: MSE, currentTime: 1.25, paused: false });
+      expect(original.load).not.toHaveBeenCalled();
+      expect(loop.owner.video.hasAttribute('src')).toBe(false);
+      expect(api().getPending(original)).toBeNull();
+    });
+
+    it.each(['loader failure', 'native error', 'startup deadline'])(
+      'preserves the current request on the same verified MP4 after %s',
+      async (failure) => {
+        original.muted = false;
+        const pending = deferPlay();
+        const session = begin();
+        const loop = loops[0],
+          video = session.video;
+        session.finish();
+        video.currentTime = 3.5;
+        begin(2.1);
+        expect(video.playbackRate).toBe(0);
+        video.volume = 0.7;
+        if (failure === 'loader failure') {
+          loop.callbacks.failed(new Error('Unreadable fragments'));
+        } else if (failure === 'native error') {
+          video.dispatchEvent(new Event('error'));
+        } else {
+          await vi.advanceTimersByTimeAsync(10000);
+        }
+        expect(session.closed).toBe(false);
+        expect(session.video).toBe(video);
+        expect(video).toMatchObject({
+          src: MP4,
+          currentTime: 3.5,
+          playbackRate: 2.1,
+          muted: false,
+          volume: 0.7,
+        });
+        expect(loop.cleanup).toHaveBeenCalledOnce();
+        expect(original.load).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(nativePlay.mock.contexts).toEqual([video, video]);
+        pending.reject(new DOMException('Old MMS request aborted by MP4 load', 'AbortError'));
+        await Promise.resolve();
+        expect(session.closed).toBe(false);
+        loop.readyState = 4;
+        await loaded(session);
+        expect(session.committed).toBe(true);
+        expect(companionCtor).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('continues a rejected MMS Play on the same verified MP4 with its latest audible intent', async () => {
+      original.muted = false;
+      const pending = deferPlay();
+      const session = begin();
+      const loop = loops[0],
+        video = session.video;
+      session.finish();
+      video.currentTime = 3.5;
+      begin(2.1);
+      expect(video.playbackRate).toBe(0);
+      video.volume = 0.7;
+      pending.reject(new DOMException('MMS codec unavailable', 'NotSupportedError'));
+      await Promise.resolve();
+      expect(session.closed).toBe(false);
+      expect(session.video).toBe(video);
+      expect(video).toMatchObject({
+        src: MP4,
+        currentTime: 3.5,
+        playbackRate: 2.1,
+        muted: false,
+        volume: 0.7,
+      });
+      expect(nativePlay.mock.contexts).toEqual([video, video]);
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(companionCtor).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('hands back once when the MP4 continuation also rejects Play', async () => {
+      original.muted = false;
+      const pending = deferPlay();
+      const session = begin();
+      const loop = loops[0],
+        video = session.video;
+      session.finish();
+      nativePlay.mockRejectedValueOnce(new DOMException('Play refused', 'NotAllowedError'));
+      pending.reject(new DOMException('MMS codec unavailable', 'NotSupportedError'));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(session.closed).toBe(true);
+      expect(session.committed).toBe(false);
+      expect(nativePlay.mock.contexts).toEqual([video, video]);
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.muted).toBe(false);
+      expect(original.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(companionCtor).not.toHaveBeenCalled();
+      expect(api().getPending(original)).toBeNull();
+    });
+
+    it('keeps a new bounded MP4 deadline after the loop deadline expires', async () => {
+      deferPlay();
+      const session = begin();
+      session.finish();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(session.closed).toBe(false);
+      expect(session.video.src).toBe(MP4);
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(session.closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(session.closed).toBe(true);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(originalPlay).toHaveBeenCalledOnce();
+    });
+
+    it('does not resume a paused pending request when loop preparation fails', async () => {
+      const pending = deferPlay();
+      const session = begin();
+      const loop = loops[0];
+      session.finish();
+      original.pause();
+      loop.callbacks.failed(new Error('Unreadable fragments'));
+      expect(session.video.src).toBe(MP4);
+      expect(session.video.paused).toBe(true);
+      expect(nativePlay).toHaveBeenCalledOnce();
+      pending.reject(new DOMException('Interrupted old Play', 'AbortError'));
+      await Promise.resolve();
+      expect(session.closed).toBe(false);
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(session.video.paused).toBe(true);
+      expect(originalPlay).not.toHaveBeenCalled();
+    });
+
+    it('ignores queued MMS readiness until the MP4 continuation is actually ready', async () => {
+      const session = begin();
+      const loop = loops[0];
+      session.finish();
+      original.pause();
+      loop.callbacks.failed(new Error('Unreadable fragments'));
+      await loaded(session);
+      expect(session.committed).toBe(false);
+      expect(controller.remove).not.toHaveBeenCalled();
+      loop.readyState = 4;
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(session.video.paused).toBe(true);
+    });
+
+    it.each(['poster', 'src', 'source type'])(
+      'preserves a queued companion %s write instead of selecting the fallback',
+      async (change) => {
+        const session = begin();
+        const loop = loops[0];
+        session.finish();
+        nativePlay.mockClear();
+        if (change === 'source type') {
+          loop.sources[0].type = 'application/changed';
+        } else {
+          session.video.setAttribute(change, 'https://example.test/new-intent');
+        }
+        loop.callbacks.failed(new Error('Unreadable fragments'));
+        await Promise.resolve();
+        expect(session.closed).toBe(true);
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['source', 'SDK identity'])(
+      'does not write or play a continuation after original %s changes',
+      async (change) => {
+        const session = begin();
+        const loop = loops[0];
+        session.finish();
+        nativePlay.mockClear();
+        if (change === 'source') {
+          original.src = 'blob:https://x.com/new-item';
+        } else {
+          candidate.current.mockReturnValue(false);
+          candidate.identityCurrent.mockReturnValue(false);
+        }
+        loop.callbacks.failed(new Error('Unreadable fragments'));
+        await Promise.resolve();
+        expect(session.closed).toBe(true);
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('hands a committed loop back to its unchanged producer rather than reloading MP4', async () => {
+      const session = begin();
+      const loop = loops[0];
+      session.finish();
+      loop.prepared();
+      await Promise.resolve();
+      expect(session.committed).toBe(true);
+      session.video.currentTime = 2.75;
+      const load = vi.mocked(HTMLMediaElement.prototype.load);
+      load.mockClear();
+      loop.callbacks.failed(new Error('Native buffer failed'));
+      expect(session.closed).toBe(true);
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+      expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(2.75);
+      expect(original.src).toBe(MSE);
+      expect(original.load).not.toHaveBeenCalled();
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(load.mock.contexts).toEqual([session.video]);
+      session.cleanup();
+      expect(loop.cleanup).toHaveBeenCalledOnce();
+    });
+
+    it.each([false, true])(
+      'preserves accepted 4× and current clip intent on committed loop failure while paused=%s',
+      async (paused) => {
+        original.muted = false;
+        controller.config.settings.lastSpeed = 4;
+        controller.config.save = vi.fn();
+        const session = begin();
+        const loop = loops[0],
+          video = session.video;
+        expect(session.originalRate).toBe(1);
+        // ActionHandler applies the requested rate after creating the companion session.
+        original.playbackRate = 4;
+        session.finish();
+        expect(session.appliedOriginalRate).toBe(4);
+        loop.prepared();
+        await Promise.resolve();
+        expect(session.committed).toBe(true);
+        Object.assign(video, { currentTime: 2.75, playbackRate: 4, muted: paused, volume: 0.65 });
+        if (paused) {
+          video.pause();
+        }
+        const load = vi.mocked(HTMLMediaElement.prototype.load);
+        load.mockClear();
+        loop.callbacks.failed(new Error('Native buffer failed after accepted playback'));
+        expect(session.closed).toBe(true);
+        expect(loop.cleanup).toHaveBeenCalledOnce();
+        expect(original).toMatchObject({
+          src: MSE,
+          currentTime: 2.75,
+          playbackRate: 4,
+          muted: paused,
+          volume: 0.65,
+          paused,
+        });
+        expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(2.75);
+        expect(originalPlay).toHaveBeenCalledTimes(paused ? 0 : 1);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(load.mock.contexts).toEqual([video]);
+        expect(window.VSC.IOSPlayer.siteRelinquished.has(original)).toBe(true);
+        expect(controller.config.settings.lastSpeed).toBe(4);
+        expect(controller.config.save).not.toHaveBeenCalled();
+      }
+    );
+
+    it('retains the MP4 path if loop construction is unavailable', async () => {
+      loopCtor.mockImplementationOnce(() => {
+        throw new Error('MMS unavailable');
+      });
+      const session = begin();
+      session.finish();
+      await loaded(session);
+      expect(session.committed).toBe(true);
+      expect(session.video.src).toBe(MP4);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('does not construct a loop when the existing resolver vetoes the stream', () => {
+      window.VSC.TwitterPlayer.resolve.mockReturnValue(null);
+      expect(begin()).toBeNull();
+      expect(loopCtor).not.toHaveBeenCalled();
+      expect(original.pause).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['MP4', 'direct source'],
+      ['MMS', 'direct source'],
+      ['MMS', 'source child'],
+      ['MP4', 'reentrant direct source'],
+      ['MMS', 'reentrant source child'],
+    ])('does not unload foreign %s media after a %s replacement', async (kind, change) => {
+      const { session, loop, video, controls } = await relativeSession(kind);
+      const foreign = 'https://example.test/replacement.mp4';
+      const child = change.includes('source child') ? loop.sources[0] : null;
+      const replace = () => {
+        if (child) {
+          child.src = foreign;
+        } else {
+          video.src = foreign;
+        }
+      };
+      if (change.startsWith('reentrant')) {
+        controls.remove.mockImplementationOnce(() => {
+          replace();
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+      } else {
+        replace();
+      }
+      const load = vi.mocked(HTMLMediaElement.prototype.load);
+      load.mockClear();
+      nativePause.mockClear();
+      const pagePause = vi.fn();
+      video.pause = pagePause;
+      mediaState(video).paused = false;
+      const seek = vi.spyOn(HTMLMediaElement.prototype, 'currentTime', 'set');
+      const remove = video.remove;
+      const detach = vi.spyOn(video, 'remove').mockImplementation(function () {
+        expect(this.paused).toBe(true);
+        remove.call(this);
+      });
+      const removeAttribute = vi.spyOn(video, 'removeAttribute');
+      session.cleanup({ resume: false, reinitialize: false });
+      expect(session.closed).toBe(true);
+      expect(load.mock.contexts).not.toContain(video);
+      expect(nativePause.mock.contexts).toEqual([video]);
+      expect(pagePause).not.toHaveBeenCalled();
+      expect(video.paused).toBe(true);
+      expect(video.isConnected).toBe(false);
+      expect(detach).toHaveBeenCalledOnce();
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(seek).not.toHaveBeenCalled();
+      expect(removeAttribute).not.toHaveBeenCalledWith('src');
+      if (child) {
+        expect(child.parentNode).toBe(video);
+        expect(child.src).toBe(foreign);
+      } else {
+        expect(video.src).toBe(foreign);
+      }
+      expect(original.src).toBe(MSE);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['MP4', 'MMS'])(
+      'does not seek or resume the original after %s source replacement during default teardown',
+      async (kind) => {
+        const { session, loop, video, controls } = await relativeSession(kind);
+        const originalTime = original.currentTime,
+          originalRate = original.playbackRate,
+          foreign = 'https://example.test/replacement.mp4';
+        video.currentTime = 3.25;
+        controls.remove.mockImplementationOnce(() => {
+          if (loop) {
+            loop.sources[0].src = foreign;
+          } else {
+            video.src = foreign;
+          }
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        const load = vi.mocked(HTMLMediaElement.prototype.load);
+        load.mockClear();
+        session.cleanup();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({
+          src: MSE,
+          currentTime: originalTime,
+          playbackRate: originalRate,
+          paused: true,
+        });
+        expect(original.load).not.toHaveBeenCalled();
+        expect(load.mock.contexts).not.toContain(video);
+        if (loop) {
+          expect(loop.sources[0].parentNode).toBe(video);
+          expect(loop.sources[0].src).toBe(foreign);
+        } else {
+          expect(video.src).toBe(foreign);
+        }
+      }
+    );
+
+    it.each([
+      ['MP4', 'controller removal'],
+      ['MMS', 'controller removal'],
+      ['MP4', 'companion Pause'],
+      ['MMS', 'companion Pause'],
+    ])('honors a newer original Pause during %s %s', async (kind, phase) => {
+      const { session, video, controls } = await relativeSession(kind);
+      const originalTime = original.currentTime;
+      video.currentTime = 3.25;
+      expect(original.paused).toBe(true);
+      session.originalPause.mockClear();
+      if (phase === 'controller removal') {
+        controls.remove.mockImplementationOnce(() => {
+          original.pause();
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+      } else {
+        nativePause.mockImplementationOnce(function () {
+          mediaState(this).paused = true;
+          original.pause();
+        });
+      }
+      session.cleanup();
+      expect(session.closed).toBe(true);
+      expect(session.originalPause).toHaveBeenCalledOnce();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(original).toMatchObject({ src: MSE, currentTime: originalTime, paused: true });
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['MP4', 'MMS'])(
+      'does not duplicate a newer original Play during paused %s teardown',
+      async (kind) => {
+        const { session, video, controls } = await relativeSession(kind);
+        const originalTime = original.currentTime;
+        video.pause();
+        video.currentTime = 3.25;
+        controls.remove.mockImplementationOnce(() => {
+          original.play();
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        session.cleanup();
+        expect(session.closed).toBe(true);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({ src: MSE, currentTime: originalTime, paused: false });
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['MP4', 'MMS'])(
+      'still pauses its %s node before removal when post-controller source reads throw',
+      async (kind) => {
+        const { session, video, controls } = await relativeSession(kind);
+        const selectedSource = video.currentSrc || video.src;
+        let reads = 0;
+        const changedGetter = () => {
+          if (kind === 'MP4' && ++reads <= 2) {
+            return selectedSource;
+          }
+          throw new Error('Native source became inaccessible');
+        };
+        controls.remove.mockImplementationOnce(() => {
+          Object.defineProperty(video, 'currentSrc', { configurable: true, get: changedGetter });
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        const pagePause = vi.fn();
+        video.pause = pagePause;
+        mediaState(video).paused = false;
+        nativePause.mockClear();
+        const remove = video.remove;
+        const detach = vi.spyOn(video, 'remove').mockImplementation(function () {
+          expect(this.paused).toBe(true);
+          remove.call(this);
+        });
+        const load = vi.mocked(HTMLMediaElement.prototype.load);
+        load.mockClear();
+        expect(() => session.cleanup()).not.toThrow();
+        expect(session.closed).toBe(true);
+        expect(nativePause.mock.contexts).toEqual([video]);
+        expect(pagePause).not.toHaveBeenCalled();
+        expect(detach).toHaveBeenCalledOnce();
+        expect(video.paused).toBe(true);
+        expect(Object.getOwnPropertyDescriptor(video, 'currentSrc').get).toBe(changedGetter);
+        expect(load.mock.contexts).not.toContain(video);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['MP4', 'MMS'])(
+      'does not mistake an internal SDK seek Pause for newer intent during %s handback',
+      async (kind) => {
+        const { session, video } = await relativeSession(kind);
+        video.currentTime = 3.25;
+        candidate.api.seekTo.mockImplementation((time) => {
+          original.pause();
+          original.currentTime = time;
+        });
+        session.cleanup();
+        expect(candidate.api.seekTo).toHaveBeenCalledExactlyOnceWith(3.25);
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(original).toMatchObject({
+          src: MSE,
+          currentTime: 3.25,
+          playbackRate: 2.1,
+          paused: false,
+        });
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('preserves later page media methods while honoring a teardown Pause', async () => {
+      const { session, video, controls } = await relativeSession('MMS');
+      const pagePlay = vi.fn(),
+        pagePause = vi.fn();
+      video.currentTime = 3.25;
+      controls.remove.mockImplementationOnce(() => {
+        original.pause();
+        original.play = pagePlay;
+        original.pause = pagePause;
+        delete video.vsc;
+        api().controllerRemoved(video);
+      });
+      session.cleanup();
+      expect(original.play).toBe(pagePlay);
+      expect(original.pause).toBe(pagePause);
+      expect(pagePlay).not.toHaveBeenCalled();
+      expect(pagePause).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(candidate.api.seekTo).not.toHaveBeenCalled();
+      expect(original.paused).toBe(true);
+    });
+
+    it.each(['MP4', 'MMS'])(
+      'honors a replacement-first original Pause during %s teardown',
+      async (kind) => {
+        const { session, video, controls } = await relativeSession(kind);
+        const originalTime = original.currentTime,
+          originalRate = original.playbackRate;
+        video.currentTime = 3.25;
+        expect(original.paused).toBe(true);
+        session.originalPause.mockClear();
+        const pagePause = vi.fn(function () {
+          return session.originalPause.call(this);
+        });
+        controls.remove.mockImplementationOnce(() => {
+          original.pause = pagePause;
+          // Calling Pause on this already-paused producer need not emit an event.
+          original.pause();
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        session.cleanup();
+        expect(original.pause).toBe(pagePause);
+        expect(pagePause).toHaveBeenCalledOnce();
+        expect(session.originalPause).toHaveBeenCalledOnce();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({
+          src: MSE,
+          currentTime: originalTime,
+          playbackRate: originalRate,
+          paused: true,
+        });
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['MP4', 'MMS'])(
+      'preserves replacement-first original Play without a stale seek during %s teardown',
+      async (kind) => {
+        const { session, video, controls } = await relativeSession(kind);
+        const originalTime = original.currentTime,
+          originalRate = original.playbackRate;
+        video.pause();
+        video.currentTime = 3.25;
+        const pagePlay = vi.fn(function () {
+          return session.originalPlay.call(this);
+        });
+        controls.remove.mockImplementationOnce(() => {
+          original.play = pagePlay;
+          original.play();
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        session.cleanup();
+        expect(original.play).toBe(pagePlay);
+        expect(pagePlay).toHaveBeenCalledOnce();
+        expect(originalPlay).toHaveBeenCalledOnce();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({
+          src: MSE,
+          currentTime: originalTime,
+          playbackRate: originalRate,
+          paused: false,
+        });
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['MP4', 'MMS'])(
+      'does not restore stale playback after a throwing replacement getter during %s teardown',
+      async (kind) => {
+        const { session, video, controls } = await relativeSession(kind);
+        const originalTime = original.currentTime;
+        video.currentTime = 3.25;
+        const changedGetter = () => {
+          throw new Error('Page media method is inaccessible');
+        };
+        controls.remove.mockImplementationOnce(() => {
+          Object.defineProperty(original, 'pause', { configurable: true, get: changedGetter });
+          delete video.vsc;
+          api().controllerRemoved(video);
+        });
+        expect(() => session.cleanup()).not.toThrow();
+        expect(Object.getOwnPropertyDescriptor(original, 'pause').get).toBe(changedGetter);
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        expect(original).toMatchObject({ src: MSE, currentTime: originalTime, paused: true });
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    async function relativeSession(kind = 'MP4') {
+      loopCtor.canUse.mockReturnValue(kind !== 'MP4');
+      Object.assign(controller.config.settings, { lastSpeed: 2.1, rememberSpeed: true });
+      controller.config.speedPreferenceRevision = 3;
+      controller.config.save = vi.fn();
+      const handler = new window.VSC.ActionHandler(controller.config, null);
+      controller.actionHandler = handler;
+      vi.spyOn(handler, 'flashController').mockImplementation(() => {});
+      const session = begin(2.1);
+      session.finish();
+      const loop = loops.at(-1);
+      if (kind === 'MMS') {
+        loop.prepared();
+      } else {
+        if (loop) {
+          loop.callbacks.failed(new Error('Use verified MP4'));
+          loop.readyState = 4;
+        }
+        await loaded(session);
+      }
+      await Promise.resolve();
+      expect(session.committed).toBe(true);
+      const video = session.video,
+        controls = video.vsc,
+        config = controller.config;
+      const host = document.createElement('div');
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.innerHTML =
+        '<span class="draggable"></span><button class="touch-preset" data-value="4"></button>';
+      controls.div = host;
+      controls.speedIndicator = shadow.querySelector('.draggable');
+      window.VSC.ShadowDOMManager.updateSpeedDisplay(shadow, 2.1);
+      await vi.advanceTimersByTimeAsync(0);
+      config.save.mockClear();
+      const writes = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((target, rate) => {
+          target.playbackRate = rate;
+        });
+      nativePlay.mockClear();
+      return { session, loop, video, controls, handler, config, shadow, writes };
+    }
+
+    describe('committed fullscreen boundary certificate', () => {
+      function certificate() {
+        const boundary = {
+          element: original.parentElement,
+          current: vi.fn(() => true),
+          activate: vi.fn(() => true),
+        };
+        candidate.fullscreenBoundary = vi.fn(() => boundary);
+        return boundary;
+      }
+
+      it('does not consult site geometry for an original, unknown or pending companion', () => {
+        certificate();
+        const session = begin(4);
+        for (const video of [original, document.createElement('video'), session.video]) {
+          expect(window.VSC.TwitterMP4Playback.fullscreenBoundary(video)).toBeNull();
+        }
+        expect(candidate.fullscreenBoundary).not.toHaveBeenCalled();
+      });
+
+      it.each(['MP4', 'MMS'])(
+        'delegates only the exact committed %s companion without native playback writes',
+        async (kind) => {
+          const { video } = await relativeSession(kind);
+          const site = certificate();
+          const boundary = window.VSC.TwitterMP4Playback.fullscreenBoundary(video);
+          expect(boundary?.element).toBe(site.element);
+          expect(boundary.current()).toBe(true);
+          expect(site.activate).not.toHaveBeenCalled();
+          expect(boundary.activate()).toBe(true);
+          expect(site.activate).toHaveBeenCalledExactlyOnceWith();
+          expect(site.activate.mock.contexts[0]).toBe(site);
+          expect(nativePlay).not.toHaveBeenCalled();
+          expect(original.load).not.toHaveBeenCalled();
+          expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each([
+        'factory',
+        'element',
+        'current method',
+        'activate method',
+        'controller',
+        'companion source',
+        'companion poster',
+        'original source',
+        'site validity',
+        'cleanup',
+      ])('revokes a captured certificate after %s changes', async (kind) => {
+        const { session, video } = await relativeSession();
+        const site = certificate();
+        const activate = site.activate;
+        const boundary = window.VSC.TwitterMP4Playback.fullscreenBoundary(video);
+        expect(boundary?.current()).toBe(true);
+        switch (kind) {
+          case 'factory':
+            candidate.fullscreenBoundary = vi.fn(() => site);
+            break;
+          case 'element':
+            site.element = document.createElement('div');
+            break;
+          case 'current method':
+            site.current = vi.fn(() => true);
+            break;
+          case 'activate method':
+            site.activate = vi.fn(() => true);
+            break;
+          case 'controller':
+            video.vsc = { ...video.vsc };
+            break;
+          case 'companion source':
+            video.src = 'https://media.example.test/new.mp4';
+            break;
+          case 'companion poster':
+            video.poster = 'https://media.example.test/new.jpg';
+            break;
+          case 'original source':
+            original.src = 'blob:new-site-source';
+            break;
+          case 'site validity':
+            site.current.mockReturnValue(false);
+            break;
+          case 'cleanup':
+            session.cleanup({ resume: false });
+            break;
+        }
+        expect(boundary.current()).toBe(false);
+        expect(boundary.activate()).toBe(false);
+        expect(activate).not.toHaveBeenCalled();
+        expect(nativePlay).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        'original',
+        'companion',
+        'body',
+        'root',
+        'foreign document',
+        'throwing factory',
+        'throwing validity',
+      ])('declines a %s site boundary without native playback', async (kind) => {
+        const { video } = await relativeSession();
+        const site = certificate();
+        if (kind === 'original') {
+          site.element = original;
+        }
+        if (kind === 'companion') {
+          site.element = video;
+        }
+        if (kind === 'body') {
+          site.element = document.body;
+        }
+        if (kind === 'root') {
+          site.element = document.documentElement;
+        }
+        if (kind === 'foreign document') {
+          site.element = document.implementation.createHTMLDocument().body;
+        }
+        if (kind === 'throwing factory') {
+          candidate.fullscreenBoundary.mockImplementation(() => {
+            throw new Error('Page factory');
+          });
+        }
+        if (kind === 'throwing validity') {
+          site.current.mockImplementation(() => {
+            throw new Error('Page validity');
+          });
+        }
+        expect(window.VSC.TwitterMP4Playback.fullscreenBoundary(video)).toBeNull();
+        expect(site.activate).not.toHaveBeenCalled();
+        expect(nativePlay).not.toHaveBeenCalled();
+      });
+
+      it.each(['throw', 'source change', 'controller change'])(
+        'reports failed activation on %s without another playback request',
+        async (kind) => {
+          const { video } = await relativeSession('MMS');
+          const site = certificate();
+          site.activate.mockImplementation(() => {
+            if (kind === 'throw') {
+              throw new Error('New site state');
+            }
+            if (kind === 'source change') {
+              video.poster = 'https://media.example.test/new.jpg';
+            } else {
+              video.vsc = { ...video.vsc };
+            }
+            return true;
+          });
+          const boundary = window.VSC.TwitterMP4Playback.fullscreenBoundary(video);
+          expect(boundary.activate()).toBe(false);
+          expect(site.activate).toHaveBeenCalledOnce();
+          expect(nativePlay).not.toHaveBeenCalled();
+          expect(candidate.api.seekTo).not.toHaveBeenCalled();
+        }
+      );
+    });
+
+    it.each(['MP4', 'MMS', 'MP4 fallback'])(
+      'applies one accepted native/UI/persisted rate after a burst on %s',
+      async (kind) => {
+        const { session, video, controls, handler, config, shadow, writes } =
+          await relativeSession(kind);
+        for (let click = 0; click < 19; click++) {
+          expect(handler.adjustSpeed(video, 0.1, { relative: true })).toBe(false);
+        }
+        expect(session.requestedSpeed(controls)).toBe(4);
+        expect(video.playbackRate).toBe(2.1);
+        expect(config.settings.lastSpeed).toBe(2.1);
+        expect(controls.speedIndicator.dataset.speed).toBe('2.1');
+        expect(config.save).not.toHaveBeenCalled();
+        expect(writes).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(99);
+        expect(writes).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(writes).toHaveBeenCalledExactlyOnceWith(video, 4);
+        expect(video.playbackRate).toBe(4);
+        expect(config.settings.lastSpeed).toBe(4);
+        expect(controls.speedIndicator.dataset.speed).toBe('4');
+        expect(shadow.querySelector('.touch-preset').getAttribute('aria-pressed')).toBe('true');
+        expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 4 });
+        expect(session.requestedSpeed(controls)).toBeNull();
+        expect(nativePlay).not.toHaveBeenCalled();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it('starts the quiet interval at the last relative input and composes its pending target', async () => {
+      const { session, video, controls, handler, writes } = await relativeSession();
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      await vi.advanceTimersByTimeAsync(80);
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      expect(session.requestedSpeed(controls)).toBe(2.3);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(writes).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 2.3);
+    });
+
+    it.each(['preference', 'settings', 'revision', 'handler', 'method', 'disposed', 'disabled'])(
+      'does not accept a queued rate after its %s authority changes',
+      async (change) => {
+        const { session, video, controls, handler, config, writes } = await relativeSession();
+        handler.adjustSpeed(video, 0.1, { relative: true });
+        if (change === 'preference') {
+          config.settings.lastSpeed = 6;
+        }
+        if (change === 'settings') {
+          config.settings = { ...config.settings };
+        }
+        if (change === 'revision') {
+          config.speedPreferenceRevision++;
+        }
+        if (change === 'handler') {
+          controls.actionHandler = { setSpeed: vi.fn() };
+        }
+        if (change === 'method') {
+          handler.setSpeed = vi.fn();
+        }
+        if (change === 'disposed') {
+          controls.disposed = true;
+        }
+        if (change === 'disabled') {
+          config.settings.enabled = false;
+        }
+        await vi.advanceTimersByTimeAsync(100);
+        expect(writes).not.toHaveBeenCalled();
+        expect(config.save).not.toHaveBeenCalled();
+        expect(controls.speedIndicator.dataset.speed).toBe('2.1');
+        expect(session.pendingRelative).toBeNull();
+        expect(original.load).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      'original source',
+      'original poster',
+      'companion source',
+      'companion poster',
+      'SDK',
+      'navigation',
+    ])('does not write a queued rate after %s changes', async (change) => {
+      const { session, video, handler, config, writes } = await relativeSession();
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      if (change === 'original source') {
+        original.src = 'blob:https://x.com/new-item';
+      }
+      if (change === 'original poster') {
+        original.poster = 'https://example.test/new.jpg';
+      }
+      if (change === 'companion source') {
+        video.src = 'https://example.test/new.mp4';
+      }
+      if (change === 'companion poster') {
+        video.poster = 'https://example.test/new.jpg';
+      }
+      if (change === 'SDK') {
+        candidate.current.mockReturnValue(false);
+        candidate.identityCurrent.mockReturnValue(false);
+      }
+      if (change === 'navigation') {
+        vi.spyOn(document, 'URL', 'get').mockReturnValue('https://x.com/new-item');
+      }
+      await vi.advanceTimersByTimeAsync(100);
+      expect(writes).not.toHaveBeenCalled();
+      expect(config.save).not.toHaveBeenCalled();
+      expect(session.pendingRelative).toBeNull();
+      expect(session.closed).toBe(true);
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it.each(['original source', 'companion poster'])(
+      'consumes a new relative input after %s loss instead of falling through to a native write',
+      async (change) => {
+        const { session, video, handler, config, writes } = await relativeSession();
+        handler.adjustSpeed(video, 0.1, { relative: true });
+        if (change === 'original source') {
+          original.src = 'blob:https://x.com/new-item';
+        } else {
+          video.poster = 'https://example.test/new.jpg';
+        }
+        expect(handler.adjustSpeed(video, 0.1, { relative: true })).toBe(false);
+        await vi.advanceTimersByTimeAsync(100);
+        expect(session.closed).toBe(true);
+        expect(writes).not.toHaveBeenCalled();
+        expect(config.save).not.toHaveBeenCalled();
+        expect(config.settings.lastSpeed).toBe(2.1);
+        expect(originalPlay).not.toHaveBeenCalled();
+      }
+    );
+
+    it('begins a new batch from native acceptance after a saved-preference replacement', async () => {
+      const { session, video, controls, handler, config, writes } = await relativeSession();
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      config.settings.lastSpeed = 6;
+      config.speedPreferenceRevision++;
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      expect(session.requestedSpeed(controls)).toBe(2.2);
+      expect(config.settings.lastSpeed).toBe(6);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 2.2);
+      expect(config.settings.lastSpeed).toBe(2.2);
+      expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 2.2 });
+    });
+
+    it('hands back current accepted playback when only SDK capability is lost during queued input', async () => {
+      const { session, video, handler, config, writes } = await relativeSession('MMS');
+      video.currentTime = 3.25;
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      candidate.current.mockReturnValue(false);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(session.closed).toBe(true);
+      expect(session.pendingRelative).toBeNull();
+      expect(writes).not.toHaveBeenCalled();
+      expect(config.save).not.toHaveBeenCalled();
+      expect(config.settings.lastSpeed).toBe(2.1);
+      expect(original).toMatchObject({ src: MSE, currentTime: 3.25, playbackRate: 2.1 });
+      expect(originalPlay).toHaveBeenCalledOnce();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    it('keeps a queued speed change paused without requesting Play', async () => {
+      const { video, handler, writes } = await relativeSession();
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      video.pause();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 2.2);
+      expect(video.paused).toBe(true);
+      expect(nativePlay).not.toHaveBeenCalled();
+      expect(originalPlay).not.toHaveBeenCalled();
+    });
+
+    it('lets an absolute command cancel the batch and remain the only accepted rate', async () => {
+      const { session, video, controls, handler, config, writes } = await relativeSession();
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      expect(handler.adjustSpeed(video, 1.5)).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(session.pendingRelative).toBeNull();
+      expect(writes).toHaveBeenCalledExactlyOnceWith(video, 1.5);
+      expect(controls.speedIndicator.dataset.speed).toBe('1.5');
+      expect(config.settings.lastSpeed).toBe(1.5);
+      expect(config.save).toHaveBeenCalledExactlyOnceWith({ lastSpeed: 1.5 });
+    });
+
+    it('cancels queued input on handback and cannot persist or revive it later', async () => {
+      const { session, video, handler, config, writes } = await relativeSession('MMS');
+      handler.adjustSpeed(video, 0.1, { relative: true });
+      session.cleanup({ site: true, playing: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(session.pendingRelative).toBeNull();
+      expect(writes).not.toHaveBeenCalled();
+      expect(config.save).not.toHaveBeenCalled();
+      expect(original.playbackRate).toBe(2.1);
+      expect(original.paused).toBe(true);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+    });
+
+    async function idleLoopClips() {
+      const candidates = new Map();
+      window.VSC.TwitterPlayer.resolve.mockImplementation((video) => candidates.get(video));
+      const clips = Array.from({ length: 5 }, (_, index) => {
+        const video = document.createElement('video');
+        video.src = `${MSE}-${index}`;
+        video.currentTime = 1;
+        Object.defineProperty(video, 'currentSrc', { get: () => video.src });
+        video.play = vi.fn(() => Promise.resolve());
+        video.load = vi.fn();
+        mediaState(video).paused = false;
+        const parent = document.createElement('div');
+        parent.append(video);
+        document.body.append(parent);
+        const owner = {
+          video,
+          config: controller.config,
+          actionHandler: {},
+          iosPlayer: { active: false },
+          remove() {
+            this.disposed = true;
+            delete video.vsc;
+            api().controllerRemoved(video);
+          },
+        };
+        video.vsc = owner;
+        const metadata = {
+          ...candidate,
+          originalUrl: video.src,
+          progressiveUrl: `${MP4}?clip=${index}`,
+          current: vi.fn(() => video.isConnected),
+          identityCurrent: vi.fn(() => video.isConnected),
+          subscribe: vi.fn(() => vi.fn()),
+          api: { seekTo: vi.fn((time) => (video.currentTime = time)) },
+        };
+        candidates.set(video, metadata);
+        return { video, owner, metadata, play: video.play };
+      });
+      for (const clip of clips.slice(0, 4)) {
+        clip.session = api().begin(clip.owner, 4, 'init');
+        clip.session.finish();
+        clip.loop = loops.at(-1);
+        clip.loop.prepared();
+        await Promise.resolve();
+        expect(clip.session.committed).toBe(true);
+        clip.session.video.pause();
+        clip.session.video.getBoundingClientRect = () => new DOMRect(0, -1000, 320, 180);
+      }
+      return clips;
+    }
+
+    it('reclaims a paused offscreen loop through position-preserving handback without loading its producer', async () => {
+      const clips = await idleLoopClips();
+      const first = clips[0];
+      first.session.video.currentTime = 3.25;
+      const next = api().begin(clips[4].owner, 4, 'init');
+      expect(next).toBeTruthy();
+      expect(first.session.closed).toBe(true);
+      expect(first.loop.cleanup).toHaveBeenCalledOnce();
+      expect(first.metadata.api.seekTo).toHaveBeenCalledExactlyOnceWith(3.25);
+      expect(first.video.paused).toBe(true);
+      for (const clip of clips) {
+        expect(clip.video.load).not.toHaveBeenCalled();
+        expect(clip.play).not.toHaveBeenCalled();
+      }
+      expect(clips.slice(1, 4).every((clip) => !clip.session.closed)).toBe(true);
+    });
+
+    it('retains an idle loop slot for queued relative intent until that intent clears', async () => {
+      const clips = await idleLoopClips();
+      const first = clips[0];
+      first.session.video.currentTime = 3.25;
+      first.session.pendingRelative = {
+        controller: first.session.video.vsc,
+        target: 4.1,
+        source: 'internal',
+      };
+      for (const clip of clips.slice(1, 4)) {
+        clip.session.video.getBoundingClientRect = () => new DOMRect(0, 0, 320, 180);
+      }
+      expect(api().canBegin(clips[4].owner, 4, 'init')).toBe(false);
+      expect(api().begin(clips[4].owner, 4, 'init')).toBeNull();
+      expect(clips.slice(0, 4).every((clip) => !clip.session.closed)).toBe(true);
+      expect(first.loop.cleanup).not.toHaveBeenCalled();
+      expect(first.metadata.api.seekTo).not.toHaveBeenCalled();
+      first.session.pendingRelative = null;
+      const next = api().begin(clips[4].owner, 4, 'init');
+      expect(next).toBeTruthy();
+      expect(first.session.closed).toBe(true);
+      expect(first.loop.cleanup).toHaveBeenCalledOnce();
+      expect(first.metadata.api.seekTo).toHaveBeenCalledExactlyOnceWith(3.25);
+      expect(first.video.paused).toBe(true);
+      for (const clip of clips) {
+        expect(clip.video.load).not.toHaveBeenCalled();
+        expect(clip.play).not.toHaveBeenCalled();
+      }
+      expect(clips.slice(1, 4).every((clip) => !clip.session.closed)).toBe(true);
+    });
+  });
+
+  describe('strict real loop-loader fallback integration', () => {
+    const progressive = 'https://video.twimg.com/ext_tw_video/123/pu/vid/avc1/720x1280/clip.mp4';
+    let previousMMS, previousCreateURL, previousRevokeURL, fetchManifest, releaseManifest;
+    let requests, descriptors, failures, nativeSources;
+    const settleLoader = async () => {
+      for (let index = 0; index < 120; index++) {
+        await Promise.resolve();
+      }
+    };
+    function master(kind) {
+      const audio = (id, language = 'en') =>
+        `#EXT-X-MEDIA:NAME="Audio",TYPE=AUDIO,GROUP-ID="${id}",AUTOSELECT=YES,LANGUAGE="${language}",URI="mp4a/${id}/audio.m3u8"`;
+      const stream = (dimensions, group, path) => [
+        `#EXT-X-STREAM-INF:BANDWIDTH=2298669,RESOLUTION=${dimensions},CODECS="mp4a.40.2,avc1.64001F",AUDIO="${group}"`,
+        `avc1/${dimensions}/${path}.m3u8`,
+      ];
+      return [
+        '#EXTM3U',
+        '#EXT-X-VERSION:6',
+        '#EXT-X-INDEPENDENT-SEGMENTS',
+        audio('audio-high'),
+        ...(kind === 'audio semantics' ? [audio('audio-low', 'fr')] : []),
+        ...(kind === 'duplicate supplied dimensions' ? [audio('audio-low')] : []),
+        ...stream(
+          kind === 'missing supplied dimensions' ? '360x640' : '720x1280',
+          'audio-high',
+          'selected'
+        ),
+        ...(kind === 'duplicate supplied dimensions'
+          ? stream('720x1280', 'audio-low', 'duplicate')
+          : []),
+        ...(kind === 'audio semantics' ? stream('360x640', 'audio-low', 'other') : []),
+      ].join('\n');
+    }
+    const response = (text) => {
+      let sent = false;
+      return {
+        status: 200,
+        ok: true,
+        redirected: false,
+        type: 'cors',
+        url: candidate.sourceUrl,
+        body: {
+          getReader: () => ({
+            read: () =>
+              Promise.resolve(
+                sent
+                  ? { done: true }
+                  : ((sent = true),
+                    { done: false, value: Uint8Array.from(new TextEncoder().encode(text)) })
+              ),
+            cancel: vi.fn(() => Promise.resolve()),
+          }),
+        },
+      };
+    };
+
+    beforeEach(() => {
+      requests = [];
+      descriptors = [];
+      failures = [];
+      nativeSources = [];
+      previousMMS = window.ManagedMediaSource;
+      previousCreateURL = window.URL.createObjectURL;
+      previousRevokeURL = window.URL.revokeObjectURL;
+      original.currentTime = 1.25;
+      original.muted = false;
+      Object.defineProperty(original, 'duration', { configurable: true, value: 5 });
+      Object.defineProperty(original, 'audioTracks', {
+        configurable: true,
+        value: [{ enabled: true }],
+      });
+      candidate.progressiveUrl = progressive;
+      window.ManagedMediaSource = class extends EventTarget {
+        constructor() {
+          super();
+          this.readyState = 'closed';
+          this.addSourceBuffer = vi.fn(() => {
+            throw new Error('Rejected master must not initialize a decoder');
+          });
+          nativeSources.push(this);
+        }
+      };
+      window.URL.createObjectURL = vi.fn(() => 'blob:https://x.com/real-loader-companion');
+      window.URL.revokeObjectURL = vi.fn();
+      fetchManifest = vi.fn((url, options) => {
+        requests.push({ url, options });
+        if (url !== candidate.sourceUrl) {
+          throw new Error('Selection rejection must precede media requests');
+        }
+        return new Promise((resolve) => {
+          releaseManifest = resolve;
+        });
+      });
+      const create = window.VSC.TwitterLoopSource.create;
+      vi.spyOn(window.VSC.TwitterLoopSource, 'create').mockImplementation((descriptor) => {
+        descriptors.push(descriptor);
+        const load = create(descriptor, {
+          URL,
+          TextDecoder,
+          AbortController,
+          fetch: fetchManifest,
+          setTimeout: window.setTimeout.bind(window),
+          clearTimeout: window.clearTimeout.bind(window),
+        });
+        load.promise.catch((error) => failures.push(error));
+        return load;
+      });
+    });
+
+    afterEach(() => {
+      api().cleanupAll();
+      window.ManagedMediaSource = previousMMS;
+      window.URL.createObjectURL = previousCreateURL;
+      window.URL.revokeObjectURL = previousRevokeURL;
+    });
+
+    it.each([
+      ['duplicate supplied dimensions', false],
+      ['duplicate supplied dimensions', true],
+      ['missing supplied dimensions', false],
+      ['missing supplied dimensions', true],
+      ['audio semantics', false],
+      ['audio semantics', true],
+    ])(
+      'continues on the same supplied MP4 after %s rejection (paused %s)',
+      async (kind, paused) => {
+        let settleOldPlay;
+        nativePlay.mockImplementationOnce(function () {
+          mediaState(this).paused = false;
+          return new Promise((_resolve, reject) => {
+            settleOldPlay = reject;
+          });
+        });
+        const session = begin(2.1),
+          video = session.video;
+        expect(session.loopPlayback).toBeInstanceOf(window.VSC.TwitterLoopPlayback);
+        expect(descriptors[0].progressiveUrl).toBe(progressive);
+        session.finish();
+        expect(video.playbackRate).toBe(0);
+        begin(4);
+        video.currentTime = 2.75;
+        video.volume = 0.7;
+        if (paused) {
+          original.pause();
+        }
+        releaseManifest(response(master(kind)));
+        await settleLoader();
+        expect(requests.map(({ url }) => url)).toEqual([candidate.sourceUrl]);
+        expect(failures).toHaveLength(1);
+        expect(failures[0].code).toBe('ambiguous');
+        expect(nativeSources[0].addSourceBuffer).not.toHaveBeenCalled();
+        expect(session.video).toBe(video);
+        expect(video).toMatchObject({
+          src: progressive,
+          currentTime: 2.75,
+          playbackRate: 4,
+          muted: false,
+          volume: 0.7,
+          paused,
+        });
+        expect(nativePlay.mock.contexts).toEqual(paused ? [video] : [video, video]);
+        settleOldPlay(new DOMException('Old held MMS request interrupted', 'AbortError'));
+        await settleLoader();
+        Object.defineProperty(video, 'readyState', { configurable: true, value: 4 });
+        await loaded(session);
+        expect(session.committed).toBe(true);
+        expect(video.paused).toBe(paused);
+        expect(original.src).toBe(MSE);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(originalPlay).not.toHaveBeenCalled();
+        expect(window.URL.revokeObjectURL).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('preserves a source child and forbids unload after a foreign URL is restored before observer delivery', async () => {
+      const session = begin(4),
+        video = session.video;
+      session.finish();
+      const node = video.querySelector('source'),
+        value = node.getAttribute('src');
+      const loads = HTMLMediaElement.prototype.load.mock.calls.length;
+      node.src = 'https://example.test/foreign.mp4';
+      node.setAttribute('src', value);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(session.closed).toBe(true);
+      expect(node.parentNode).toBe(video);
+      expect(node.getAttribute('src')).toBe(value);
+      expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loads);
+      expect(originalPlay).not.toHaveBeenCalled();
+      expect(original.load).not.toHaveBeenCalled();
+      expect(window.URL.revokeObjectURL).toHaveBeenCalledOnce();
+    });
+
+    it.each(['source', 'capability'])(
+      'cancels the real pending manifest after %s loss without a late MP4 continuation',
+      async (loss) => {
+        const session = begin(4),
+          video = session.video;
+        session.finish();
+        expect(requests).toHaveLength(1);
+        if (loss === 'source') {
+          original.src = 'blob:new-post';
+          original.dispatchEvent(new Event('loadstart'));
+        } else {
+          candidate.current.mockReturnValue(false);
+          notify();
+        }
+        expect(session.closed).toBe(true);
+        expect(requests[0].options.signal.aborted).toBe(true);
+        const plays = nativePlay.mock.calls.length,
+          producerPlays = originalPlay.mock.calls.length;
+        releaseManifest(response(master('missing supplied dimensions')));
+        await settleLoader();
+        expect(video.getAttribute('src')).not.toBe(progressive);
+        expect(session.committed).toBe(false);
+        expect(nativePlay).toHaveBeenCalledTimes(plays);
+        expect(originalPlay).toHaveBeenCalledTimes(producerPlays);
+        expect(original.load).not.toHaveBeenCalled();
+        expect(nativeSources[0].addSourceBuffer).not.toHaveBeenCalled();
+        expect(window.URL.revokeObjectURL).toHaveBeenCalledOnce();
+      }
+    );
+  });
+
   describe('feed companion capacity', () => {
     let candidates;
     beforeEach(() => {

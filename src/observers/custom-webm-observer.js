@@ -16,6 +16,7 @@ class CustomWebMObserver {
     this.entries = new Map();
     this.attempts = new WeakMap();
     this.roots = new Set();
+    this.hasObservedMedia = false;
     this.active = window.VSC.IOSPlayer.isIOS(this.view);
     this.ready = (event) => {
       try {
@@ -64,6 +65,7 @@ class CustomWebMObserver {
       if (!this.active || original?.localName !== 'ogvjs') {
         return;
       }
+      this.hasObservedMedia ||= original.isConnected && original.ownerDocument === this.document;
       const prior = this.entries.get(original);
       if (prior) {
         if (!prior.current()) {
@@ -343,6 +345,26 @@ class CustomWebMObserver {
   remove(original) {
     this.entries.get(original)?.cleanup(false);
     this.attempts.delete(original);
+  }
+
+  /** Reconsider only a known decoder surface when its expansion changes. */
+  recheck(element) {
+    try {
+      if (!this.active) {
+        return;
+      }
+      if (element?.localName === 'ogvjs') {
+        this.consider(element);
+      } else if (element?.matches('.ogv-cnt.expandedWebm') && element.children.length <= 32) {
+        for (const child of element.children) {
+          if (child.localName === 'ogvjs') {
+            this.consider(child);
+          }
+        }
+      }
+    } catch {
+      // Unknown containers retain their existing renderer.
+    }
   }
 
   cleanup() {

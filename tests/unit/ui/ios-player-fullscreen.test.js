@@ -16,7 +16,7 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
-function setup({ prefixed = false, enabled = true } = {}) {
+function setup({ prefixed = false, enabled = true, beforeConstruct } = {}) {
   const host = document.createElement('vsc-ios-player');
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = '<div class="player"><button></button><p></p></div>';
@@ -59,6 +59,7 @@ function setup({ prefixed = false, enabled = true } = {}) {
   });
   screen[prefixed ? 'webkitRequestFullscreen' : 'requestFullscreen'] = request;
   property(document, prefixed ? 'webkitExitFullscreen' : 'exitFullscreen', exit);
+  beforeConstruct?.({ owner, ui, video, screen, request, exit });
   const helper = new window.VSC.IOSPlayerFullscreen(owner);
   helpers.push(helper);
   return { helper, owner, ui, video, screen, request, exit };
@@ -529,5 +530,308 @@ describe('owned DOM fullscreen', () => {
     expect(state.cancel).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledOnce();
     expect(helper.enter()).toBe(false);
+  });
+});
+
+describe('observed site fullscreen boundary', () => {
+  function boundarySetup({ paused = false, prefixed = false } = {}) {
+    let entry, original, boundary, native, bypass, play, pause, sibling;
+    const fixture = setup({
+      prefixed,
+      beforeConstruct({ owner, ui, video }) {
+        entry = document.createElement('section');
+        original = document.createElement('video');
+        original.src = 'blob:retained-producer';
+        entry.append(original);
+        document.body.append(entry);
+        sibling = document.createElement('aside');
+        ui.host.after(sibling);
+        property(video, 'paused', paused);
+        play = vi.spyOn(video, 'play').mockResolvedValue();
+        pause = vi.spyOn(video, 'pause').mockImplementation(() => {
+          video.paused = true;
+          video.dispatchEvent(new Event('pause'));
+        });
+        boundary = { element: entry, current: vi.fn(() => true), activate: vi.fn(() => true) };
+        property(window.VSC, 'TwitterMP4Playback', {
+          fullscreenBoundary: vi.fn((target) => (target === video ? boundary : null)),
+        });
+        bypass = vi.fn((target, invoke) => {
+          expect(target).toBe(owner);
+          return invoke();
+        });
+        property(window.VSC, 'IOSPlayerTakeover', { withNative: bypass });
+        native = vi.fn(() => {
+          document[prefixed ? 'webkitFullscreenElement' : 'fullscreenElement'] = entry;
+          document.dispatchEvent(
+            new Event(prefixed ? 'webkitfullscreenchange' : 'fullscreenchange')
+          );
+          return Promise.resolve();
+        });
+        entry[prefixed ? 'webkitRequestFullscreen' : 'requestFullscreen'] = native;
+      },
+    });
+    return { ...fixture, entry, original, boundary, native, bypass, play, pause, sibling };
+  }
+
+  it.each([false, true])(
+    'moves the same host only on explicit entry and restores its order (prefixed %s)',
+    async (prefixed) => {
+      const {
+        helper,
+        owner,
+        ui,
+        video,
+        entry,
+        original,
+        boundary,
+        native,
+        bypass,
+        play,
+        sibling,
+        exit,
+      } = boundarySetup({ prefixed });
+      const host = ui.host,
+        parent = host.parentNode,
+        mediaParent = video.parentNode;
+      expect(host.parentNode).toBe(document.body);
+      expect(boundary.activate).not.toHaveBeenCalled();
+      expect(native).not.toHaveBeenCalled();
+      expect(helper.enter()).toBe(true);
+      expect(host.parentNode).toBe(entry);
+      expect(video.parentNode).toBe(mediaParent);
+      expect(original.parentNode).toBe(entry);
+      expect(original.src).toBe('blob:retained-producer');
+      expect(boundary.activate).toHaveBeenCalledOnce();
+      expect(native).toHaveBeenCalledOnce();
+      expect(native.mock.contexts[0]).toBe(entry);
+      expect(bypass).toHaveBeenCalledOnce();
+      await flush();
+      expect(helper.owns()).toBe(true);
+      expect(helper.toggle()).toBe(true);
+      await flush();
+      expect(exit).toHaveBeenCalledOnce();
+      expect(ui.host).toBe(host);
+      expect(host.parentNode).toBe(parent);
+      expect(host.nextSibling).toBe(sibling);
+      expect(play).not.toHaveBeenCalled();
+      expect(owner.active).toBe(true);
+    }
+  );
+
+  it('preserves a genuine pause and never announces a paused entry as playing', async () => {
+    const { helper, video, pause, play, boundary, native } = boundarySetup();
+    video.pause();
+    expect(helper.enter()).toBe(true);
+    await flush();
+    expect(pause).toHaveBeenCalledOnce();
+    expect(video.paused).toBe(true);
+    expect(boundary.activate).not.toHaveBeenCalled();
+    expect(native).toHaveBeenCalledOnce();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it.each(['throw', 'reject'])(
+    'restores the same host after request %s without claiming site fullscreen',
+    async (failure) => {
+      const { helper, ui, entry, native, exit, play } = boundarySetup();
+      native.mockImplementation(() => {
+        document.fullscreenElement = entry;
+        if (failure === 'throw') {
+          throw new Error('Denied');
+        }
+        return Promise.reject(new Error('Denied'));
+      });
+      helper.enter();
+      await flush();
+      expect(ui.host.parentNode).toBe(document.body);
+      expect(helper.owns()).toBe(false);
+      helper.cleanup();
+      expect(exit).not.toHaveBeenCalled();
+      expect(document.fullscreenElement).toBe(entry);
+      expect(play).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not claim or exit preexisting site fullscreen on the same boundary', () => {
+    const { helper, ui, entry, native, boundary, exit } = boundarySetup();
+    document.fullscreenElement = entry;
+    expect(helper.owns()).toBe(false);
+    expect(helper.enter()).toBe(false);
+    expect(ui.host.parentNode).toBe(document.body);
+    expect(native).not.toHaveBeenCalled();
+    expect(boundary.activate).not.toHaveBeenCalled();
+    helper.cleanup();
+    expect(exit).not.toHaveBeenCalled();
+    expect(document.fullscreenElement).toBe(entry);
+  });
+
+  it.each(['source lease', 'different target', 'same host target'])(
+    'leaves a newer %s presentation alone',
+    async (loss) => {
+      const { helper, ui, entry, boundary, exit } = boundarySetup();
+      helper.enter();
+      await flush();
+      let newer = entry;
+      if (loss === 'source lease') {
+        boundary.current.mockReturnValue(false);
+      } else if (loss === 'same host target') {
+        newer = ui.host;
+      } else {
+        newer = document.createElement('div');
+        document.body.append(newer);
+      }
+      document.fullscreenElement = newer;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      expect(helper.owns()).toBe(false);
+      expect(ui.host.parentNode).toBe(document.body);
+      helper.cleanup();
+      expect(exit).not.toHaveBeenCalled();
+      expect(document.fullscreenElement).toBe(newer);
+    }
+  );
+
+  it.each(['removed', 'moved'])(
+    'never reacquires a host %s by the site while entry is pending',
+    async (loss) => {
+      const { helper, ui, native, entry, exit } = boundarySetup();
+      const waiting = deferred();
+      native.mockReturnValue(waiting.promise);
+      helper.enter();
+      const foreign = document.createElement('div');
+      document.body.append(foreign);
+      if (loss === 'removed') {
+        ui.host.remove();
+      } else {
+        foreign.append(ui.host);
+      }
+      waiting.reject(new Error('Denied'));
+      await flush();
+      expect(ui.host.parentNode).toBe(loss === 'removed' ? null : foreign);
+      expect(entry.contains(ui.host)).toBe(false);
+      expect(exit).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['source lease', 'entry removal', 'host removal'])(
+    'vetoes explicit entry after %s loss before any activation or native request',
+    (loss) => {
+      const { helper, ui, entry, boundary, native, play } = boundarySetup();
+      if (loss === 'source lease') {
+        boundary.current.mockReturnValue(false);
+      }
+      if (loss === 'entry removal') {
+        entry.remove();
+      }
+      if (loss === 'host removal') {
+        ui.host.remove();
+      }
+      expect(helper.enter()).toBe(false);
+      expect(boundary.activate).not.toHaveBeenCalled();
+      expect(native).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not enter when activation itself revokes the source lease', () => {
+    const { helper, ui, boundary, native, play } = boundarySetup();
+    boundary.activate.mockImplementation(() => {
+      boundary.current.mockReturnValue(false);
+      return true;
+    });
+    expect(helper.enter()).toBe(false);
+    expect(ui.host.parentNode).toBe(document.body);
+    expect(native).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it.each(['resolve', 'reject'])(
+    'does not claim a source-replaced boundary when an old pending request later %ss',
+    async (settlement) => {
+      const { helper, ui, entry, boundary, native, exit, play } = boundarySetup();
+      const waiting = deferred();
+      native.mockReturnValue(waiting.promise);
+      helper.enter();
+      boundary.current.mockReturnValue(false);
+      document.fullscreenElement = entry;
+      if (settlement === 'resolve') {
+        waiting.resolve();
+      } else {
+        waiting.reject(new Error('Old failure'));
+      }
+      await flush();
+      helper.cleanup();
+      expect(ui.host.parentNode).toBe(document.body);
+      expect(helper.owns()).toBe(false);
+      expect(exit).not.toHaveBeenCalled();
+      expect(document.fullscreenElement).toBe(entry);
+      expect(play).not.toHaveBeenCalled();
+    }
+  );
+
+  it('exits its late successful request after cleanup without reopening or playing', async () => {
+    const { helper, ui, native, entry, exit, play } = boundarySetup();
+    const waiting = deferred();
+    native.mockReturnValue(waiting.promise);
+    helper.enter();
+    helper.cleanup();
+    document.fullscreenElement = entry;
+    waiting.resolve();
+    await flush();
+    await flush();
+    expect(exit).toHaveBeenCalledOnce();
+    expect(ui.host.parentNode).toBe(document.body);
+    expect(native).toHaveBeenCalledOnce();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newer authored request on the same entry safe from an older settlement', async () => {
+    const { helper, owner, ui, entry, boundary, native, exit } = boundarySetup();
+    const old = deferred();
+    native.mockReturnValueOnce(old.promise);
+    helper.enter();
+    helper.cleanup();
+    // A new player instance owns another host but the same still-current site entry.
+    const second = document.createElement('vsc-ios-player');
+    const shadow = second.attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div><button></button><p></p></div>';
+    document.body.append(second);
+    owner.session++;
+    owner.ui = {
+      host: second,
+      shadow,
+      screen: shadow.querySelector('div'),
+      refs: { fullscreen: shadow.querySelector('button'), status: shadow.querySelector('p') },
+    };
+    boundary.current.mockReturnValue(true);
+    const newer = new window.VSC.IOSPlayerFullscreen(owner);
+    helpers.push(newer);
+    expect(newer.enter()).toBe(true);
+    await flush();
+    expect(newer.owns()).toBe(true);
+    old.resolve();
+    await flush();
+    expect(document.fullscreenElement).toBe(entry);
+    expect(exit).not.toHaveBeenCalled();
+    expect(newer.owns()).toBe(true);
+    expect(owner.ui.host.parentNode).toBe(entry);
+    expect(ui.host).not.toBe(owner.ui.host);
+  });
+
+  it('supports repeated explicit enter and browser exit without duplicating requests or hosts', async () => {
+    const { helper, ui, entry, native, boundary, play } = boundarySetup();
+    const host = ui.host;
+    for (let count = 0; count < 3; count++) {
+      expect(helper.enter()).toBe(true);
+      expect(helper.enter()).toBe(true);
+      await flush();
+      expect(entry.contains(host)).toBe(true);
+      document.fullscreenElement = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      expect(host.parentNode).toBe(document.body);
+    }
+    expect(native).toHaveBeenCalledTimes(3);
+    expect(boundary.activate).toHaveBeenCalledTimes(3);
+    expect(play).not.toHaveBeenCalled();
   });
 });

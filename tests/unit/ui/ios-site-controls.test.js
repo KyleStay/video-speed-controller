@@ -93,6 +93,83 @@ describe('scoped iOS site controls', () => {
     expect(getComputedStyle(group).display).not.toBe('none');
   });
 
+  function endedModernX() {
+    const result = nestedModernX();
+    result.play.setAttribute('aria-label', 'Replay');
+    const watch = document.createElement('button');
+    watch.setAttribute('aria-label', 'Watch again');
+    watch.textContent = 'Watch again';
+    const floating = document.createElement('div');
+    floating.className = 'pointer-events-none absolute z-1 flex bottom-3 start-3 inset-e-12';
+    const replay = document.createElement('button');
+    replay.dataset.slot = 'xds-button';
+    replay.setAttribute('aria-label', 'Replay');
+    floating.append(replay);
+    result.trigger.append(watch, floating);
+    return { ...result, watch, replay, floating };
+  }
+
+  it('hides the observed X end transports while retaining captions and unknown controls', () => {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const {
+      container,
+      video,
+      owner,
+      trigger,
+      play,
+      group,
+      caption,
+      button,
+      watch,
+      replay,
+      floating,
+    } = endedModernX();
+    const unknown = document.createElement('button');
+    unknown.setAttribute('aria-label', 'Try again');
+    trigger.append(unknown);
+    const nestedWatch = watch.cloneNode(true);
+    const unrelated = document.createElement('div');
+    unrelated.append(nestedWatch);
+    trigger.append(unrelated);
+    const source = video.src;
+    expect(owner.acquire()).toBe(true);
+    for (const control of [play, watch, replay, group]) {
+      expect(getComputedStyle(control).display).toBe('none');
+    }
+    for (const node of [trigger, floating, caption, button, unknown, unrelated, nestedWatch]) {
+      expect(getComputedStyle(node).display).not.toBe('none');
+    }
+    expect(video.parentElement).toBe(container);
+    expect(video.src).toBe(source);
+    owner.release();
+    for (const control of [play, watch, replay, group]) {
+      expect(getComputedStyle(control).display).not.toBe('none');
+    }
+  });
+
+  it.each(['unknown transport', 'second video', 'iframe', 'duplicate controls'])(
+    'does not recognize an X end state with %s',
+    (kind) => {
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      const { container, owner, trigger, play, group, watch } = endedModernX();
+      if (kind === 'unknown transport') {
+        play.setAttribute('aria-label', 'Start over');
+      }
+      if (kind === 'second video') {
+        container.append(document.createElement('video'));
+      }
+      if (kind === 'iframe') {
+        container.append(document.createElement('iframe'));
+      }
+      if (kind === 'duplicate controls') {
+        trigger.append(group.cloneNode(true));
+      }
+      expect(owner.acquire()).toBe(false);
+      expect(getComputedStyle(watch).display).not.toBe('none');
+      expect(container.hasAttribute(marker)).toBe(false);
+    }
+  );
+
   it.each(['wrong-wrapper', 'deeper-group', 'duplicate-group', 'second-video', 'iframe'])(
     'rejects a nested X lookalike with %s',
     (kind) => {

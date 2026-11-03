@@ -134,6 +134,7 @@ class IOSPlayer {
       }
       // Feeds reuse media nodes. Presentation and scroll restoration belong to
       // the old resource, never to the next item loaded into the same element.
+      const inPlace = Boolean(this.nativeBoundary);
       this.nativeGeneration++;
       this.setPresentationUnavailable(false);
       documentFullscreen = false;
@@ -143,6 +144,10 @@ class IOSPlayer {
       this.nativeScroll = null;
       this.scrollRestore?.cancel();
       this.close();
+      if (inPlace) {
+        this.nativeSession = false;
+        return;
+      }
       this.releaseMediaOwnership();
       this.nativeSession = false;
       this.dismissed = false;
@@ -203,7 +208,7 @@ class IOSPlayer {
       const pip = mode === 'picture-in-picture' || this.doc.pictureInPictureElement === this.video;
       if (pip) {
         // WebKit may report one PiP entry through two different events.
-        if (this.active) {
+        if (this.active && !this.nativeBoundary) {
           this.resumeAfterPip = true;
         }
         this.close();
@@ -219,7 +224,7 @@ class IOSPlayer {
     this.listen(this.video, 'enterpictureinpicture', presentationChanged);
     this.listen(this.video, 'leavepictureinpicture', presentationChanged);
     this.listen(this.view, 'pagehide', () => {
-      this.resumeOnShow = this.active;
+      this.resumeOnShow = this.active && !this.nativeBoundary;
       window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: false });
       this.close({ settle: false });
       this.scrollRestore?.cancel();
@@ -661,6 +666,24 @@ class IOSPlayer {
     this.nativeRecovery?.cancel();
     IOSPlayer.presentationRevision++;
     try {
+      const nativeBoundary = !options.automatic
+        ? window.VSC.TwitterPlayer?.resolveNativePresentation?.(this.video, this.video.parentNode)
+        : null;
+      if (nativeBoundary) {
+        if (!nativeBoundary.current()) {
+          return false;
+        }
+        const scroll = new window.VSC.IOSPlayerScrollState(this.video, true);
+        if (!this.openPresentation({ ...options, play: false, nativeBoundary })) {
+          scroll.cancel();
+          return false;
+        }
+        if (!this.ownedFullscreen.enter(scroll)) {
+          this.close();
+          return false;
+        }
+        return true;
+      }
       const staged = window.VSC.TwitterMP4Playback?.open(this.controller, options);
       if (staged !== null && staged !== undefined) {
         if (!staged && !options.automatic) {
@@ -684,6 +707,11 @@ class IOSPlayer {
       }
       return opened;
     } catch (error) {
+      if (this.nativeBoundary) {
+        this.close();
+        window.VSC.logger?.warn(`Owned player unavailable: ${error?.message}`);
+        return false;
+      }
       // A site can replace DOM/media APIs. Roll back rather than strand playback.
       try {
         this.cleanup();
@@ -709,7 +737,7 @@ class IOSPlayer {
     }
   }
 
-  openPresentation({ play = false, automatic = false } = {}) {
+  openPresentation({ play = false, automatic = false, nativeBoundary = null } = {}) {
     if (this.disposed || !this.attached || !this.video.isConnected) {
       return false;
     }
@@ -725,8 +753,10 @@ class IOSPlayer {
       IOSPlayer.siteRelinquished.delete(this.video);
       this.inlineRelinquished = false;
     }
-    this.enableInlinePlayback();
-    this.prepareMedia();
+    if (!nativeBoundary) {
+      this.enableInlinePlayback();
+      this.prepareMedia();
+    }
     if (this.active) {
       if (play) {
         this.play();
@@ -746,146 +776,262 @@ class IOSPlayer {
     this.pointerInteraction = true;
     this.controlPointers = new Set();
     this.focusBeforeOpen = this.doc.activeElement;
-    this.ui = new window.VSC.IOSPlayerView(this.doc);
-    this.portalNode = this.video;
-    const container = this.video.closest('.html5-video-player, .video-js, .plyr');
-    if (
-      container?.parentNode &&
-      container.querySelectorAll('video').length === 1 &&
-      !container.querySelector('iframe')
-    ) {
-      // Retain known players' DOM-rendered captions and their existing media parent.
-      this.portalNode = container;
-    }
-    this.originParent = this.portalNode.parentNode;
-    if (!this.originParent) {
-      this.ui.destroy();
-      return false;
-    }
-    this.pageScroll = new window.VSC.IOSPlayerScrollState(this.portalNode);
-    const rect = this.portalNode.getBoundingClientRect();
-    this.anchor = this.doc.createComment('StayFast player origin');
-    this.placeholder = this.doc.createElement('span');
-    this.placeholder.style.cssText = `display:block;width:${Math.max(0, rect.width)}px;max-width:100%;height:${Math.max(0, rect.height)}px;pointer-events:none;`;
-    // Margins contribute to the feed's scroll range too. Losing them can clamp
-    // a page/nested scroller at its end before the entry snapshot can restore it.
-    const portalStyle = this.view.getComputedStyle(this.portalNode);
-    for (const side of ['top', 'right', 'bottom', 'left']) {
-      this.placeholder.style.setProperty(
-        `margin-${side}`,
-        portalStyle.getPropertyValue(`margin-${side}`)
+    this.nativeBoundary = nativeBoundary;
+    this.ui = new window.VSC.IOSPlayerView(this.doc, { inPlace: Boolean(nativeBoundary) });
+    if (nativeBoundary) {
+      this.nativeSourceRevoked = false;
+      this.nativeSourceNodes = new Set(
+        Array.from(this.video.children).filter(
+          (node) => node.tagName === 'SOURCE' || node.tagName === 'TRACK'
+        )
       );
-    }
-    this.originParent.insertBefore(this.anchor, this.portalNode);
-    this.originParent.insertBefore(this.placeholder, this.portalNode);
-    this.originalSlot = this.portalNode.getAttribute('slot');
-    this.active = true;
-    // Fullscreen ownership is independent of whether inline targets could fit.
-    if (!this.mediaPrepared) {
-      this.prepareMedia();
-    }
-    IOSPlayer.activePlayers.set(this.doc, this);
-    this.doc.documentElement.append(this.ui.host);
-    this.portalNode.setAttribute('slot', 'media');
-    this.ui.host.append(this.portalNode); // Synchronous same-document move; retain src/MSE/DRM.
-    this.controlsLocked = false;
-    this.ownedFullscreen = new window.VSC.IOSPlayerFullscreen(this);
-
-    for (const [key, value] of Object.entries({
-      display: 'block',
-      position: 'relative',
-      width: '100%',
-      height: '100%',
-      'max-width': 'none',
-      'max-height': 'none',
-      'min-width': '0',
-      'min-height': '0',
-      'margin-top': '0px',
-      'margin-right': '0px',
-      'margin-bottom': '0px',
-      'margin-left': '0px',
-      'padding-top': '0px',
-      'padding-right': '0px',
-      'padding-bottom': '0px',
-      'padding-left': '0px',
-      transform: 'none',
-      visibility: 'visible',
-      opacity: '1',
-    })) {
-      this.ownStyle(this.portalNode, key, value);
-    }
-    for (const [key, value] of Object.entries({
-      width: '100%',
-      height: '100%',
-      'object-fit': 'contain',
-      'max-width': 'none',
-      'max-height': 'none',
-      position: this.portalNode === this.video ? 'relative' : 'absolute',
-      top: '0',
-      left: '0',
-      transform: 'none',
-      visibility: 'visible',
-      opacity: '1',
-    })) {
-      if (
-        this.portalNode !== this.video ||
-        ![
-          'width',
-          'height',
-          'position',
-          'max-width',
-          'max-height',
-          'transform',
-          'visibility',
-          'opacity',
-        ].includes(key)
+      this.nativeParents = [];
+      for (
+        let node = this.video;
+        node && this.nativeParents.length < 24;
+        node = node.parentNode || node.host
       ) {
-        this.ownStyle(this.video, key, value);
+        this.nativeParents.push([node, node.parentNode || node.host || null]);
       }
-    }
-    // WebKit evaluates native touch gestures on the light-DOM media surface;
-    // the shadow stage's touch-action does not reliably cover slotted video.
-    this.ownStyle(this.video, 'touch-action', 'none');
-    if (this.portalNode !== this.video) {
-      this.ownStyle(this.portalNode, 'touch-action', 'none');
+      this.active = true;
+      IOSPlayer.activePlayers.set(this.doc, this);
+      this.doc.documentElement.append(this.ui.host);
+      this.controlsLocked = false;
+      this.ownedFullscreen = new window.VSC.IOSPlayerFullscreen(this);
+    } else {
+      this.portalNode = this.video;
+      const container = this.video.closest('.html5-video-player, .video-js, .plyr');
+      if (
+        container?.parentNode &&
+        container.querySelectorAll('video').length === 1 &&
+        !container.querySelector('iframe')
+      ) {
+        // Retain known players' DOM-rendered captions and their existing media parent.
+        this.portalNode = container;
+      }
+      this.originParent = this.portalNode.parentNode;
+      if (!this.originParent) {
+        this.ui.destroy();
+        return false;
+      }
+      this.pageScroll = new window.VSC.IOSPlayerScrollState(this.portalNode);
+      const rect = this.portalNode.getBoundingClientRect();
+      this.anchor = this.doc.createComment('StayFast player origin');
+      this.placeholder = this.doc.createElement('span');
+      this.placeholder.style.cssText = `display:block;width:${Math.max(0, rect.width)}px;max-width:100%;height:${Math.max(0, rect.height)}px;pointer-events:none;`;
+      // Margins contribute to the feed's scroll range too. Losing them can clamp
+      // a page/nested scroller at its end before the entry snapshot can restore it.
+      const portalStyle = this.view.getComputedStyle(this.portalNode);
+      for (const side of ['top', 'right', 'bottom', 'left']) {
+        this.placeholder.style.setProperty(
+          `margin-${side}`,
+          portalStyle.getPropertyValue(`margin-${side}`)
+        );
+      }
+      this.originParent.insertBefore(this.anchor, this.portalNode);
+      this.originParent.insertBefore(this.placeholder, this.portalNode);
+      this.originalSlot = this.portalNode.getAttribute('slot');
+      this.active = true;
+      // Fullscreen ownership is independent of whether inline targets could fit.
+      if (!this.mediaPrepared) {
+        this.prepareMedia();
+      }
+      IOSPlayer.activePlayers.set(this.doc, this);
+      this.doc.documentElement.append(this.ui.host);
+      this.portalNode.setAttribute('slot', 'media');
+      this.ui.host.append(this.portalNode); // Synchronous same-document move; retain src/MSE/DRM.
+      this.controlsLocked = false;
+      this.ownedFullscreen = new window.VSC.IOSPlayerFullscreen(this);
+
+      for (const [key, value] of Object.entries({
+        display: 'block',
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        'max-width': 'none',
+        'max-height': 'none',
+        'min-width': '0',
+        'min-height': '0',
+        'margin-top': '0px',
+        'margin-right': '0px',
+        'margin-bottom': '0px',
+        'margin-left': '0px',
+        'padding-top': '0px',
+        'padding-right': '0px',
+        'padding-bottom': '0px',
+        'padding-left': '0px',
+        transform: 'none',
+        visibility: 'visible',
+        opacity: '1',
+      })) {
+        this.ownStyle(this.portalNode, key, value);
+      }
+      for (const [key, value] of Object.entries({
+        width: '100%',
+        height: '100%',
+        'object-fit': 'contain',
+        'max-width': 'none',
+        'max-height': 'none',
+        position: this.portalNode === this.video ? 'relative' : 'absolute',
+        top: '0',
+        left: '0',
+        transform: 'none',
+        visibility: 'visible',
+        opacity: '1',
+      })) {
+        if (
+          this.portalNode !== this.video ||
+          ![
+            'width',
+            'height',
+            'position',
+            'max-width',
+            'max-height',
+            'transform',
+            'visibility',
+            'opacity',
+          ].includes(key)
+        ) {
+          this.ownStyle(this.video, key, value);
+        }
+      }
+      // WebKit evaluates native touch gestures on the light-DOM media surface;
+      // the shadow stage's touch-action does not reliably cover slotted video.
+      this.ownStyle(this.video, 'touch-action', 'none');
+      if (this.portalNode !== this.video) {
+        this.ownStyle(this.portalNode, 'touch-action', 'none');
+      }
+      for (const node of [this.doc.documentElement, this.doc.body].filter(Boolean)) {
+        this.ownStyle(node, 'overflow', 'hidden');
+      }
+      if (this.portalNode !== this.video) {
+        this.siteStyle = this.doc.createElement('style');
+        this.siteStyle.textContent =
+          'vsc-ios-player .ytp-chrome-top,vsc-ios-player .ytp-chrome-bottom,vsc-ios-player .ytp-gradient-top,vsc-ios-player .ytp-gradient-bottom,vsc-ios-player .ytp-pause-overlay,vsc-ios-player .vjs-control-bar,vsc-ios-player .plyr__controls{display:none!important}';
+        this.portalNode.append(this.siteStyle);
+      }
     }
     if (this.controller.div) {
       this.ownStyle(this.controller.div, 'display', 'none');
     }
-    for (const node of [this.doc.documentElement, this.doc.body].filter(Boolean)) {
-      this.ownStyle(node, 'overflow', 'hidden');
-    }
-    if (this.portalNode !== this.video) {
-      this.siteStyle = this.doc.createElement('style');
-      this.siteStyle.textContent =
-        'vsc-ios-player .ytp-chrome-top,vsc-ios-player .ytp-chrome-bottom,vsc-ios-player .ytp-gradient-top,vsc-ios-player .ytp-gradient-bottom,vsc-ios-player .ytp-pause-overlay,vsc-ios-player .vjs-control-bar,vsc-ios-player .plyr__controls{display:none!important}';
-      this.portalNode.append(this.siteStyle);
-    }
     this.bindUI();
-    this.setFit(this.fit);
+    this.setFit(this.fit, !nativeBoundary);
+    if (!this.active) {
+      return false;
+    }
     this.scrubber = new window.VSC.IOSPlayerScrubber(this);
     this.scrubber.attach();
     this.gestures = new window.VSC.IOSPlayerGestures(this);
     this.gestures.attach();
     this.watchOrigin();
-    window.VSC.iosPlayerFrames?.activate(this.token);
+    if (!this.active) {
+      return false;
+    }
+    if (!nativeBoundary) {
+      window.VSC.iosPlayerFrames?.activate(this.token);
+    }
     try {
-      this.ui.dialog.showModal();
+      if (nativeBoundary) {
+        this.ui.dialog.show();
+      } else {
+        this.ui.dialog.showModal();
+      }
       this.ui.dialog.focus({ preventScroll: true });
     } catch {
       this.ui.dialog.setAttribute('open', '');
     }
     this.update();
     this.showControls();
-    this.pageScroll.restore();
-    if (play) {
+    this.pageScroll?.restore();
+    if (play && !nativeBoundary) {
       this.play();
     }
     return true;
   }
 
+  nativeSourceChanged(records = []) {
+    if (!this.nativeBoundary) {
+      return false;
+    }
+    for (const record of [...records, ...(this.originObserver?.takeRecords() || [])]) {
+      if (record.type === 'attributes') {
+        const names =
+          record.target === this.video
+            ? ['src', 'poster']
+            : this.nativeSourceNodes.has(record.target)
+              ? record.target.tagName === 'SOURCE'
+                ? ['src', 'type', 'media']
+                : ['src', 'kind', 'srclang', 'label', 'default']
+              : [];
+        if (names.includes(record.attributeName)) {
+          this.nativeSourceRevoked = true;
+        }
+      } else if (
+        record.type === 'childList' &&
+        record.target === this.video &&
+        [...record.addedNodes, ...record.removedNodes].some(
+          (node) =>
+            this.nativeSourceNodes.has(node) ||
+            node.tagName === 'SOURCE' ||
+            node.tagName === 'TRACK'
+        )
+      ) {
+        this.nativeSourceRevoked = true;
+      }
+    }
+    return this.nativeSourceRevoked;
+  }
+
+  presentationCurrent(records) {
+    if (!this.nativeBoundary) {
+      return true;
+    }
+    try {
+      if (
+        !this.nativeSourceChanged(records) &&
+        this.active &&
+        this.ui.host.isConnected &&
+        this.nativeBoundary.current() &&
+        (!this.ownedFullscreen || this.ownedFullscreen.current()) &&
+        this.nativeParents.every(
+          ([node, parent]) => (node.parentNode || node.host || null) === parent
+        ) &&
+        !this.nativeSourceChanged()
+      ) {
+        return true;
+      }
+    } catch {
+      // A revoked SDK or DOM certificate grants no further media writes.
+    }
+    this.close();
+    return false;
+  }
+
   bindUI() {
     const { refs } = this.ui;
+    if (this.nativeBoundary) {
+      const guard = (event) => {
+        if (!this.presentationCurrent()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      };
+      for (const type of [
+        'click',
+        'dblclick',
+        'pointerdown',
+        'pointermove',
+        'pointerup',
+        'touchstart',
+        'touchmove',
+        'touchend',
+        'keydown',
+        'input',
+        'change',
+      ]) {
+        this.listen(this.ui.shadow, type, guard, true, { capture: true });
+      }
+    }
     const click = (node, callback) =>
       this.listen(
         node,
@@ -1328,6 +1474,26 @@ class IOSPlayer {
   }
 
   watchOrigin() {
+    if (this.nativeBoundary) {
+      const ui = this.ui;
+      const session = this.session;
+      const remove = this.nativeBoundary.subscribe(() => this.presentationCurrent());
+      if (!this.active || this.ui !== ui || this.session !== session) {
+        remove?.();
+        return;
+      }
+      if (typeof remove !== 'function') {
+        this.close();
+        return;
+      }
+      this.nativeUnsubscribe = remove;
+      this.originObserver = new this.view.MutationObserver((records) =>
+        this.presentationCurrent(records)
+      );
+      this.originObserver.observe(this.doc, { childList: true, subtree: true });
+      this.originObserver.observe(this.video, { attributes: true, childList: true, subtree: true });
+      return;
+    }
     this.originObserver = new this.view.MutationObserver(() => {
       if (
         this.active &&
@@ -1370,6 +1536,9 @@ class IOSPlayer {
   }
 
   play() {
+    if (!this.presentationCurrent()) {
+      return;
+    }
     const session = this.session;
     const ui = this.ui;
     const source = this.scrubber?.captureSource();
@@ -1473,6 +1642,9 @@ class IOSPlayer {
   }
 
   seekTo(value) {
+    if (!this.presentationCurrent()) {
+      return false;
+    }
     if (this.controlsLocked) {
       return false;
     }
@@ -1530,13 +1702,25 @@ class IOSPlayer {
     this.showControls();
   }
 
-  setFit(mode) {
+  setFit(mode, writeMedia = true) {
+    if (!this.presentationCurrent()) {
+      return;
+    }
     if (!this.active || !['contain', 'cover'].includes(mode)) {
       return;
     }
     this.fit = mode;
     this.ui.host.style.setProperty('--stayfast-video-fit', mode);
-    this.video.style.setProperty('object-fit', mode, 'important');
+    if (writeMedia) {
+      if (
+        this.nativeBoundary &&
+        !this.styles.some((item) => item.node === this.video && item.property === 'object-fit')
+      ) {
+        this.ownStyle(this.video, 'object-fit', mode);
+      } else {
+        this.video.style.setProperty('object-fit', mode, 'important');
+      }
+    }
     const owned = this.styles.find(
       (item) => item.node === this.video && item.property === 'object-fit'
     );
@@ -1544,7 +1728,7 @@ class IOSPlayer {
       owned.value = this.video.style.getPropertyValue('object-fit');
     }
     const fill = mode === 'cover';
-    window.VSC.ShadowDOMManager.setControlIcon(this.ui.refs.fit, fill ? 'contract' : 'expand');
+    this.ui.setIcon(this.ui.refs.fit, fill ? 'contract' : 'expand');
     this.ui.refs.fit.setAttribute('aria-pressed', String(fill));
     this.ui.refs.fit.setAttribute(
       'aria-label',
@@ -1573,6 +1757,9 @@ class IOSPlayer {
   }
 
   applySpeed(speed) {
+    if (!this.presentationCurrent()) {
+      return false;
+    }
     this.captionSpeedStatus = null;
     const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
     if (!Number.isFinite(speed) || speed < MIN || speed > MAX) {
@@ -1649,7 +1836,7 @@ class IOSPlayer {
   }
 
   update() {
-    if (!this.active || this.controlsLocked) {
+    if (!this.active || this.controlsLocked || !this.presentationCurrent()) {
       return;
     }
     const { refs } = this.ui;
@@ -1663,16 +1850,13 @@ class IOSPlayer {
     if (refs.current.style.minWidth !== timeWidth) {
       refs.current.style.minWidth = timeWidth;
     }
-    window.VSC.ShadowDOMManager.setControlIcon(
-      refs.play,
-      this.video.ended ? 'replay' : this.video.paused ? 'play' : 'pause'
-    );
+    this.ui.setIcon(refs.play, this.video.ended ? 'replay' : this.video.paused ? 'play' : 'pause');
     setControlAttribute(
       refs.play,
       'aria-label',
       this.video.ended ? 'Replay video' : this.video.paused ? 'Play video' : 'Pause video'
     );
-    window.VSC.ShadowDOMManager.setControlIcon(refs.mute, this.video.muted ? 'muted' : 'sound');
+    this.ui.setIcon(refs.mute, this.video.muted ? 'muted' : 'sound');
     setControlAttribute(refs.mute, 'aria-label', this.video.muted ? 'Unmute video' : 'Mute video');
     const selectedTime = this.scrubber?.active
       ? this.scrubber.formatTime(position)
@@ -1718,7 +1902,7 @@ class IOSPlayer {
     this.ui.updateSeekProgress?.();
     const rate = String(this.video.playbackRate);
     if (!Array.from(refs.speed.options).some((option) => option.value === rate)) {
-      const option = this.doc.createElement('option');
+      const option = this.ui.createOption();
       option.value = rate;
       option.textContent = `${rate}×`;
       option.disabled = Number(rate) > window.VSC.Constants.SPEED_LIMITS.MAX;
@@ -1740,12 +1924,12 @@ class IOSPlayer {
     if (signature !== this.trackSignature) {
       this.trackSignature = signature;
       refs.captions.replaceChildren();
-      const off = this.doc.createElement('option');
+      const off = this.ui.createOption();
       off.value = 'off';
       off.textContent = 'Captions off';
       refs.captions.append(off);
       tracks.forEach((track, index) => {
-        const option = this.doc.createElement('option');
+        const option = this.ui.createOption();
         option.value = String(index);
         option.textContent = track.label || track.language || `Track ${index + 1}`;
         refs.captions.append(option);
@@ -1763,7 +1947,7 @@ class IOSPlayer {
       this.audioSignature = audioSignature;
       refs.audio.replaceChildren();
       audio.forEach((track, index) => {
-        const option = this.doc.createElement('option');
+        const option = this.ui.createOption();
         option.value = String(index);
         option.textContent = track.label || track.language || `Audio ${index + 1}`;
         refs.audio.append(option);
@@ -1805,9 +1989,20 @@ class IOSPlayer {
     this.captionSpeedStatus = null;
     this.nativeRecovery?.cancel();
     IOSPlayer.presentationRevision++;
-    window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: !this.disposed });
+    if (!this.nativeBoundary) {
+      window.VSC.TwitterMP4Playback?.cancelPresentation(this.video, { resume: !this.disposed });
+    }
     if (!this.active) {
       return;
+    }
+    let nativeCurrent = false;
+    try {
+      nativeCurrent =
+        !this.nativeSourceChanged() &&
+        this.nativeBoundary?.current() === true &&
+        !this.nativeSourceChanged();
+    } catch {
+      // Revoked media authority still permits removing only our UI.
     }
     // Capture current offsets, so an intentional site/page scroll during playback
     // is retained rather than rewinding to a stale entry position.
@@ -1816,6 +2011,9 @@ class IOSPlayer {
     this.scrollRestore?.cancel();
     this.ownedFullscreen?.cleanup();
     this.ownedFullscreen = null;
+    if (this.nativeBoundary) {
+      this.active = false;
+    }
     this.controlsLocked = false;
     this.clearSeekFeedback();
     this.scrubber?.cleanup();
@@ -1829,6 +2027,8 @@ class IOSPlayer {
     this.hideTimer = null;
     this.originObserver?.disconnect();
     this.originObserver = null;
+    this.nativeUnsubscribe?.();
+    this.nativeUnsubscribe = null;
     for (const remove of this.activeListeners.splice(0)) {
       remove();
     }
@@ -1841,25 +2041,27 @@ class IOSPlayer {
     // Restore only nodes still owned by our shell. A framework can remove,
     // relocate, or replace the media; leave relocated/removed nodes alone and
     // preserve new light-DOM replacements before discarding the shadow UI.
-    if (!this.originLost && this.anchor?.parentNode) {
+    if (!this.nativeBoundary && !this.originLost && this.anchor?.parentNode) {
       for (const node of Array.from(this.ui.host.childNodes)) {
         this.anchor.parentNode.insertBefore(node, this.anchor);
       }
-    } else if (this.portalNode.parentNode === this.ui.host) {
+    } else if (!this.nativeBoundary && this.portalNode.parentNode === this.ui.host) {
       if (this.originLost) {
         this.portalNode.remove();
       } else {
         this.originParent?.append(this.portalNode);
       }
     }
-    if (this.portalNode.getAttribute('slot') === 'media') {
+    if (!this.nativeBoundary && this.portalNode.getAttribute('slot') === 'media') {
       if (this.originalSlot === null) {
         this.portalNode.removeAttribute('slot');
       } else {
         this.portalNode.setAttribute('slot', this.originalSlot);
       }
     }
-    const styles = this.styles.splice(0);
+    const styles = this.styles
+      .splice(0)
+      .filter((item) => !this.nativeBoundary || nativeCurrent || item.node !== this.video);
     // Rebuild shorthand families atomically: CSSOM can coalesce four owned sides.
     // Snapshot first so a site's changed side survives while untouched sides restore.
     for (const family of ['margin', 'padding']) {
@@ -1906,7 +2108,34 @@ class IOSPlayer {
     }
     this.anchor?.remove();
     this.placeholder?.remove();
-    this.ui.destroy();
+    let originalInUI = false;
+    if (this.nativeBoundary) {
+      try {
+        let node = this.video;
+        for (let depth = 0; node && depth < 32; depth++) {
+          if (this.ui.host.contains(node)) {
+            originalInUI = true;
+            node = null;
+            break;
+          }
+          node = node.getRootNode().host;
+        }
+        originalInUI ||= Boolean(node);
+      } catch {
+        // Unproven closed-shadow ownership must not remove the site's media.
+        originalInUI = true;
+      }
+    }
+    if (
+      !this.nativeBoundary ||
+      (!originalInUI && !this.ui.host.childNodes.length && this.ui.ownsTree())
+    ) {
+      this.ui.destroy();
+    }
+    const wasNative = Boolean(this.nativeBoundary);
+    this.nativeBoundary = null;
+    this.nativeParents = null;
+    this.nativeSourceNodes = null;
     this.trackSignature = null;
     this.audioSignature = null;
     this.moreOpen = false;
@@ -1915,12 +2144,14 @@ class IOSPlayer {
     } catch {
       /* Site removed focus target. */
     }
-    if (this.shouldOwnInlineMedia()) {
-      this.prepareMedia();
-    } else {
-      this.releaseMediaOwnership();
+    if (!wasNative) {
+      if (this.shouldOwnInlineMedia()) {
+        this.prepareMedia();
+      } else {
+        this.releaseMediaOwnership();
+      }
+      this.controller.repairDOMPlacement?.();
     }
-    this.controller.repairDOMPlacement?.();
     if (scroll) {
       this.scrollRestore = scroll;
       scroll.restore(settle && !this.disposed);

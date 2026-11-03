@@ -716,6 +716,14 @@ class EventManager {
       return;
     }
 
+    if (
+      event.detail?.origin !== 'videoSpeed' &&
+      mediaRateState?.nativeRelative &&
+      video.playbackRate !== mediaRateState.nativeRelative.rate
+    ) {
+      mediaRateState.nativeRelative.cancel();
+    }
+
     const preference = this.config.settings.lastSpeed;
     const authoritativeSpeed =
       Number.isFinite(preference) &&
@@ -940,7 +948,7 @@ class EventManager {
    * @param {HTMLMediaElement} video
    * @param {number} duration
    */
-  refreshCoolDown(video, duration = EventManager.BASE_COOLDOWN_MS) {
+  refreshCoolDown(video, duration = EventManager.BASE_COOLDOWN_MS, nativeHint = null) {
     if (!video) {
       window.VSC.logger.warn('refreshCoolDown called without a media element');
       return;
@@ -949,6 +957,9 @@ class EventManager {
     window.VSC.logger.debug(`Begin refreshCoolDown (${duration}ms)`);
 
     const state = this.getOrCreateMediaRateState(video);
+    if (state.nativeRelative !== nativeHint || !nativeHint?.flushing) {
+      state.nativeRelative?.cancel();
+    }
 
     if (state.coolDown) {
       clearTimeout(state.coolDown);
@@ -974,6 +985,7 @@ class EventManager {
       return;
     }
 
+    state.nativeRelative?.cancel();
     if (state.coolDown) {
       clearTimeout(state.coolDown);
       state.coolDown = false;

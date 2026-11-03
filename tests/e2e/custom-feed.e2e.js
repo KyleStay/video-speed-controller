@@ -385,6 +385,68 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
               (await state(page)).sameSource &&
               (await state(page)).connected
           );
+          const nextSource = await page.$eval('video', (video) => video.currentSrc);
+          for (const input of ['picture', 'touch timeline', 'mouse timeline']) {
+            await page.$eval('video', (video) => {
+              video.currentTime = 20;
+            });
+            await page.waitForFunction(() => !document.querySelector('video').seeking);
+            const geometry = await page.evaluate((input) => {
+              const video = document.querySelector('video');
+              if (input === 'picture') {
+                const rect = video.getBoundingClientRect();
+                return {
+                  x: rect.left + rect.width * 0.23,
+                  y: rect.top + rect.height * 0.45,
+                  end: rect.left + rect.width * 0.23 + 110,
+                  hit: [video, document.querySelector('#picture-surface')].includes(
+                    document.elementFromPoint(
+                      rect.left + rect.width * 0.23,
+                      rect.top + rect.height * 0.45
+                    )
+                  ),
+                };
+              }
+              const range = video.vsc.controlsManager.inlinePlayer.refs.timeline;
+              const rect = range.getBoundingClientRect();
+              const x = rect.left + rect.width / 3,
+                y = rect.bottom - 2;
+              const end = rect.left + rect.width * 0.65;
+              return {
+                x,
+                y,
+                end,
+                hit: [x, end].every(
+                  (point) =>
+                    document.elementFromPoint(point, y) === video.vsc.div &&
+                    range.getRootNode().elementFromPoint(point, y) === range
+                ),
+              };
+            }, input);
+            assert.true(
+              geometry.hit,
+              `${input} must hit the intended picture or timeline rather than metadata`
+            );
+            if (input === 'mouse timeline') {
+              await page.mouse.move(geometry.x, geometry.y);
+              await page.mouse.down();
+              await page.mouse.move(geometry.end, geometry.y, { steps: 8 });
+              await page.mouse.up();
+            } else {
+              await drag(page, geometry, { x: geometry.end, y: geometry.y });
+            }
+            const afterDrag = await state(page);
+            assert.true(
+              afterDrag.time > 20.5 &&
+                afterDrag.paused &&
+                !afterDrag.owned &&
+                afterDrag.sameVideo &&
+                afterDrag.sameSource &&
+                afterDrag.controllers === 1,
+              `${input} on the next clip: ${JSON.stringify(afterDrag)}`
+            );
+            assert.equal(await page.$eval('video', (video) => video.currentSrc), nextSource);
+          }
           if (query.includes('captions')) {
             assert.true(
               await page.evaluate(() => {

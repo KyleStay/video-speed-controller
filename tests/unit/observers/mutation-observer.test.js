@@ -12,6 +12,48 @@ describe('MutationObserver', () => {
     cleanupChromeMock();
   });
 
+  it('watches expansion changes after discovering custom media without native video', () => {
+    const custom = { active: true, hasObservedMedia: false, consider: vi.fn(), recheck: vi.fn() };
+    custom.consider.mockImplementation(() => {
+      custom.hasObservedMedia = true;
+    });
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      vi.fn(),
+      vi.fn(),
+      null,
+      null,
+      null,
+      custom
+    );
+    const original = document.createElement('ogvjs');
+    observer.checkForVideoAndShadowRoot(original, document.body, true);
+    expect(custom.consider).toHaveBeenCalledWith(original);
+    expect(observer.attributeObservationEnabled).toBe(true);
+    const surface = document.createElement('div');
+    observer.processAttributeMutation({ target: surface, attributeName: 'class' });
+    expect(custom.recheck).toHaveBeenCalledWith(surface);
+    observer.stop();
+  });
+
+  it('arms expansion observation for preexisting custom media but not an inactive observer', () => {
+    for (const active of [true, false]) {
+      const custom = { active, hasObservedMedia: true };
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        vi.fn(),
+        vi.fn(),
+        null,
+        null,
+        null,
+        custom
+      );
+      observer.start(document);
+      expect(observer.attributeObservationEnabled).toBe(active);
+      observer.stop();
+    }
+  });
+
   it('VideoMutationObserver should process element nodes', () => {
     const mockConfig = { settings: {} };
     const mockOnVideoFound = [];

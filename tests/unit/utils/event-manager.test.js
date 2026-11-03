@@ -1060,3 +1060,39 @@ describe('EventManager', () => {
     expect(eventManager.getMediaRateState(video)).toBeNull();
   });
 });
+
+describe('EventManager native relative queue lifecycle', () => {
+  let manager, video, cancel;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = new window.VSC.EventManager({ settings: { lastSpeed: 2 } }, null);
+    video = document.createElement('video');
+    cancel = vi.fn();
+    manager.getOrCreateMediaRateState(video).nativeRelative = { rate: 2, cancel };
+  });
+  afterEach(() => {
+    manager.cleanup();
+    vi.useRealTimers();
+  });
+  it('cancels pending native intent before releasing media state', () => {
+    manager.releaseMediaState(video);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(manager.getMediaRateState(video)).toBeNull();
+  });
+  it('cancels a pending native queue when another command refreshes cooldown', () => {
+    manager.refreshCoolDown(video);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it('cancels pending native intent when a different native rate arrives', () => {
+    video.vsc = {};
+    video.playbackRate = 3;
+    manager.handleRateChange({ target: video, composedPath: () => [video], timeStamp: 10 });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it('does not mistake a delayed matching native rate event for new intent', () => {
+    video.vsc = {};
+    video.playbackRate = 2;
+    manager.handleRateChange({ target: video, composedPath: () => [video], timeStamp: 10 });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+});

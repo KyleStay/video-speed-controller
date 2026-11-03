@@ -87,6 +87,9 @@ class VideoMutationObserver {
     this.observer.observe(document, this.buildObserverOptions());
     this.listenForReadyMedia(document);
     this.setupAttachShadowHook();
+    if (this.customWebMObserver?.active && this.customWebMObserver.hasObservedMedia) {
+      this.enableAttributeObservation();
+    }
     window.VSC.logger.debug('Video mutation observer started');
   }
 
@@ -431,6 +434,9 @@ class VideoMutationObserver {
     if (node.nodeName === 'OGVJS') {
       if (job.added) {
         this.customWebMObserver?.consider(node);
+        if (this.customWebMObserver?.active && this.customWebMObserver.hasObservedMedia) {
+          this.enableAttributeObservation();
+        }
       } else {
         this.customWebMObserver?.remove(node);
       }
@@ -605,6 +611,7 @@ class VideoMutationObserver {
    * @private
    */
   handleVisibilityChanges(element) {
+    this.customWebMObserver?.recheck?.(element);
     // If the element itself is a video
     if (
       element.tagName === 'VIDEO' ||

@@ -3,8 +3,9 @@
   'use strict';
 
   class IOSPlayerView {
-    constructor(doc) {
+    constructor(doc, { inPlace = false } = {}) {
       this.host = doc.createElement('vsc-ios-player');
+      this.host.toggleAttribute('data-in-place', inPlace);
       this.shadow = this.host.attachShadow({ mode: 'open' });
       this.shadow.innerHTML = `
         <style>
@@ -44,6 +45,7 @@
           }
           dialog[open] { display: block; }
           dialog::backdrop { background: #000; }
+          :host([data-in-place]) dialog, :host([data-in-place]) .stage { background: transparent; }
           .player { position: relative; width: 100%; height: 100%; overflow: hidden; }
           .stage {
             position: absolute;
@@ -340,6 +342,9 @@
       this.dialog = this.shadow.querySelector('dialog');
       this.screen = this.shadow.querySelector('.player');
       this.stage = this.shadow.querySelector('.stage');
+      if (inPlace) {
+        this.dialog.setAttribute('aria-modal', 'false');
+      }
       this.mediaSlot = this.shadow.querySelector('slot[name="media"]');
       this.refs = {};
       for (const element of this.shadow.querySelectorAll('[data-ref]')) {
@@ -360,6 +365,32 @@
       })) {
         window.VSC.ShadowDOMManager.setControlIcon(this.refs[ref], icon);
       }
+      this.ownedTree = new WeakSet([this.shadow, ...this.shadow.querySelectorAll('*')]);
+    }
+
+    ownsTree() {
+      return [this.shadow, ...this.shadow.querySelectorAll('*')].every(
+        (node) => !node.shadowRoot && this.ownedTree.has(node)
+      );
+    }
+
+    setIcon(button, name) {
+      if (button.dataset.vscIcon === name) {
+        return;
+      }
+      window.VSC.ShadowDOMManager.setControlIcon(button, name);
+      const icon = button.querySelector('svg.vsc-control-icon');
+      if (icon) {
+        for (const node of [icon, ...icon.querySelectorAll('*')]) {
+          this.ownedTree.add(node);
+        }
+      }
+    }
+
+    createOption() {
+      const node = this.host.ownerDocument.createElement('option');
+      this.ownedTree.add(node);
+      return node;
     }
 
     updateSeekProgress() {

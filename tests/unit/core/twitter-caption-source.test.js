@@ -126,6 +126,8 @@ async function rejected(change, code) {
 test('preserves full bytes, BOM/CRLF text, cue IDs, multiline text and raw settings', async () => {
   const f = fixture();
   const result = await f.start().promise;
+  assert.equal(result.masterText, master);
+  assert.equal(result.subtitleGroupId, 'subs');
   assert.deepEqual(result.vttBytes, encode(vtt));
   assert.equal(result.vttText, vtt);
   assert.deepEqual(result.oracle, [
@@ -155,6 +157,18 @@ test('preserves full bytes, BOM/CRLF text, cue IDs, multiline text and raw setti
     assert.equal(call.options.method, 'GET');
     assert.equal(call.options.signal.aborted, true);
   }
+});
+
+test('returns the exact validated master bytes as text and its actual subtitle group', async () => {
+  const raw = `\uFEFF${master.replaceAll('subs', 'bound-subtitles').replaceAll('\n', '\r\n')}`;
+  const f = fixture({ content: { 0: raw } });
+  const result = await f.start().promise;
+  assert.equal(result.masterText, raw);
+  assert.equal(result.subtitleGroupId, 'bound-subtitles');
+  assert.deepEqual(
+    f.state.calls.map(({ url }) => url),
+    [HLS, SUB, LEAF]
+  );
 });
 
 test('accepts fifteen complete finite cues without flattening identifiers or settings', async () => {

@@ -1482,7 +1482,775 @@ window.VSC = window.VSC || {};
     }
   }
 
+  const loopTrackBootstrap = 'data:,WEBVTT';
+  const loopPositionFields = ['line', 'snapToLines', 'lineAlign'];
+  // X positions active cues as one tuple; unvisited cues retain the source defaults.
+  const loopPosition = (actual, expected) =>
+    typeof actual.snapToLines === 'boolean' &&
+    ['start', 'center', 'end'].includes(actual.lineAlign) &&
+    (actual.line === 'auto' || (Number.isFinite(actual.line) && Math.abs(actual.line) <= 10000)) &&
+    (actual.snapToLines ||
+      (Number.isFinite(actual.line) && actual.line >= 0 && actual.line <= 100)) &&
+    (loopPositionFields.every((key) => actual[key] === expected[key]) ||
+      (expected.line === 'auto' &&
+        expected.snapToLines === true &&
+        expected.lineAlign === 'start' &&
+        Number.isFinite(actual.line) &&
+        actual.line >= 0 &&
+        actual.line <= 100 &&
+        actual.snapToLines === false &&
+        actual.lineAlign === 'end'));
+  const loopOwners = new WeakSet();
+  const loopCueFields = (cue) =>
+    ['id', 'startTime', 'endTime', 'text', 'region', ...CUE_FIELDS].every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(cue, key);
+      return !descriptor || Object.hasOwn(descriptor, 'value');
+    });
+  const nativeCueId = (start, end, text) => {
+    const hash = (value) => {
+      let result = 5381;
+      for (let index = value.length; index;) {
+        result = (result * 33) ^ value.charCodeAt(--index);
+      }
+      return (result >>> 0).toString();
+    };
+    return hash(start.toString()) + hash(end.toString()) + hash(text.trim());
+  };
+
+  /** One source-proven caption track, repeated on the companion's native clock. */
+  class LoopCaptionOwner {
+    constructor(binding, video) {
+      const fields = [
+        'original',
+        'track',
+        'node',
+        'hlsUrl',
+        'assetType',
+        'assetId',
+        'duration',
+        'language',
+        'label',
+        'isCurrent',
+      ];
+      const descriptors = Object.getOwnPropertyDescriptors(binding);
+      if (fields.some((key) => !Object.hasOwn(descriptors[key] || {}, 'value'))) {
+        throw new Error('Invalid loop caption binding');
+      }
+      this.binding = binding;
+      this.bound = Object.fromEntries(fields.map((key) => [key, descriptors[key].value]));
+      this.video = video;
+      this.original = this.bound.original;
+      this.nativeTrack = this.bound.track;
+      this.doc = this.original.ownerDocument;
+      this.view = this.doc.defaultView;
+      this.root = this.doc.documentElement;
+      this.url = this.doc.URL;
+      this.kind = this.nativeTrack.kind;
+      this.listeners = [];
+      this.epochs = new Map();
+      this.retired = 0;
+      this.lastEpoch = 0;
+      this.latestMode = 'showing';
+      this.abortController = new this.view.AbortController();
+      if (
+        video === this.original ||
+        video?.localName !== 'video' ||
+        video.ownerDocument !== this.doc ||
+        !['captions', 'subtitles'].includes(this.kind) ||
+        typeof this.view.VTTCue !== 'function' ||
+        !this.sourceCurrent()
+      ) {
+        throw new Error('Unsupported loop caption owner');
+      }
+      this.Cue = this.view.VTTCue;
+      try {
+        this.observer = new this.view.MutationObserver((records) => this.inspect(records));
+        this.observer.observe(this.original, {
+          attributes: true,
+          attributeFilter: ['src', 'poster'],
+          childList: true,
+        });
+        this.observer.observe(this.bound.node, { attributes: true });
+        const check = () => {
+          this.isCurrent();
+        };
+        for (const list of [this.original.textTracks, this.nativeTrack]) {
+          for (const type of ['addtrack', 'removetrack', 'change', 'cuechange']) {
+            this.listen(list, type, check);
+          }
+        }
+        for (const type of ['loadstart', 'emptied', 'encrypted']) {
+          this.listen(this.original, type, () => this.invalidate());
+        }
+        for (const type of ['pagehide', 'popstate']) {
+          this.listen(this.view, type, () => this.invalidate());
+        }
+        this.fetch = window.VSC.TwitterCaptionSource.create({
+          hlsUrl: this.bound.hlsUrl,
+          duration: this.bound.duration,
+          assetType: this.bound.assetType,
+          assetId: this.bound.assetId,
+          isCurrent: () => this.isCurrent(),
+          signal: this.abortController.signal,
+        });
+        this.promise = this.fetch.promise
+          .then((certificate) => {
+            this.requireCurrent();
+            this.prove(certificate);
+            this.certificate = certificate;
+            this.requireCurrent();
+            return this;
+          })
+          .catch((error) => {
+            this.invalidate(error);
+            throw error;
+          });
+        this.promise.catch(() => {});
+      } catch (error) {
+        this.cleanup();
+        throw error;
+      }
+    }
+    listen(target, type, callback) {
+      if (target?.addEventListener) {
+        target.addEventListener(type, callback);
+        this.listeners.push(() => target.removeEventListener(type, callback));
+      }
+    }
+    sourceCurrent(allowInvalid = false) {
+      return safely(() => {
+        const b = this.bound;
+        return (
+          !this.closed &&
+          (allowInvalid || !this.invalid) &&
+          Object.keys(b).every(
+            (key) => Object.getOwnPropertyDescriptor(this.binding, key)?.value === b[key]
+          ) &&
+          this.original.isConnected &&
+          this.original.ownerDocument === this.doc &&
+          this.video.ownerDocument === this.doc &&
+          this.doc.documentElement === this.root &&
+          this.doc.URL === this.url &&
+          this.nativeTrack.mode === 'showing' &&
+          this.original.textTracks.length === 1 &&
+          this.original.textTracks[0] === this.nativeTrack &&
+          b.node.parentNode === this.original &&
+          b.node.track === this.nativeTrack &&
+          this.nativeTrack.kind === this.kind &&
+          this.nativeTrack.language === b.language &&
+          this.nativeTrack.label === b.label &&
+          b.isCurrent(this.video) === true
+        );
+      });
+    }
+    prove(certificate) {
+      const cues = Array.from(this.nativeTrack.cues || []),
+        oracle = certificate.oracle;
+      if (
+        certificate.chain?.hlsUrl !== this.bound.hlsUrl ||
+        typeof certificate.masterText !== 'string' ||
+        !certificate.masterText ||
+        typeof certificate.subtitleGroupId !== 'string' ||
+        !certificate.subtitleGroupId ||
+        certificate.rendition?.language !== this.bound.language ||
+        certificate.rendition?.name !== this.bound.label ||
+        !Array.isArray(oracle) ||
+        !oracle.length ||
+        cues.some((cue) => !loopCueFields(cue)) ||
+        oracle.length > 256 ||
+        cues.length !== oracle.length ||
+        oracle.some((entry) => /<v(?:[ .>])/.test(entry.text))
+      ) {
+        throw new Error('Incomplete loop caption certificate');
+      }
+      const used = new Set(),
+        ids = new Set();
+      this.templates = oracle.map((entry) => {
+        const matches = cues.filter((cue) => sameCue(cue, entry));
+        if (matches.length !== 1 || used.has(matches[0])) {
+          throw new Error('Ambiguous loop caption cue');
+        }
+        const cue = matches[0],
+          scalars = cueScalars(cue, this.view);
+        const expected = expectedSettings(entry.settings);
+        const id = entry.id ? entry.id : nativeCueId(cue.startTime, cue.endTime, cue.text);
+        if (
+          typeof entry.id !== 'string' ||
+          typeof cue.id !== 'string' ||
+          cue.id.length > 512 ||
+          cue.id !== id ||
+          ids.has(cue.id) ||
+          !scalars ||
+          scalars.vertical ||
+          !loopPosition(scalars, expected) ||
+          CUE_FIELDS.some(
+            (key) => !loopPositionFields.includes(key) && scalars[key] !== expected[key]
+          )
+        ) {
+          throw new Error('Unverified loop caption identity or style');
+        }
+        used.add(cue);
+        ids.add(cue.id);
+        return { oracle: { ...entry }, id: cue.id, scalars, native: cue };
+      });
+    }
+    nativeCurrent() {
+      if (!this.templates) {
+        return true;
+      }
+      const cues = new Set(this.nativeTrack.cues || []);
+      return (
+        cues.size === this.templates.length &&
+        this.templates.every((template) => {
+          const cue = template.native;
+          if (!loopCueFields(cue)) {
+            return false;
+          }
+          const actual = cueScalars(cue, this.view);
+          return (
+            cues.has(cue) &&
+            sameCue(cue, template.oracle) &&
+            cue.id === template.id &&
+            (template.oracle.id || nativeCueId(cue.startTime, cue.endTime, cue.text)) ===
+              template.id &&
+            actual &&
+            loopPosition(actual, expectedSettings(template.oracle.settings)) &&
+            CUE_FIELDS.every(
+              (key) => loopPositionFields.includes(key) || actual[key] === template.scalars[key]
+            )
+          );
+        })
+      );
+    }
+    inspect(records) {
+      records = [...(this.pendingRecords?.splice(0) || []), ...records];
+      for (const record of records) {
+        if (
+          record.target === this.track &&
+          record.type === 'attributes' &&
+          record.attributeName === 'src' &&
+          this.srcWritePending &&
+          record.oldValue === loopTrackBootstrap &&
+          this.track.getAttribute('src') === this.blob
+        ) {
+          this.srcWritePending = false;
+        } else if (
+          record.type === 'childList' &&
+          record.target === this.video &&
+          this.track?.parentNode === this.video &&
+          [...record.addedNodes, ...record.removedNodes].every(
+            (node) => node.localName === 'source'
+          ) &&
+          [...this.video.children]
+            .filter((node) => node.localName !== 'source')
+            .every((node) => node === this.track)
+        ) {
+          // The transport owns its source pair; this owner certifies only its exact track.
+        } else {
+          if (record.target === this.track || record.target === this.video) {
+            this.ownedInvalid = true;
+          }
+          this.invalidate();
+          return false;
+        }
+      }
+      return true;
+    }
+    nodeCurrent() {
+      return (
+        this.track?.parentNode === this.video &&
+        this.track.track === this.ownedTrack &&
+        this.track.attributes.length === (this.expectedSrc ? 4 : 3) &&
+        this.track.getAttribute('kind') === this.kind &&
+        this.track.getAttribute('label') === this.bound.label &&
+        this.track.getAttribute('srclang') === this.bound.language &&
+        this.track.getAttribute('src') === (this.expectedSrc || null) &&
+        this.ownedTrack.kind === this.kind &&
+        this.ownedTrack.label === this.bound.label &&
+        this.ownedTrack.language === this.bound.language &&
+        this.video.textTracks.length === 1 &&
+        this.video.textTracks[0] === this.ownedTrack &&
+        [...this.video.children].filter((node) => node.localName !== 'source').length === 1
+      );
+    }
+    ownedCurrent() {
+      if (this.ownedInvalid) {
+        return false;
+      }
+      if (!this.attached) {
+        return !this.video.textTracks.length;
+      }
+      if (
+        !this.nodeCurrent() ||
+        this.ownedTrack.addCue !== this.addCue ||
+        this.ownedTrack.removeCue !== this.removeCue
+      ) {
+        return false;
+      }
+      if (!this.baseReady || this.writingCues) {
+        return true;
+      }
+      if (!['showing', 'disabled'].includes(this.ownedTrack.mode)) {
+        return false;
+      }
+      this.latestMode = this.ownedTrack.mode;
+      const cues = new Set(this.ownedTrack.cues || []);
+      return (
+        cues.size === [...this.epochs.values()].reduce((total, epoch) => total + epoch.length, 0) &&
+        [...this.epochs].every(([index]) => this.epochCurrent(index, cues))
+      );
+    }
+    isCurrent() {
+      const valid = safely(
+        () =>
+          this.inspect(this.observer?.takeRecords() || []) &&
+          this.sourceCurrent() &&
+          this.view.VTTCue === this.Cue &&
+          this.nativeCurrent() &&
+          this.ownedCurrent()
+      );
+      if (!valid && !this.closed) {
+        this.invalidate();
+      }
+      return valid;
+    }
+    requireCurrent() {
+      if (!this.isCurrent()) {
+        throw new Error('Loop caption authority ended');
+      }
+    }
+    setInvalidated(callback) {
+      if (typeof callback !== 'function' || (this.invalidated && this.invalidated !== callback)) {
+        throw new Error('Loop caption invalidation listener already assigned');
+      }
+      this.invalidated = callback;
+      if (this.invalid && !this.notified) {
+        this.invalidate();
+      }
+    }
+    invalidate(error = new Error('Loop caption ownership ended')) {
+      if (this.closed) {
+        return;
+      }
+      if (!this.invalid) {
+        this.handoffMode = this.readMode();
+      }
+      this.invalid = true;
+      safely(() => this.abortController.abort());
+      safely(() => this.fetch?.cancel());
+      this.rejectAttached?.(error);
+      if (this.invalidated && !this.notified) {
+        this.notified = true;
+        const callback = this.invalidated;
+        safely(() => callback(error));
+      }
+    }
+    attestsMaster(url, text) {
+      return this.isCurrent() &&
+        this.certificate &&
+        url === this.certificate.chain.hlsUrl &&
+        text === this.certificate.masterText
+        ? this.certificate.subtitleGroupId
+        : null;
+    }
+    attach() {
+      if (this.attachPromise) {
+        return this.attachPromise;
+      }
+      this.requireCurrent();
+      this.track = this.doc.createElement('track');
+      this.track.kind = this.kind;
+      this.track.label = this.bound.label;
+      this.track.srclang = this.bound.language;
+      this.expectedSrc = loopTrackBootstrap;
+      this.track.src = loopTrackBootstrap;
+      this.requireCurrent();
+      if (
+        this.track.ownerDocument !== this.doc ||
+        this.track.parentNode ||
+        this.track.getAttribute('src') !== loopTrackBootstrap
+      ) {
+        throw new Error('Loop caption bootstrap track was adopted');
+      }
+      this.ownedTrack = this.track.track;
+      this.addCue = this.ownedTrack.addCue;
+      this.removeCue = this.ownedTrack.removeCue;
+      if (typeof this.addCue !== 'function' || typeof this.removeCue !== 'function') {
+        throw new Error('Native caption cue operations unavailable');
+      }
+      this.attached = true;
+      this.video.append(this.track);
+      this.observer.observe(this.track, { attributes: true, attributeOldValue: true });
+      this.observer.observe(this.video, { childList: true });
+      const validate = () => {
+        if (!this.writingCues) {
+          this.isCurrent();
+        }
+      };
+      for (const type of ['addtrack', 'removetrack', 'change']) {
+        this.listen(this.video.textTracks, type, validate);
+      }
+      this.listen(this.ownedTrack, 'cuechange', validate);
+      this.attachPromise = new Promise((resolve, reject) => {
+        this.rejectAttached = reject;
+        this.listen(this.track, 'error', () =>
+          this.invalidate(new Error('Loop captions failed to load'))
+        );
+        this.listen(this.track, 'load', () => {
+          if (this.baseReady) {
+            return this.isCurrent();
+          }
+          try {
+            this.requireCurrent();
+            if (this.expectedSrc === loopTrackBootstrap) {
+              if (this.track.readyState !== 2 || this.ownedTrack.cues?.length) {
+                throw new Error('Loop caption bootstrap mismatch');
+              }
+              this.bootstrapReady = true;
+              this.assignBlob();
+              return;
+            }
+            if (!this.srcWriteIssued || this.expectedSrc !== this.blob) {
+              throw new Error('Unexpected loop caption load');
+            }
+            if (
+              Array.from(this.ownedTrack.cues || []).some((cue) => !loopCueFields(cue)) ||
+              !fullTrack(this.track, this.certificate, this.view)
+            ) {
+              throw new Error('Loop caption parser mismatch');
+            }
+            this.writingCues = true;
+            const cues = Array.from(this.ownedTrack.cues);
+            for (let index = 0; index < cues.length; index++) {
+              this.requireCurrent();
+              cues[index].id = this.templates[index].id;
+              this.requireCurrent();
+              for (const key of CUE_FIELDS) {
+                cues[index][key] = this.templates[index].scalars[key];
+                this.requireCurrent();
+              }
+            }
+            this.epochs.set(0, cues);
+            this.writingCues = false;
+            this.baseReady = true;
+            this.ownedTrack.mode = 'showing';
+            this.requireCurrent();
+            this.view.clearTimeout(this.deadline);
+            resolve(this);
+          } catch (error) {
+            this.writingCues = false;
+            this.invalidate(error);
+          }
+        });
+        this.deadline = this.view.setTimeout(
+          () => this.invalidate(new Error('Loop caption load deadline')),
+          10000
+        );
+        this.promise.then(() => this.assignBlob()).catch((error) => this.invalidate(error));
+        this.ownedTrack.mode = 'hidden';
+      });
+      this.attachPromise.catch(() => {});
+      return this.attachPromise;
+    }
+    assignBlob() {
+      if (!this.bootstrapReady || !this.certificate || this.srcWriteIssued) {
+        return;
+      }
+      this.requireCurrent();
+      this.blob = this.view.URL.createObjectURL(
+        new this.view.Blob([this.certificate.vttBytes], { type: 'text/vtt' })
+      );
+      this.srcWritePending = this.srcWriteIssued = true;
+      try {
+        this.track.src = this.blob;
+      } finally {
+        if (this.track.getAttribute('src') === this.blob) {
+          this.expectedSrc = this.blob;
+        }
+      }
+      this.requireCurrent();
+      this.ownedTrack.mode = 'hidden';
+    }
+    setPeriod(period) {
+      this.requireCurrent();
+      if (
+        !this.templates ||
+        !Number.isFinite(period) ||
+        period < 1 ||
+        period > 60 ||
+        Math.abs(period - this.bound.duration) > 0.1 ||
+        (this.period && this.period !== period) ||
+        this.templates.some(({ oracle }) => oracle.start < 0 || oracle.end > period)
+      ) {
+        throw new Error('Invalid caption loop period');
+      }
+      this.period = period;
+    }
+    epochCurrent(index, cues = new Set(this.ownedTrack.cues || [])) {
+      const epoch = this.epochs.get(index);
+      if (!epoch || !this.templates || (index && !this.period)) {
+        return false;
+      }
+      return (
+        epoch.length === this.templates.length &&
+        epoch.every((cue, number) => {
+          if (!loopCueFields(cue)) {
+            return false;
+          }
+          const template = this.templates[number],
+            actual = cueScalars(cue, this.view),
+            offset = index * (this.period || 0);
+          return (
+            cues.has(cue) &&
+            cue.id === template.id &&
+            sameCue(cue, {
+              ...template.oracle,
+              start: template.oracle.start + offset,
+              end: template.oracle.end + offset,
+            }) &&
+            actual &&
+            CUE_FIELDS.every((key) => actual[key] === template.scalars[key])
+          );
+        })
+      );
+    }
+    installEpoch(index) {
+      this.requireCurrent();
+      if (
+        !this.baseReady ||
+        !this.period ||
+        !Number.isSafeInteger(index) ||
+        index < this.retired ||
+        (!this.epochs.has(index) && index !== this.lastEpoch + 1) ||
+        (!this.epochs.has(index) &&
+          (this.epochs.size >= 64 || (this.epochs.size + 1) * this.templates.length > 16384))
+      ) {
+        throw new Error('Caption epoch outside retained budget');
+      }
+      if (this.epochs.has(index)) {
+        return this.verifyEpoch(index);
+      }
+      const cues = this.templates.map((template) => {
+        const start = template.oracle.start + index * this.period,
+          end = template.oracle.end + index * this.period;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+          throw new Error('Caption epoch overflow');
+        }
+        return Object.assign(
+          new this.Cue(start, end, template.oracle.text),
+          { id: template.id },
+          template.scalars
+        );
+      });
+      this.writingCues = true;
+      try {
+        this.epochs.set(index, cues);
+        for (const cue of cues) {
+          this.requireCurrent();
+          this.addCue.call(this.ownedTrack, cue);
+          this.requireCurrent();
+        }
+        this.lastEpoch = index;
+      } catch (error) {
+        this.invalidate(error);
+        throw error;
+      } finally {
+        this.writingCues = false;
+      }
+      this.requireCurrent();
+      return this.verifyEpoch(index);
+    }
+    verifyEpoch(index) {
+      return this.isCurrent() && this.epochCurrent(index);
+    }
+    retireBefore(cutoff) {
+      this.requireCurrent();
+      if (
+        !this.period ||
+        !Number.isFinite(cutoff) ||
+        cutoff < 0 ||
+        Math.abs(cutoff / this.period - Math.round(cutoff / this.period)) > 0.000001
+      ) {
+        throw new Error('Invalid caption retirement');
+      }
+      this.writingCues = true;
+      try {
+        for (const [index, cues] of this.epochs) {
+          if ((index + 1) * this.period <= cutoff) {
+            for (const cue of cues) {
+              this.requireCurrent();
+              this.removeCue.call(this.ownedTrack, cue);
+              this.requireCurrent();
+            }
+            this.epochs.delete(index);
+          }
+        }
+        this.retired = Math.max(this.retired, Math.round(cutoff / this.period));
+      } catch (error) {
+        this.invalidate(error);
+        throw error;
+      } finally {
+        this.writingCues = false;
+      }
+      this.requireCurrent();
+    }
+    attestsInitialTrackWrite(record) {
+      return safely(
+        () =>
+          !this.closed &&
+          !this.invalid &&
+          this.srcWriteIssued &&
+          this.sourceCurrent() &&
+          this.nativeCurrent() &&
+          this.nodeCurrent() &&
+          record.target === this.track &&
+          record.type === 'attributes' &&
+          record.attributeName === 'src' &&
+          record.oldValue === loopTrackBootstrap &&
+          this.expectedSrc === this.blob &&
+          this.track.getAttribute('src') === this.blob
+      );
+    }
+    ownsTrack(video) {
+      if (video !== this.video || this.closed || !this.attached) {
+        return false;
+      }
+      return safely(() => {
+        this.inspect(this.observer.takeRecords());
+        return (
+          !this.closed &&
+          !this.ownedInvalid &&
+          this.video.ownerDocument === this.doc &&
+          this.nodeCurrent()
+        );
+      });
+    }
+    readyToPlay(nativeTime) {
+      return Boolean(
+        Number.isFinite(nativeTime) &&
+        nativeTime >= 0 &&
+        this.baseReady &&
+        this.period &&
+        this.verifyEpoch(Math.floor(nativeTime / this.period))
+      );
+    }
+    readMode() {
+      return safely(() => {
+        if (
+          !this.attached ||
+          !this.baseReady ||
+          this.closed ||
+          this.ownedInvalid ||
+          !this.sourceCurrent(true) ||
+          !this.nativeCurrent() ||
+          !this.nodeCurrent() ||
+          this.ownedTrack.addCue !== this.addCue ||
+          this.ownedTrack.removeCue !== this.removeCue
+        ) {
+          return undefined;
+        }
+        // Preserve undelivered records for the normal guard; this read never invalidates or notifies.
+        const pending = this.observer.takeRecords();
+        if (pending.length) {
+          (this.pendingRecords ||= []).push(...pending);
+        }
+        if (this.pendingRecords?.length) {
+          return undefined;
+        }
+        const mode = this.ownedTrack.mode;
+        if (!['showing', 'disabled'].includes(mode)) {
+          return undefined;
+        }
+        const nativeCues = this.ownedTrack.cues;
+        // Disabled native tracks expose null; retained cue references still prove the off intent.
+        const cues = new Set(
+          mode === 'disabled' && nativeCues === null
+            ? [...this.epochs.values()].flat()
+            : nativeCues || []
+        );
+        const count = [...this.epochs.values()].reduce((total, epoch) => total + epoch.length, 0);
+        return cues.size === count &&
+          [...this.epochs].every(([index]) => this.epochCurrent(index, cues))
+          ? mode
+          : undefined;
+      }, undefined);
+    }
+    get mode() {
+      return this.invalid && this.handoffMode !== 'disabled' ? undefined : this.readMode();
+    }
+    cleanup() {
+      if (this.closed) {
+        return;
+      }
+      this.closed = true;
+      safely(() => this.view.clearTimeout(this.deadline));
+      safely(() => this.abortController.abort());
+      safely(() => this.fetch?.cancel());
+      this.rejectAttached?.(new Error('Loop caption owner closed'));
+      safely(() => this.inspect(this.observer?.takeRecords() || []));
+      safely(() => this.observer?.disconnect());
+      for (const remove of this.listeners.splice(0)) {
+        safely(remove);
+      }
+      // Never rewrite the original or an adopted/replaced track.
+      safely(() => {
+        if (
+          !this.ownedInvalid &&
+          this.video.ownerDocument === this.doc &&
+          this.track?.ownerDocument === this.doc &&
+          this.nodeCurrent()
+        ) {
+          this.track.remove();
+        }
+      });
+      safely(() => {
+        if (this.blob) {
+          this.view.URL.revokeObjectURL(this.blob);
+        }
+      });
+      this.epochs.clear();
+    }
+  }
+
   window.VSC.TwitterCaptionPlayback = {
+    createLoopOwner(binding, companion) {
+      const instance = new LoopCaptionOwner(binding, companion);
+      let attached;
+      const owner = Object.freeze({
+        promise: instance.promise.then(() => owner),
+        attach() {
+          if (!attached) {
+            attached = instance.attach().then(() => owner);
+            attached.catch(() => {});
+          }
+          return attached;
+        },
+        get mode() {
+          return instance.mode;
+        },
+        ...Object.fromEntries(
+          [
+            'isCurrent',
+            'setInvalidated',
+            'attestsMaster',
+            'setPeriod',
+            'installEpoch',
+            'verifyEpoch',
+            'retireBefore',
+            'ownsTrack',
+            'attestsInitialTrackWrite',
+            'readyToPlay',
+            'cleanup',
+          ].map((key) => [key, instance[key].bind(instance)])
+        ),
+      });
+      owner.promise.catch(() => {});
+      loopOwners.add(owner);
+      return owner;
+    },
+    isLoopOwner(value) {
+      return loopOwners.has(value);
+    },
     requestedSpeed(controller) {
       return safely(() => {
         const request = requests.get(controller);

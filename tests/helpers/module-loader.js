@@ -46,6 +46,8 @@ export async function loadCoreModules() {
   await import('../../src/site-handlers/progressive-media-source.js');
   await import('../../src/core/decoded-playback-monitor.js');
   await import('../../src/core/safari-hls-playback.js');
+  await import('../../src/core/twitter-loop-source.js');
+  await import('../../src/core/twitter-loop-playback.js');
   await import('../../src/core/twitter-mp4-playback.js');
   await import('../../src/core/twitter-caption-source.js');
   await import('../../src/core/twitter-caption-playback.js');
