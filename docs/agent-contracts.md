@@ -627,8 +627,9 @@ with direct `chrome.*` access.
   input; preserve independent controls, unrelated dialogs, vertical scroll
   and pinch. A site's video dialog may own its picture; theater overlays outside
   a recognized player use the enclosing validated gesture scope.
-  Full-picture navigation links may commit a drag; ordinary link taps and download
-  links retain page behavior. A committed drag isolates its terminal touch and
+  Full-picture navigation links may commit a drag. A download link qualifies only
+  when its resolved URL equals the video's nonempty current source; other downloads
+  and ordinary link taps retain page behavior. A committed drag isolates its terminal touch and
   compatibility click at window capture, including retargeted releases. This
   source/session-scoped guard ends on fresh input, pagehide or cleanup, and expires
   one second after release. Cancellation disables click suppression but retains

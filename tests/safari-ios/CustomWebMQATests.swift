@@ -16,6 +16,53 @@ import XCTest
         text.name=name; text.lifetime = .keepAlways; add(text)
         let image = XCTAttachment(screenshot:safari.screenshot()); image.name=name; image.lifetime = .keepAlways; add(image)
     }
+    /// Fresh /media-patterns.html?attachment-link; the file link remains over the expanded video.
+    func testThumbnailExpandedAttachmentScrubbing() throws {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        let status = safari.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Attachment:'")).firstMatch
+        func report() -> [String: Any] {
+            let raw = status.label.replacingOccurrences(of: "Attachment: ", with: "")
+            guard let data = raw.data(using: .utf8), let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+            return row
+        }
+        func wait(_ test: @escaping ([String: Any]) -> Bool) {
+            let done = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in test(report()) }, object: status)
+            let result = XCTWaiter.wait(for: [done], timeout: 15)
+            if result != .completed {
+                let trace = XCTAttachment(string: status.label + "\n" + safari.debugDescription)
+                trace.name = "attachment-scrub-failure"; trace.lifetime = .keepAlways; add(trace)
+                let shot = XCTAttachment(screenshot: safari.screenshot())
+                shot.name = "attachment-scrub-failure"; shot.lifetime = .keepAlways; add(shot)
+            }
+            XCTAssertEqual(result, .completed, status.label)
+        }
+        let open = safari.buttons["Open attachment 1"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        for iteration in 1...2 {
+            open.tap()
+            wait { ($0["controlled"] as? Bool) == true && ($0["duration"] as? Double ?? 0) > 10 }
+            let picture = safari.links["Expanded attachment 1"]
+            XCTAssertTrue(picture.waitForExistence(timeout: 10))
+            XCTAssertGreaterThan(picture.frame.width, 100)
+            let start = picture.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+            start.tap()
+            wait { ($0["taps"] as? Int) == iteration }
+            let before = try XCTUnwrap(report()["time"] as? Double)
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 60, dy: 0)))
+            wait {
+                ($0["time"] as? Double ?? 0) > before + 3 &&
+                ($0["paused"] as? Bool) == true &&
+                ($0["scrubbing"] as? Bool) == false &&
+                ($0["taps"] as? Int) == iteration
+            }
+            let shot = XCTAttachment(screenshot: safari.screenshot())
+            shot.name = "expanded-webm-scrub-\(iteration)"; shot.lifetime = .keepAlways; add(shot)
+            safari.buttons["Collapse attachment 1"].tap()
+            wait { ($0["controllers"] as? Int) == 0 }
+        }
+        print("NATIVE_ATTACHMENT_SCRUB_PASS thumbnail expansion, file-link drag, paused state, taps, collapse and reopen")
+    }
     func testNativeTakeoverAndReturn() {
         let safari=XCUIApplication(bundleIdentifier:"com.apple.mobilesafari"); safari.activate()
         let open=safari.buttons["Open WebM clip"]

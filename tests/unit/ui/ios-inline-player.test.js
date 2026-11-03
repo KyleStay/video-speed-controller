@@ -845,7 +845,41 @@ describe('owned iOS inline transport', () => {
       }
     );
 
-    it('leaves full-picture download links independent', () => {
+    it.each(['cover', 'wrapper'])(
+      'scrubs the current WebM through a full-picture download %s, preserving taps',
+      (kind) => {
+        const link = document.createElement('a');
+        link.href = 'https://example.test/attachment.webm';
+        link.download = '';
+        link.getBoundingClientRect = () => media;
+        video.src = link.href;
+        Object.defineProperty(video, 'currentSrc', { configurable: true, value: link.href });
+        if (kind === 'cover') {
+          cover.replaceWith(link);
+          cover = link;
+          document.elementFromPoint.mockReturnValue(link);
+        } else {
+          container.append(link);
+          link.append(video, cover);
+        }
+        player.refreshSurfaceContainer();
+        const clicked = vi.fn((event) => event.preventDefault());
+        link.addEventListener('click', clicked);
+        pointer('pointerdown');
+        pointer('pointerup');
+        cover.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+        expect(clicked).toHaveBeenCalledOnce();
+        pointer('pointerdown');
+        pointer('pointermove', 180);
+        expect(player.scrubber.active).toBe(true);
+        pointer('pointerup', 180, 170, window);
+        expect(video.currentTime).toBe(24);
+        cover.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+        expect(clicked).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('leaves full-picture download links for other resources independent', () => {
       const link = document.createElement('a');
       link.href = '#attachment';
       link.download = 'clip.mp4';

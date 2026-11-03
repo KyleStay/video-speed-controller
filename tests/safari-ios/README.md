@@ -570,6 +570,12 @@ a pass. Manual capture on the local fixture remains separate from this host test
 
 ## Neutral media profiles on iPhone Safari
 
+For thumbnail-expanded WebM attachments, open `/media-patterns.html?attachment-link`
+and run `CustomWebMQATests/testThumbnailExpandedAttachmentScrubbing`. It uses genuine
+touches to preserve a file-link tap, seek through that full-picture link while
+paused, then collapse and reopen before repeating. The media remains native WebM;
+the mock never visits or names a corresponding public site.
+
 `MediaProfileQATests.swift` exercises the same 17 behavior profiles as the Chromium
 `site-mock-cases` suite. Names and maintenance contracts are in
 [`CUSTOM-PLAYER-FIXTURES.md`](../e2e/CUSTOM-PLAYER-FIXTURES.md). All content is generated

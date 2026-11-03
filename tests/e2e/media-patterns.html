@@ -48,6 +48,16 @@
         height: 90px;
         background: #ddd;
       }
+      #attachment-status {
+        overflow-wrap: anywhere;
+      }
+      .attachment-picture {
+        position: relative;
+      }
+      .attachment-cover {
+        position: absolute;
+        inset: 0;
+      }
       textarea {
         display: block;
         width: 100%;
@@ -81,6 +91,46 @@
         return video;
       }
       if (layout === 'board') {
+        let attachmentTaps = 0;
+        const status = document.createElement('p');
+        status.id = 'attachment-status';
+        const report = () => {
+          const video = main.querySelector('video');
+          const inline = video?.vsc?.controlsManager?.inlinePlayer;
+          const state = {
+            controlled: !!video?.vsc,
+            time: video?.currentTime,
+            duration: video?.duration,
+            paused: video?.paused,
+            scrubbing: !!inline?.scrubber.active,
+            taps: attachmentTaps,
+            controllers: document.querySelectorAll('vsc-controller').length,
+          };
+          status.textContent = 'Attachment: ' + JSON.stringify(state);
+          return state;
+        };
+        if (params.has('attachment-link')) {
+          main.append(status);
+          window.__attachmentScrubState = report;
+          // A cached, paused clip can finish loading before deferred controller insertion.
+          new MutationObserver((records) => {
+            if (records.some(({ target }) => target !== status && !status.contains(target))) {
+              report();
+            }
+          }).observe(main, { childList: true, subtree: true });
+          for (const type of [
+            'loadeddata',
+            'canplay',
+            'timeupdate',
+            'pause',
+            'playing',
+            'seeked',
+            'pointerup',
+          ]) {
+            document.addEventListener(type, () => setTimeout(report, 0), true);
+          }
+          report();
+        }
         for (const id of [1, 2]) {
           const post = document.createElement('article');
           post.innerHTML = `<h2>Attachment ${id}</h2>
@@ -89,17 +139,42 @@
             <a href="${source(id)}" download>Save clip</a><div class="player"></div>`;
           const expand = post.querySelector(`#expand-${id}`);
           const collapse = post.querySelector(`#collapse-${id}`);
+          if (params.has('attachment-link')) {
+            expand.setAttribute('aria-label', `Open attachment ${id}`);
+            collapse.setAttribute('aria-label', `Collapse attachment ${id}`);
+          }
           expand.addEventListener('click', () => {
-            post.querySelector('.player').append(media(`clip-${id}`, id));
+            const video = media(`clip-${id}`, id);
+            const player = post.querySelector('.player');
+            if (params.has('attachment-link')) {
+              const picture = document.createElement('div');
+              picture.className = 'attachment-picture';
+              const link = document.createElement('a');
+              link.className = 'attachment-cover';
+              link.href = source(id);
+              link.download = '';
+              link.setAttribute('aria-label', `Expanded attachment ${id}`);
+              link.addEventListener('click', (event) => {
+                event.preventDefault();
+                attachmentTaps++;
+                report();
+              });
+              picture.append(video, link);
+              player.append(picture);
+            } else {
+              player.append(video);
+            }
             expand.hidden = true;
             collapse.hidden = false;
+            if (params.has('attachment-link')) report();
           });
           collapse.addEventListener('click', () => {
             const video = post.querySelector('video');
             video.pause();
-            video.remove();
+            post.querySelector('.player').replaceChildren();
             expand.hidden = false;
             collapse.hidden = true;
+            if (params.has('attachment-link')) report();
           });
           main.append(post);
         }
