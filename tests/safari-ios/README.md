@@ -5,6 +5,48 @@ native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 P
 simulator running iOS 26.2. It does not establish compatibility with every OS,
 physical iPhone/iPad, or live video site.
 
+## Shared live-device workflow
+
+For a bounded physical Safari experiment, use
+[`SafariDriverClient`](../e2e/safari-driver-client.js), not another copied clip
+script. One device owner supplies the existing SafariDriver endpoint, exact device
+ID, owned run directory and case parameters. The owner completes collection and
+cleanup within the authorized experiment; other agents investigate or review the
+result without operating that device. See [device ownership](../../docs/agent-workflow.md#device-experiments)
+and [acceptance review](../../docs/acceptance-review.md).
+
+Create the client with `endpoint` and `recordPath`, call `start(capabilities)`
+using the existing device capabilities, then `createWindow()`. Retain that exact
+handle. Navigate through `navigate(handle, url)`; use
+`activateAndBind(handle, () => activateDeviceSafari(deviceId, activationPath))`
+after CoreDevice activation, rather than selecting a URL-matched or first window.
+`ready(handle, {url, selector, source, controlSelector})` checks document focus,
+one exact source, media readiness and connected controller. Selectors and source
+values belong in the run parameters; ambiguity fails the harness.
+
+Call `startMeasurement(handle, target, {durationMs})` before the genuine input,
+then `trustedInput(handle, target, {actions, type, key})`. Keep the actual trusted
+event receipt. Missing input is a harness failure, not a playback failure or a
+reason to gather another long sample. If the verified player hands off to another
+video, call `attachMeasurement` on that exact target; the collector preserves
+the original prefix and copied position as a boundary. Once the complete window
+elapses, `finishMeasurement(handle)` returns raw probe observations. Long-clip
+windows need at least twenty seconds; loops need five observed wraps, which can
+require substantially longer. Configure server page-load/script deadlines below
+the bounded caller timeout. A timed-out navigation remains incomplete.
+
+For preferences, use `withSettings(exactOptionsUrl, values, experiment)`: one
+guarded extension-options storage path snapshots only selected keys and restores
+both prior values and prior absence with readback. Physical Safari may deny
+extension-options scripting; report that capability gap. Do not sign another app
+for a preference change or expand production MAIN-world storage privileges.
+
+Always call `cleanup()` in `finally`. It closes only registered owned tabs and
+the owned session; automatic session closure after the last owned window is
+successful cleanup. The run record retains commands, receipts, errors and cleanup
+state. The focused client tests use a mock transport/DOM and are structural
+regressions; they do not establish live-device acceptance.
+
 For timeline reveal, open `/mobile.html?mp4&owned&takeover&precision&reveal-overlay`
 and run `InlinePlaybackQATests/testTimelineRevealsWithInterface`. It verifies
 that picture taps toggle the buttons and seek rail together while playback

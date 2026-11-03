@@ -1,18 +1,19 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const team = 'TF2BG2VDPD';
-const actions = new Set(['prepare', 'archive', 'export', 'upload']);
+const actions = new Set(['prepare', 'archive', 'export', 'upload', 'status']);
 const project = path.join(root, 'apple', 'StayFast Video', 'StayFast Video.xcodeproj');
 
 export function parseTestFlightArguments(args = []) {
   const remaining = [...args];
   const action = remaining[0] && !remaining[0].startsWith('--') ? remaining.shift() : 'prepare';
   if (!actions.has(action)) {
-    throw new Error(`Unknown action: ${action}. Use prepare, archive, export, or upload.`);
+    throw new Error(`Unknown action: ${action}. Use prepare, archive, export, upload, or status.`);
   }
   let build = '1';
   let sawBuild = false;
@@ -26,7 +27,41 @@ export function parseTestFlightArguments(args = []) {
   if (!/^[1-9]\d*$/.test(build) || !Number.isSafeInteger(Number(build))) {
     throw new Error('--build must be a positive integer without leading zeros.');
   }
+  if (action === 'status' && !sawBuild) {
+    throw new Error('--build is required for status; select the recorded build explicitly.');
+  }
   return { action, build };
+}
+
+export function createReleaseStatusLedger({ version, build, receipt, reference, generatedAt }) {
+  parseTestFlightArguments(['status', `--build=${build}`]);
+  if (receipt && (receipt.version !== version || receipt.build !== build)) {
+    throw new Error('Upload receipt version/build does not match the selected release.');
+  }
+  const submitted = receipt?.status === 'submitted';
+  if (submitted && !Number.isFinite(Date.parse(receipt.completedAt))) {
+    throw new Error('Submitted upload receipt requires a valid completedAt timestamp.');
+  }
+  const unknown = () => ({ state: 'unconfirmed', observedAt: null, evidence: null });
+  return {
+    schemaVersion: 1,
+    version,
+    build,
+    generatedAt,
+    source: 'Local upload receipt; no live Apple status query was performed.',
+    uploaded: submitted
+      ? { state: 'submitted', observedAt: receipt.completedAt, evidence: reference }
+      : unknown(),
+    processing: unknown(),
+    processed: unknown(),
+    testerAvailable: unknown(),
+    statusQuery: {
+      available: false,
+      reason:
+        'The existing release runner has no authenticated read-only App Store Connect status client. Xcode upload access does not provide a processing or tester-availability query.',
+    },
+    behaviorAcceptance: 'Separate from build, test and upload results.',
+  };
 }
 
 export function createTestFlightPlan({ action = 'prepare', build = '1', version }) {
@@ -134,16 +169,41 @@ function run({ command, args, env = {} }) {
 export function runSafariTestFlight(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
     console.log(
-      'Usage: node scripts/safari-testflight.mjs [prepare|archive|export|upload] [--build=1]'
+      'Usage: node scripts/safari-testflight.mjs [prepare|archive|export|upload|status] [--build=1]'
     );
     console.log(
       'Default prepare archives and exports locally. Only explicit upload submits to App Store Connect.'
+    );
+    console.log(
+      'Status requires --build=N and regenerates docs/generated/safari-release-status.json from local receipts only.'
     );
     return;
   }
   const options = parseTestFlightArguments(args);
   const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const plan = createTestFlightPlan({ ...options, version });
+  if (plan.action === 'status') {
+    const source = existsSync(plan.uploadAttempt) ? readFileSync(plan.uploadAttempt, 'utf8') : null;
+    const ledger = createReleaseStatusLedger({
+      ...options,
+      version,
+      receipt: source ? JSON.parse(source) : null,
+      reference: source
+        ? {
+            path: path.relative(root, plan.uploadAttempt),
+            sha256: createHash('sha256').update(source).digest('hex'),
+          }
+        : null,
+      generatedAt: new Date().toISOString(),
+    });
+    const destination = path.join(root, 'docs', 'generated', 'safari-release-status.json');
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, `${JSON.stringify(ledger, null, 2)}\n`);
+    console.log(
+      `Release status ledger: ${destination}. Apple processing and tester availability remain unconfirmed.`
+    );
+    return;
+  }
   if (plan.action === 'export' || plan.action === 'upload') {
     if (!existsSync(path.join(plan.archive, 'Info.plist'))) {
       throw new Error(

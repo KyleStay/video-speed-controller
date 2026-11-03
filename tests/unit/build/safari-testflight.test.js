@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   createTestFlightPlan,
+  createReleaseStatusLedger,
   parseTestFlightArguments,
 } from '../../../scripts/safari-testflight.mjs';
 
@@ -15,6 +16,61 @@ function plistValue(source, key, value) {
 }
 
 describe('Safari TestFlight release tooling', () => {
+  it('requires an explicit build for read-only local status and schedules no build or upload', () => {
+    expect(() => parseTestFlightArguments(['status'])).toThrow('--build is required');
+    expect(parseTestFlightArguments(['status', '--build=38'])).toEqual({
+      action: 'status',
+      build: '38',
+    });
+    expect(plan('status', '38').commands).toEqual([]);
+  });
+
+  it('keeps cached upload evidence distinct from fresh processing and tester availability', () => {
+    const ledger = createReleaseStatusLedger({
+      version: '0.11.6',
+      build: '38',
+      generatedAt: '2026-11-03T06:00:00Z',
+      reference: {
+        path: 'build/safari/testflight/0.11.6-build38/upload-attempt.json',
+        sha256: 'receipt-hash',
+      },
+      receipt: {
+        version: '0.11.6',
+        build: '38',
+        status: 'submitted',
+        completedAt: '2026-11-03T02:20:03.363Z',
+      },
+    });
+    expect(ledger.uploaded).toMatchObject({
+      state: 'submitted',
+      observedAt: '2026-11-03T02:20:03.363Z',
+    });
+    for (const stage of ['processing', 'processed', 'testerAvailable']) {
+      expect(ledger[stage]).toEqual({ state: 'unconfirmed', observedAt: null, evidence: null });
+    }
+    expect(ledger.statusQuery.available).toBe(false);
+    expect(ledger.behaviorAcceptance).toContain('Separate');
+  });
+
+  it('rejects relabeled and undated receipts and does not count an attempted upload', () => {
+    const input = { version: '0.11.6', build: '38', generatedAt: '2026-11-03T06:00:00Z' };
+    expect(() =>
+      createReleaseStatusLedger({ ...input, receipt: { version: '0.11.6', build: '37' } })
+    ).toThrow('does not match');
+    expect(() =>
+      createReleaseStatusLedger({
+        ...input,
+        receipt: { version: '0.11.6', build: '38', status: 'submitted' },
+      })
+    ).toThrow('completedAt');
+    expect(
+      createReleaseStatusLedger({
+        ...input,
+        receipt: { version: '0.11.6', build: '38', status: 'attempted' },
+      }).uploaded.state
+    ).toBe('unconfirmed');
+  });
+
   it('defaults to a local archive and export with build 1', () => {
     expect(parseTestFlightArguments()).toEqual({ action: 'prepare', build: '1' });
     expect(plan().commands).toHaveLength(3);
