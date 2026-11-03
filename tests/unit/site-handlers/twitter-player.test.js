@@ -830,6 +830,33 @@ describe('TwitterPlayer current MSE identity', () => {
       expect(api.seekTo).not.toHaveBeenCalled();
     });
 
+    it.each(['supplied', 'absent', 'undefined'])(
+      'joins an opaque fragment for long caption-free playback with %s download metadata',
+      (download) => {
+        opaqueCaptionFixture();
+        video.querySelector('track').remove();
+        property(video, 'textTracks', []);
+        property(video, 'duration', 1193.47);
+        content.durationMs = 1193435;
+        state.source.playlistDurationSec = 1193.435;
+        state.playback.shouldLoop = false;
+        state.textTracks.tracks = [];
+        props.loop = false;
+        records.get('info').duration_millis = 1193435;
+        if (download === 'absent') {
+          delete modern.downloadUrl;
+          delete modern.poppedOutSource.playerProps.downloadUrl;
+        } else if (download === 'undefined') {
+          modern.downloadUrl = undefined;
+          modern.poppedOutSource.playerProps.downloadUrl = undefined;
+        }
+        const candidate = resolve();
+        expect(candidate?.progressiveUrl).toBe(mp4('1280x720'));
+        expect(candidate?.loop).toBe(false);
+        expect(candidate?.current()).toBe(true);
+      }
+    );
+
     it.each([
       'wrong fragment',
       'mixed legacy',

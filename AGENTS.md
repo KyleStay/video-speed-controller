@@ -193,7 +193,7 @@ with direct `chrome.*` access.
     Automatic child-source takeover requires the current post's exact Relay media
     reference and SDK-local environment; read at most eight linked cache records
     and reuse the supplied-rendition ranking. Missing countdown UI permits this
-    route. Unlimited clips up to 60 seconds may also join an exact own-data Relay
+    route. Clips may also join an exact own-data Relay
     media fragment supplied by that UI; its `__id` must equal the current post's
     sole media reference. Mixed expanded fields, inherited claims, accessors and
     contradictory UI metadata remain authoritative vetoes.

@@ -561,7 +561,7 @@ and duration before using the existing up-to-720p ranking. This avoids selecting
 a 4K download when X explicitly supplies a lighter rendition. A validated cache
 binding also permits retaining one exact `<source>` child for automatic takeover.
 Caption, protection, live and ambiguity vetoes still apply.
-For unlimited short loops, a countdown accessory may supply an opaque Relay
+A countdown accessory may supply an opaque Relay
 fragment instead of expanded video metadata. Require its exact own-data shape
 and match its reference to that same current post before reading renditions.
 Expanded/mixed fields, inherited claims, accessors and capability contradictions

@@ -1096,9 +1096,6 @@ window.VSC = window.VSC || {};
           const fragmentKeys = ['original_info', '__fragments', '__id', '__fragmentOwner'];
           const fragmentRef = own(media, '__id');
           const fragment = Boolean(
-            requireUnlimitedLoop &&
-            loop &&
-            expectedDuration <= 60 &&
             relayClear(media) &&
             ['video_info', 'id_str', 'video_download_url'].every((key) => !(key in media)) &&
             Reflect.ownKeys(media).length === fragmentKeys.length &&
@@ -1111,8 +1108,8 @@ window.VSC = window.VSC || {};
             fragmentRef.length <= 512 &&
             relayClear(own(media, 'original_info'))
           );
-          const missingDownload = cached && [modern, supplied].every(noDownload);
-          if (cached && download === undefined && !missingDownload) {
+          const missingDownload = (cached || fragment) && [modern, supplied].every(noDownload);
+          if ((cached || fragment) && download === undefined && !missingDownload) {
             return null;
           }
           let current;
