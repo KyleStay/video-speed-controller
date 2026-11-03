@@ -5,34 +5,22 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { startFixtureServer } from './fixture-server.js';
+import { SafariDriverClient } from './safari-driver-client.js';
 
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const extensionPath = resolve(process.env.STAYFAST_SAFARI_DIST || 'dist/safari');
 let driver;
 let fixture;
 let endpoint;
-let sessionId;
+let client;
+let ownedHandle;
 let extensionId;
 let cleanupPromise;
 let driverOutput = '';
 
-async function request(method, path, data) {
-  const response = await fetch(`${endpoint}${path}`, {
-    method,
-    ...(data !== undefined
-      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }
-      : {}),
-    signal: AbortSignal.timeout(30000),
-  });
-  const result = await response.json();
-  if (!response.ok || result.value?.error) {
-    throw new Error(`${method} ${path}: ${result.value?.message || JSON.stringify(result)}`);
-  }
-  return result.value;
-}
-
-const command = (method, path, data) => request(method, `/session/${sessionId}${path}`, data);
-const evaluate = (script, ...args) => command('POST', '/execute/sync', { script, args });
+const request = (method, path, data) => client.request(method, path, data);
+const command = (method, path, data) => client.command(method, path, data);
+const evaluate = (script, ...args) => client.evaluate(script, ...args);
 
 async function diagnoseInjection() {
   const directory = await mkdtemp(resolve(tmpdir(), 'stayfast-safari-diagnostic-'));
@@ -61,7 +49,7 @@ async function diagnoseInjection() {
     );
     const result = await command('POST', '/webextension', { type: 'path', path: directory });
     diagnosticId = typeof result === 'string' ? result : result.extension;
-    await command('POST', '/url', { url: `${fixture.baseUrl}/mobile.html?mp4&diagnostic` });
+    await client.navigate(ownedHandle, `${fixture.baseUrl}/mobile.html?mp4&diagnostic`);
     await pause(1500);
     console.error(
       `Safari minimal injection diagnostic: ${JSON.stringify(await evaluate('return { isolated:document.documentElement.dataset.stayfastQaIsolated, main:document.documentElement.dataset.stayfastQaMain, mainGlobal:window.__stayfastQaMain, vsc:!!window.VSC }'))}`
@@ -100,22 +88,29 @@ async function clickControl(selector) {
   if (!point) {
     throw new Error(`Missing controller control: ${selector}`);
   }
-  await command('POST', '/actions', {
-    actions: [
-      {
-        type: 'pointer',
-        id: 'mouse',
-        parameters: { pointerType: 'mouse' },
-        actions: [
-          { type: 'pointerMove', duration: 0, origin: 'viewport', x: point.x, y: point.y },
-          { type: 'pause', duration: 150 },
-          { type: 'pointerDown', button: 0 },
-          { type: 'pointerUp', button: 0 },
-        ],
-      },
-    ],
-  });
-  await command('DELETE', '/actions');
+  const target = await evaluate(
+    "return {url:location.href,selector:'video',source:document.querySelector('video').currentSrc};"
+  );
+  await client.trustedInput(
+    ownedHandle,
+    { ...target, controlSelector: selector },
+    {
+      type: 'click',
+      actions: [
+        {
+          type: 'pointer',
+          id: 'mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [
+            { type: 'pointerMove', duration: 0, origin: 'viewport', x: point.x, y: point.y },
+            { type: 'pause', duration: 150 },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        },
+      ],
+    }
+  );
 }
 
 async function cleanup() {
@@ -123,16 +118,16 @@ async function cleanup() {
     return cleanupPromise;
   }
   cleanupPromise = (async () => {
-    if (sessionId) {
+    if (client?.sessionId) {
       if (extensionId) {
         await command('DELETE', `/webextension/${extensionId}`).catch((error) =>
           console.error(`Safari extension unload: ${error.message}`)
         );
       }
-      await request('DELETE', `/session/${sessionId}`).catch((error) =>
-        console.error(`Safari session close: ${error.message}`)
-      );
-      sessionId = null;
+      await client.cleanup().catch((error) => {
+        console.error(`Safari session cleanup incomplete: ${error.message}`);
+        process.exitCode = 1;
+      });
     }
     if (driver && driver.exitCode === null && driver.signalCode === null) {
       const exited = new Promise((done) => driver.once('exit', done));
@@ -166,6 +161,13 @@ try {
     portServer.close((error) => (error ? reject(error) : done()))
   );
   endpoint = `http://127.0.0.1:${port}`;
+  client = new SafariDriverClient({
+    endpoint,
+    recordPath: resolve(
+      process.env.STAYFAST_SAFARI_RUN_RECORD ||
+        `test-results/safari-driver/${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}/run.json`
+    ),
+  });
   driver = spawn('/usr/bin/safaridriver', ['--port', String(port)], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -196,12 +198,10 @@ try {
     }
   }
 
-  const session = await request('POST', '/session', {
-    capabilities: { alwaysMatch: { browserName: 'safari' } },
-  });
-  sessionId = session.sessionId;
+  const session = await client.start({ alwaysMatch: { browserName: 'safari' } });
+  ownedHandle = await client.createWindow();
   console.log(
-    `Safari ${session.capabilities.browserVersion}, disposable automation session ${sessionId}`
+    `Safari ${session.capabilities.browserVersion}, disposable automation session ${client.sessionId}`
   );
   const installation = await command('POST', '/webextension', {
     type: 'path',
@@ -222,7 +222,7 @@ try {
   }
   fixture = await startFixtureServer();
   await command('POST', '/window/rect', { width: 1100, height: 800 });
-  await command('POST', '/url', { url: `${fixture.baseUrl}/mobile.html?mp4` });
+  await client.navigate(ownedHandle, `${fixture.baseUrl}/mobile.html?mp4`);
   try {
     await until(
       "return !!document.querySelector('video')?.vsc?.div?.shadowRoot",
@@ -260,12 +260,36 @@ try {
 
   const playElement = await command('POST', '/element', { using: 'css selector', value: '#play' });
   const elementId = playElement['element-6066-11e4-a52e-4f735466cecf'];
-  await command('POST', `/element/${elementId}/click`, {});
+  const keyboardTarget = await evaluate(
+    "return {url:location.href,selector:'video',source:document.querySelector('video').currentSrc,focusSelector:'#play'};"
+  );
+  await client.trustedInput(ownedHandle, keyboardTarget, {
+    type: 'click',
+    actions: [
+      {
+        type: 'pointer',
+        id: 'play',
+        parameters: { pointerType: 'mouse' },
+        actions: [
+          {
+            type: 'pointerMove',
+            duration: 0,
+            origin: { 'element-6066-11e4-a52e-4f735466cecf': elementId },
+            x: 0,
+            y: 0,
+          },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pointerUp', button: 0 },
+        ],
+      },
+    ],
+  });
   await until(
     "return !document.querySelector('video').paused && document.querySelector('video').currentTime > 0.1",
     'Safari real playback'
   );
-  await command('POST', '/actions', {
+  await client.trustedInput(ownedHandle, keyboardTarget, {
+    key: 'd',
     actions: [
       {
         type: 'key',
@@ -277,7 +301,6 @@ try {
       },
     ],
   });
-  await command('DELETE', '/actions');
   await until(
     "return Math.abs(document.querySelector('video').playbackRate - 1.1) < 0.001",
     'Safari genuine keyboard shortcut'

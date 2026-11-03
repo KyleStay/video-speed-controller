@@ -1,0 +1,16 @@
+--- a/Users/kyle/.codex/AGENTS.md
++++ b/Users/kyle/.codex/AGENTS.md
+@@ -106,6 +106,13 @@
+ Repo root docs should include a short Current Direction section when useful.
+ Avoid turning docs into chat logs.
+ Record durable facts only: active goals, tradeoffs, known issues, and manual QA gaps.
++Keep original acceptance cases separate from run results, with stable IDs and
++explicit platform, scenario, source and evidence requirements. Report delivery
++and behavior acceptance separately; preserve every unmet or changed criterion.
++Use checks for mechanical equivalence and reviewers for semantic substitutions.
++For bounded device work, assign one owner to collect evidence and clean up
++within the existing authorization; use other agents for independent analysis,
++regressions or review rather than approving each input.
+ If a workaround recurs, add symptom -> cause -> workaround -> status in docs.
+ 
+ ## Anti-patterns

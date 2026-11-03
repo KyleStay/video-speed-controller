@@ -1,0 +1,16 @@
+{
+  "provenance": "Small structural regressions derived from final38 arithmetic failures; these are not device acceptance evidence.",
+  "unexplainedBackstep": [0, 1, 0.9, 2],
+  "copiedHandoff": [10, 11, 500, 501],
+  "cachedHead": {
+    "previousTail": 2,
+    "native": [100, 100.1, 101],
+    "pts": [2, 100.05, 100.95],
+    "presented": [20, 1001, 1010]
+  },
+  "currentLaggingHead": {
+    "native": [100, 101, 102],
+    "pts": [99.5, 100.5, 101.5],
+    "presented": [1000, 1010, 1020]
+  }
+}

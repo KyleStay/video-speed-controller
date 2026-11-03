@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "version": "0.11.6",
+  "build": "38",
+  "generatedAt": "2026-11-03T03:37:31.727Z",
+  "source": "Local upload receipt; no live Apple status query was performed.",
+  "uploaded": {
+    "state": "submitted",
+    "observedAt": "2026-11-03T02:20:03.363Z",
+    "evidence": {
+      "path": "build/safari/testflight/0.11.6-build38/upload-attempt.json",
+      "sha256": "76a8c24caadd5ddcdf084aeaf5c57b3c2676cb89e86c64f26616b1ea27902581"
+    }
+  },
+  "processing": {
+    "state": "unconfirmed",
+    "observedAt": null,
+    "evidence": null
+  },
+  "processed": {
+    "state": "unconfirmed",
+    "observedAt": null,
+    "evidence": null
+  },
+  "testerAvailable": {
+    "state": "unconfirmed",
+    "observedAt": null,
+    "evidence": null
+  },
+  "statusQuery": {
+    "available": false,
+    "reason": "The existing release runner has no authenticated read-only App Store Connect status client. Xcode upload access does not provide a processing or tester-availability query."
+  },
+  "behaviorAcceptance": "Separate from build, test and upload results."
+}
