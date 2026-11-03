@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' chrome-extension: moz-extension: safari-web-extension:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; frame-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Local media cases</title>
+    <style>
+      body {
+        max-width: 720px;
+        margin: 16px auto;
+        padding: 0 12px;
+        font: 16px system-ui;
+      }
+      button,
+      select,
+      textarea {
+        min-height: 44px;
+        font: inherit;
+        margin: 4px;
+      }
+      textarea {
+        display: block;
+        width: 95%;
+      }
+      .player {
+        position: relative;
+        max-width: 640px;
+      }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16/9;
+      }
+      img {
+        display: block;
+        object-fit: contain;
+      }
+      iframe {
+        display: block;
+        width: 320px;
+        max-width: 100%;
+        height: 260px;
+        border: 1px solid #888;
+      }
+      iframe.wide {
+        width: 640px;
+        height: 420px;
+      }
+      iframe.expanded {
+        position: fixed;
+        top: 140px;
+        left: 12px;
+        width: calc(100vw - 24px);
+        max-width: 700px;
+        height: 440px;
+        z-index: 10;
+        background: white;
+      }
+      .actions {
+        position: relative;
+        z-index: 20;
+        background: white;
+      }
+      article {
+        border: 1px solid #aaa;
+        padding: 8px;
+        margin: 12px 0;
+      }
+      #site-viewer {
+        border: 2px solid #555;
+      }
+      .short-layout {
+        width: 220px;
+      }
+      .short-layout video {
+        aspect-ratio: 9/16;
+        object-fit: contain;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .profile-viewer:not([hidden]) {
+        position: fixed;
+        inset: 230px 12px 12px;
+        padding: 16px;
+        background: white;
+        z-index: 30;
+        overflow: auto;
+      }
+      .profile-viewer:empty {
+        display: none;
+      }
+      .profile-floating {
+        position: fixed;
+        width: 320px;
+        right: 12px;
+        bottom: 12px;
+        z-index: 40;
+        background: white;
+      }
+      main > button,
+      main > label,
+      main > textarea {
+        position: relative;
+        z-index: 50;
+      }
+      #native-profile-probe {
+        font: 10px monospace;
+        overflow-wrap: anywhere;
+      }
+      #native-profile-state {
+        max-height: 72px;
+        overflow: auto;
+      }
+      body.frame-player {
+        margin: 0;
+        padding: 0;
+      }
+      .frame-player h1 {
+        display: none;
+      }
+    </style>
+    <script type="module" src="/media-mock-entry.js"></script>
+  </head>
+  <body>
+    <h1>Local media cases</h1>
+    <main></main>
+    <p id="status" role="status"></p>
+  </body>
+</html>

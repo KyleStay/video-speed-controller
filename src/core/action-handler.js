@@ -233,7 +233,7 @@ class ActionHandler {
    * Frame size = detected fps (measured by the controller's rVFC burst sampler)
    * when available, else the binding's configurable fallback fps. Step amount is
    * `1 / fps` seconds, routed through the normal seek path so site handlers'
-   * bounds-checking applies (handleSeek clamps to [0, duration]).
+   * bounds-checking applies (finite duration or the current native live window).
    *
    * This writes `currentTime`, not `playbackRate`, so it never touches the
    * ratechange cooldown / fight-back machinery.

@@ -73,6 +73,16 @@ tracking wrapper with the cover on the outer picture container. The browser
 counterpart also checks an unknown non-button overlay and real vertical scrolling
 through it. These local fixtures do not establish live-site or physical-device
 compatibility.
+Add `link-overlay` to `/mobile.html?mp4&owned&precision&reveal-overlay&surface-scrub`
+and run `OwnedPlayerQATests/testPictureSurfaceScrubbing` for a full-picture
+attachment link with page-owned play chrome. It checks paused/playing drags,
+inline/fullscreen return, resumed media time and decoded frames, and that the page
+play layer stays hidden without a trailing click. The `ios-surface` browser matrix
+also checks an ordinary link tap still plays and a subsequent drag preserves it.
+Use generated media with a normal frame rate for frame-step checks. A slow
+XCTest press-and-drag on a link can enter Safari's native link-preview gesture
+before the seek threshold; the inline test uses a faster touch path and anchors
+coordinates to the observed rail because WebKit exposes only the link text bounds.
 For a site-expanded viewer with its touch overlay outside the recognized inner
 player, open `/mobile.html?mp4&owned&takeover&theater-overlay&surface-scrub` and run
 `OwnedPlayerQATests/testTheaterPictureSurfaceScrubbing`. It opens the site viewer
@@ -557,3 +567,63 @@ and opens Stop/report without ever pressing Start. Require a diagnostic-build
 (or preserved suspected-top-jump) reason and capture-start evidence. Unsigned
 access/promotion UI may limit live media; do not present unavailable playback as
 a pass. Manual capture on the local fixture remains separate from this host test.
+
+## Neutral media profiles on iPhone Safari
+
+`MediaProfileQATests.swift` exercises the same 17 behavior profiles as the Chromium
+`site-mock-cases` suite. Names and maintenance contracts are in
+[`CUSTOM-PLAYER-FIXTURES.md`](../e2e/CUSTOM-PLAYER-FIXTURES.md). All content is generated
+and served from two loopback origins; no corresponding public sites are visited.
+
+Build the current simulator extension using `node scripts/safari-native.mjs
+--platform=ios-simulator` in an owned source copy. Use a dedicated, already booted
+iPhone simulator, install the built app, and complete the existing extension
+activation/website-access phase above. Release any Qorvex automation agent on that
+same simulator before XCTest; leave other sessions and simulators alone. Then run:
+
+```sh
+node tests/safari-ios/run-media-profiles.mjs \
+  --udid "$STAYFAST_SIMULATOR_UDID" \
+  --app "$STAYFAST_SIMULATOR_APP"
+```
+
+The runner creates an owned XcodeGen project using this directory's `project.yml`,
+keeps normal simulator ad-hoc signing, serves two ephemeral loopback origins,
+opens the opt-in `native-qa` page, and runs only `MediaProfileQATests`. It records
+app/fixture/test hashes, every profile's passed/failed/unrun verdict, XCTest's
+result bundle, screenshots, final native JSON and failure hierarchies. Both servers
+stop and Safari closes on exit. It never boots, erases, or shuts down a simulator;
+restore the selected simulator's original state after inspection. `--case <profile-id>`
+is a focused diagnostic run; the other 16 rows remain explicitly unrun. An absent
+activation, unsupported decode/API or automation failure cannot pass a profile.
+
+Native input selects rates and operates ordinary fixture controls. The page probe
+reads real media properties, decoded/presented-frame counters, caption identity,
+controller identity, disconnected owners and child-frame state. It never calls
+extension commands or assigns playback time/rate. Playback requires advancing
+native time **and** decoded frames. Safari's metadata-only preload is allowed
+before Play; decoded playback remains mandatory after Play. Frame telemetry checks
+both message origin and source window, rejects stale replies, and reports missing
+frames as incomplete. The `native-qa` panel is absent from ordinary fixture runs.
+
+The concurrent-frame test also samples actual screenshot colors in both generated
+pictures before and after a quality change. It allows three captures to settle
+and rejects persistently blank pictures even when counters advance. Intermittent
+blank captures were observed during this simulator run; this gate establishes
+painted readiness, while sustained rendering cadence remains unverified.
+
+Coverage includes rendition and mute persistence across five recycled clips;
+native HLS VOD/file transitions; delayed rate-reset cancellation; duplicate-post
+and editable-field isolation; actual GIF/MP4/WebM gallery navigation; frame resize,
+replacement and removal; watch/short navigation; carousel and viewer restoration;
+frame commands and concurrency; floating/hidden players; attachment expiry and
+renewal; visibility-gated staged playback; and a moving live window followed by
+recording playback. The live fixture uses native MediaSource or iPhone
+ManagedMediaSource with generated fMP4 segments. Remote playback is disabled only
+for that fixture's ManagedMediaSource element, as required by WebKit. It does not
+establish live HLS or AirPlay receiver behavior. Run the existing `GifImageQATests`
+separately for paused animation frame stepping and screenshot color inspection.
+
+Simulator evidence does not establish physical-iPhone behavior, acoustic output,
+DRM, receiver playback, or native decoder cadence at extreme rates. Preserve those
+limits and any failed/unrun profile in completion reports.

@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { gifFixture } from '../helpers/gif-fixture.js';
 import { installPrecisionTrace, installSurfaceTrace } from './precision-trace.js';
 import {
   RATE_PROBE_RATES,
@@ -136,11 +137,26 @@ const mobileHtml = `<!doctype html>
       }
       if (new URLSearchParams(location.search).has('reveal-overlay')) {
         const plain = new URLSearchParams(location.search).has('plain-overlay');
-        const overlay = document.createElement(plain ? 'div' : 'button');
+        const linked = new URLSearchParams(location.search).has('link-overlay');
+        const overlay = document.createElement(linked ? 'a' : plain ? 'div' : 'button');
         overlay.id = 'site-picture-overlay';
-        if (!plain) overlay.type = 'button';
+        if (linked) overlay.href = '#attachment';
+        else if (!plain) overlay.type = 'button';
         overlay.setAttribute('aria-label', 'Video picture');
         overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;';
+        if (linked) {
+          window.__pictureLayer = { clicks: 0 };
+          const indicator = document.createElement('span');
+          indicator.id = 'site-play-indicator'; indicator.textContent = 'Site Play';
+          indicator.style.cssText = 'position:absolute;left:45%;top:45%;pointer-events:none;background:white';
+          overlay.append(indicator);
+          const paint = () => { indicator.hidden = !video.paused; };
+          video.addEventListener('pause', paint); video.addEventListener('playing', paint); paint();
+          overlay.addEventListener('click', event => {
+            event.preventDefault(); window.__pictureLayer.clicks++;
+            if (video.paused) void video.play().catch(() => {}); else video.pause();
+          });
+        }
         for (const type of ['pointerdown', 'touchstart', 'click']) {
           overlay.addEventListener(type, event => event.stopImmediatePropagation());
         }
@@ -346,6 +362,21 @@ const mobileHtml = `<!doctype html>
             '; seek feedback: ' + (video.vsc?.iosPlayer?.ui?.refs.seekFeedback?.textContent || 'none') +
             '; owned fullscreen: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.owns?.() +
             '; fullscreen available: ' + !!video.vsc?.iosPlayer?.ownedFullscreen?.available?.();
+          if (new URLSearchParams(location.search).has('surface-scrub')) {
+            text += '; media duration: ' + video.duration + '; decoded frames: ' + (video.getVideoPlaybackQuality?.().totalVideoFrames ?? video.webkitDecodedFrameCount ?? -1);
+            if (new URLSearchParams(location.search).has('touchtrace')) {
+              const scope = inline?.surfaceContainer?.node;
+              const overlay = document.querySelector('#site-picture-overlay');
+              text += '; surface policy: ' + JSON.stringify({
+                video: getComputedStyle(video).touchAction,
+                scope: scope?.tagName || null,
+                action: scope ? getComputedStyle(scope).touchAction : null,
+                overlay: overlay ? getComputedStyle(overlay).touchAction : null,
+              });
+            }
+            if (window.__pictureLayer) text += '; picture clicks: ' + window.__pictureLayer.clicks +
+              '; site play shown: ' + !document.querySelector('#site-play-indicator').hidden;
+          }
           if (window.__stayfastSurface?.report) {
             text += '; surface scrub: ' + JSON.stringify(window.__stayfastSurface.report);
           }
@@ -437,21 +468,23 @@ const mobileHtml = `<!doctype html>
       if (ownedDiagnostics && new URLSearchParams(location.search).has('touchtrace')) {
         window.__stayfastTouchTrace = [];
         let touchTraceTimer;
-        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'lostpointercapture', 'touchstart', 'touchend']) {
+        for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'lostpointercapture', 'touchstart', 'touchmove', 'touchend', 'dragstart']) {
           window.addEventListener(type, (event) => {
-            const stage = video.vsc?.iosPlayer?.ui?.stage;
+            const owner = video.vsc?.iosPlayer;
+            const inline = video.vsc?.controlsManager?.inlinePlayer;
+            const stage = owner?.active ? owner.ui?.stage : video;
             if (!stage) return;
             const rect = stage.getBoundingClientRect();
             const point = event.changedTouches?.[0] || event;
-            const entry = [type, event.pointerType || 'touch', Math.round((point.clientX - rect.left) / rect.width * 100), Math.round(performance.now()), event.target.tagName, event.composedPath().includes(stage)];
-            queueMicrotask(() => {
-              const gestures = video.vsc?.iosPlayer?.gestures;
-              entry.push(gestures?.points.size, !!gestures?.tap, gestures?.lastTap?.zone || '-');
+            const entry = [type, event.pointerType || 'touch', Math.round((point.clientX - rect.left) / rect.width * 100), Math.round(performance.now()), event.target.tagName, event.composedPath().includes(stage), Math.round(point.clientY - rect.top)];
+            setTimeout(() => {
+              const gestures = owner?.active ? owner.gestures : inline?.gestures;
+              entry.push(gestures?.points.size, !!gestures?.tap, gestures?.lastTap?.zone || '-', event.defaultPrevented, !!(owner?.active ? owner.scrubber : inline?.scrubber)?.active);
               window.__stayfastTouchTrace.push(entry);
               window.__stayfastTouchTrace.splice(0, Math.max(0, window.__stayfastTouchTrace.length - 16));
               clearTimeout(touchTraceTimer);
               touchTraceTimer = setTimeout(updateStatus, 500);
-            });
+            }, 0);
           }, true);
         }
       }
@@ -729,10 +762,70 @@ export async function startFixtureServer({
   const mp4 = await readFile(mp4Path);
   const probeMp4 = probeMp4Path === mp4Path ? mp4 : await readFile(probeMp4Path);
   const customFeed = await readFile(resolve('tests/e2e/custom-feed.html'), 'utf8');
+  const localHtmlRoutes = {
+    '/media-patterns.html': await readFile(resolve('tests/e2e/media-patterns.html'), 'utf8'),
+    '/media-mocks.html': await readFile(resolve('tests/e2e/media-mocks.html'), 'utf8'),
+    ...htmlRoutes,
+  };
+  const localBinaryRoutes = {
+    '/media-mock-entry.js': {
+      type: 'application/javascript; charset=utf-8',
+      body: await readFile(resolve('tests/e2e/media-mock-entry.js')),
+    },
+    '/media-mock-fixture.js': {
+      type: 'application/javascript; charset=utf-8',
+      body: await readFile(resolve('tests/e2e/media-mock-fixture.js')),
+    },
+    '/media-profile-fixture.js': {
+      type: 'application/javascript; charset=utf-8',
+      body: await readFile(resolve('tests/e2e/media-profile-fixture.js')),
+    },
+    '/media-native-probe.js': {
+      type: 'application/javascript; charset=utf-8',
+      body: await readFile(resolve('tests/e2e/media-native-probe.js')),
+    },
+    '/mock-animated.gif': { type: 'image/gif', body: Buffer.from(gifFixture()) },
+    '/mock-still.gif': {
+      type: 'image/gif',
+      body: Buffer.from(gifFixture({ frames: [{ color: 1, delay: 20 }] })),
+    },
+    '/mock-captions.vtt': {
+      type: 'text/vtt; charset=utf-8',
+      body: 'WEBVTT\n\n00:00.000 --> 00:10.000\nExample caption\n',
+    },
+    ...binaryRoutes,
+  };
+  for (const [file, type] of [
+    ['playlist.m3u8', 'application/vnd.apple.mpegurl'],
+    ['init.mp4', 'video/mp4'],
+    ['fallback.mp4', 'video/mp4'],
+    ['clip.webm', 'video/webm'],
+    ['segment-00.m4s', 'video/mp4'],
+    ['segment-01.m4s', 'video/mp4'],
+    ['segment-02.m4s', 'video/mp4'],
+  ]) {
+    localBinaryRoutes[`/mock-media/${file}`] = {
+      type,
+      body: await readFile(resolve('tests/e2e/mock-media', file)),
+    };
+  }
+  for (const file of [
+    'init.mp4',
+    ...Array.from({ length: 12 }, (_, i) => `segment-${String(i).padStart(2, '0')}.m4s`),
+  ]) {
+    localBinaryRoutes[`/mock-live/${file}`] = {
+      type: 'video/mp4',
+      body: await readFile(resolve('tests/e2e/mock-media/live', file)),
+    };
+  }
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
-    if (Object.hasOwn(binaryRoutes, url.pathname)) {
-      const route = binaryRoutes[url.pathname];
+    if (Object.hasOwn(localBinaryRoutes, url.pathname)) {
+      const route = localBinaryRoutes[url.pathname];
+      if (route.type.startsWith('video/')) {
+        respondWithMedia(request, response, route.body, route.type);
+        return;
+      }
       response.writeHead(200, { 'Content-Type': route.type, 'Cache-Control': 'no-store' });
       response.end(route.body);
       return;
@@ -817,12 +910,15 @@ export async function startFixtureServer({
       return;
     }
 
-    if (Object.hasOwn(htmlRoutes, url.pathname) && typeof htmlRoutes[url.pathname] === 'string') {
+    if (
+      Object.hasOwn(localHtmlRoutes, url.pathname) &&
+      typeof localHtmlRoutes[url.pathname] === 'string'
+    ) {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
       });
-      response.end(htmlRoutes[url.pathname]);
+      response.end(localHtmlRoutes[url.pathname]);
       return;
     }
 

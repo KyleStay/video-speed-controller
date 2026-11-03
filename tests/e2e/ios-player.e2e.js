@@ -781,12 +781,13 @@ export default async function runIOSPlayer({
       'unknown-overlay',
       'unknown-div-overlay',
       'unknown-feed-overlay',
+      'unknown-link-overlay',
       'theater-overlay',
       'fullscreen',
     ]) {
       await check(`video-surface precision scrubbing in ${presentation}`, async () => {
         await navigate(
-          `&standard-fullscreen&precision${presentation.startsWith('unknown') ? '' : '&takeover'}${presentation === 'unknown-div-overlay' ? '&plain-overlay' : ''}${presentation === 'unknown-feed-overlay' ? '&feed-overlay' : ''}${
+          `&standard-fullscreen&precision${presentation.startsWith('unknown') ? '' : '&takeover'}${presentation === 'unknown-div-overlay' ? '&plain-overlay' : ''}${presentation === 'unknown-feed-overlay' ? '&feed-overlay' : ''}${presentation === 'unknown-link-overlay' ? '&link-overlay' : ''}${
             presentation === 'theater-overlay'
               ? '&theater-overlay'
               : presentation.includes('overlay')
@@ -812,10 +813,11 @@ export default async function runIOSPlayer({
         }
         await page.evaluate(() => {
           window.__siteTouchEnds = 0;
-          document.addEventListener('touchend', () => {
+          window.__siteTouchEnd = () => {
             window.__siteTouchEnds++;
             void window.__ownedOriginal.play();
-          });
+          };
+          document.addEventListener('touchend', window.__siteTouchEnd);
         });
         const geometry = await page.evaluate(() => {
           const video = window.__ownedOriginal;
@@ -937,6 +939,33 @@ export default async function runIOSPlayer({
             0,
             'A committed scrub must not reach a site tap recognizer on touchend'
           );
+          if (presentation === 'unknown-link-overlay') {
+            assert.equal(await page.evaluate(() => window.__pictureLayer.clicks), 0);
+            await page.evaluate(() =>
+              document.removeEventListener('touchend', window.__siteTouchEnd)
+            );
+            await tapAt(page, geometry.x, geometry.y);
+            await page.waitForFunction(() => !window.__ownedOriginal.paused);
+            const frames = await page.evaluate(
+              () => window.__ownedOriginal.getVideoPlaybackQuality().totalVideoFrames
+            );
+            await send('touchStart', geometry.x, geometry.y);
+            await send('touchMove', geometry.x + 30, geometry.y);
+            await send('touchEnd');
+            await page.waitForFunction(
+              (before) =>
+                !window.__ownedOriginal.paused &&
+                window.__ownedOriginal.getVideoPlaybackQuality().totalVideoFrames > before + 2 &&
+                document.querySelector('#site-play-indicator').hidden,
+              {},
+              frames
+            );
+            assert.equal(
+              await page.evaluate(() => window.__pictureLayer.clicks),
+              1,
+              'A playing drag must not become a site Play/Pause click'
+            );
+          }
         } catch (error) {
           console.error(
             'Surface gesture failure:',

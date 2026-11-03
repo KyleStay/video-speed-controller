@@ -112,6 +112,7 @@ describe('video-surface precision scrubbing', () => {
     event('pointerdown', 110, 320);
     event('pointermove', 145, 320);
     event('pointerdown', 200, 320, 8);
+    vi.advanceTimersByTime(2000);
     const partial = new Event('touchcancel', { bubbles: true, cancelable: true });
     Object.assign(partial, { touches: [{ identifier: 8 }] });
     video.dispatchEvent(partial);

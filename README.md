@@ -30,6 +30,7 @@ advertising, analytics, or StayTech backend.
   how smoothly a requested rate plays.
 - **Precise navigation** — seek by custom intervals, set and revisit markers,
   and step through video frame by frame while paused.
+  Relative seeks stay inside the current native seek window on live/DVR media.
 - **Custom keyboard control** — remap actions, use modifier chords, and create
   multiple preferred-speed shortcuts.
 - **Per-site intelligence** — choose site-specific speeds or disable the
