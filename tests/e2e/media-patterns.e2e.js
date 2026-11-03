@@ -214,6 +214,64 @@ export default async function runMediaPatterns({ launch }) {
         await frameElement.dispose();
       }
     );
+    await page.setUserAgent(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 Version/18.4 Mobile/15E148 Safari/604.1'
+    );
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+    await page.goto(`${fixture.baseUrl}/media-patterns.html?attachment-link`, {
+      waitUntil: 'load',
+    });
+    await page.touchscreen.tap(
+      ...(await page.$eval('#expand-1', (node) => {
+        const r = node.getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2];
+      }))
+    );
+    await ready(page, '#clip-1');
+    await check(
+      'thumbnail-expanded WebM seeks through its file link and preserves taps',
+      async () => {
+        const geometry = await page.$eval('#clip-1', (video) => {
+          const r = video.getBoundingClientRect();
+          return {
+            x: r.x + r.width * 0.25,
+            y: r.y + r.height * 0.5,
+            width: r.width,
+            duration: video.duration,
+          };
+        });
+        await page.touchscreen.tap(geometry.x, geometry.y);
+        assert.equal(await page.evaluate(() => window.__attachmentScrubState().taps), 1);
+        const before = await page.$eval('#clip-1', (video) => video.currentTime);
+        const session = await page.createCDPSession();
+        try {
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [{ x: geometry.x, y: geometry.y, id: 1 }],
+          });
+          await session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: geometry.x + 50, y: geometry.y, id: 1 }],
+          });
+          await page.waitForFunction(() => window.__attachmentScrubState().scrubbing, {
+            timeout: 3000,
+          });
+          await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          const state = await page.evaluate(() => window.__attachmentScrubState());
+          assert.true(state.paused && !state.scrubbing, JSON.stringify(state));
+          assert.true(
+            Math.abs(state.time - before - (50 / geometry.width) * geometry.duration) < 0.2,
+            JSON.stringify(state)
+          );
+          assert.equal(state.taps, 1, 'A committed scrub must not activate the attachment link');
+        } finally {
+          await session
+            .send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
+            .catch(() => {});
+          await session.detach();
+        }
+      }
+    );
     completed = true;
   } catch (error) {
     failure = error;

@@ -963,10 +963,13 @@ class IOSInlinePlayer {
       if (!control) {
         return true;
       }
-      // Full-picture links also wrap expanded attachments; only committed drags
-      // take ownership, leaving taps and independent controls with the page.
+      // Expanded attachments can retain a full-picture download link to the
+      // playing file. Claim only its drag; taps and other downloads stay native.
       const cover = control.getBoundingClientRect();
-      const link = control.matches('a[href]:not([download])');
+      const link =
+        control.matches('a[href]') &&
+        (!control.hasAttribute('download') ||
+          (this.video.currentSrc && control.href === this.video.currentSrc));
       return (
         (control.localName === 'button' || control.getAttribute('role') === 'button' || link) &&
         (container.contains(control) || (link && control.contains(container))) &&

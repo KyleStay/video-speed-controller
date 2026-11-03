@@ -74,6 +74,41 @@ describe('neutral local media fixtures', () => {
     }
   );
 
+  it('keeps an exact file link over a thumbnail-expanded attachment and removes it on collapse', () => {
+    const f = fixture('?attachment-link');
+    f.click('#expand-1');
+    const video = f.document.querySelector('#clip-1');
+    const cover = f.document.querySelector('.attachment-cover');
+    expect(cover.hasAttribute('download')).toBe(true);
+    expect(cover.href).toBe(video.querySelector('source').src);
+    cover.click();
+    expect(f.window.__attachmentScrubState().taps).toBe(1);
+    f.click('#collapse-1');
+    expect(video.isConnected).toBe(false);
+    expect(cover.isConnected).toBe(false);
+    f.click('#expand-1');
+    expect(f.document.querySelector('#clip-1')).not.toBe(video);
+  });
+
+  it('refreshes paused attachment telemetry after deferred controller insertion and removal', async () => {
+    const f = fixture('?attachment-link');
+    f.click('#expand-1');
+    const video = f.document.querySelector('#clip-1');
+    await Promise.resolve();
+    const host = f.document.createElement('vsc-controller');
+    video.vsc = {};
+    video.after(host);
+    await Promise.resolve();
+    const status = f.document.querySelector('#attachment-status');
+    expect(status.textContent).toContain('"controlled":true');
+    expect(status.textContent).toContain('"controllers":1');
+    delete video.vsc;
+    host.remove();
+    await Promise.resolve();
+    expect(status.textContent).toContain('"controlled":false');
+    expect(status.textContent).toContain('"controllers":0');
+  });
+
   it('creates only an explicitly numbered loopback embed and can remove/reopen it', () => {
     const f = fixture('?layout=embed&framePort=62939');
     f.click('#open-embed');

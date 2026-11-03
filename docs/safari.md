@@ -120,6 +120,11 @@ extension-inaccessible frames and overlays outside that container remain outside
 the fallback. StayFast's **Full screen** player provides a separate scrub surface
 for those layouts. Local fixtures do not establish all-site or live X
 expanded-viewer acceptance.
+Expanded attachments may keep a full-picture file link over their video. Horizontal
+drags also scrub through a download link when it points to the current media file;
+ordinary taps and links to other downloads keep their page behavior. The neutral
+`/media-patterns.html?attachment-link` fixture covers thumbnail expansion, seeking,
+collapse and reopen in the built browser and native Safari harnesses.
 Fallback picture taps also dismiss an open speed menu and toggle the interface.
 Before a fallback drag commits, one hit test at the original touch point checks
 that the same single-video scope remains exposed; a new modal, control or second
