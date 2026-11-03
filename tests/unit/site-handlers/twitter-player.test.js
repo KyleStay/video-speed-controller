@@ -787,6 +787,114 @@ describe('TwitterPlayer current MSE identity', () => {
       fiber.return.return = owner;
     });
 
+    function opaqueCaptionFixture() {
+      const caption = captionFixture();
+      modern.downloadUrl = mp4('640x360');
+      modern.poppedOutSource.playerProps.downloadUrl = modern.downloadUrl;
+      const fragment = {
+        original_info: { width: 640, height: 360 },
+        __fragments: { CurrentMedia: {} },
+        __id: 'media',
+        __fragmentOwner: {},
+      };
+      modern.timeRemainingAccessory = { props: { media: fragment } };
+      video.removeAttribute('src');
+      const source = document.createElement('source');
+      source.src = blob;
+      source.type = 'video/mp4';
+      video.prepend(source);
+      return { ...caption, fragment, source };
+    }
+
+    it('joins the exact opaque caption-loop UI fragment to the current post Relay catalog', () => {
+      const { fragment, source, track } = opaqueCaptionFixture();
+      const play = vi.spyOn(video, 'play'),
+        pause = vi.spyOn(video, 'pause'),
+        load = vi.spyOn(video, 'load');
+      const candidate = window.VSC.TwitterPlayer.resolveCaptionedLoop(video);
+      expect(candidate?.sourceNode).toBe(source);
+      expect(candidate?.progressiveUrl).toBe(mp4('1280x720'));
+      expect(candidate?.loop).toBe(true);
+      expect(candidate?.current()).toBe(true);
+      expect(candidate?.captionBinding.isCurrent()).toBe(true);
+      expect(fragment.__id).toBe(owner.memoizedProps.tweet.media_entities2[0].__id);
+      expect(new Set(cache.get.mock.calls.map(([id]) => id))).toEqual(
+        new Set(['media', 'info', 'v0', 'v1', 'v2', 'v3', 'v4', 'v5'])
+      );
+      expect(resolve()).toBeNull();
+      expect(track.mode).toBe('showing');
+      expect(source.src).toBe(blob);
+      expect(play).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      expect(api.seekTo).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'wrong fragment',
+      'mixed legacy',
+      'null info',
+      'info getter',
+      'inherited info',
+      'protected dimensions',
+      'finite loop',
+    ])('rejects an opaque fragment with %s before accepting any alternate source', (change) => {
+      const { fragment } = opaqueCaptionFixture();
+      const getter = vi.fn();
+      if (change === 'wrong fragment') {
+        fragment.__id = 'other-media';
+      }
+      if (change === 'mixed legacy') {
+        fragment.id_str = contentId;
+      }
+      if (change === 'null info') {
+        fragment.video_info = null;
+      }
+      if (change === 'info getter') {
+        Object.defineProperty(fragment, 'video_info', { get: getter });
+      }
+      if (change === 'inherited info') {
+        Object.setPrototypeOf(fragment, { video_info: {} });
+      }
+      if (change === 'protected dimensions') {
+        fragment.original_info.drm = true;
+      }
+      if (change === 'finite loop') {
+        delete props.loop;
+        content.maxLoopCount = 2;
+      }
+      expect(window.VSC.TwitterPlayer.resolveCaptionedLoop(video)).toBeNull();
+      expect(getter).not.toHaveBeenCalled();
+      expect(api.seekTo).not.toHaveBeenCalled();
+    });
+
+    it.each(['media replacement', 'protection change', 'session change', 'reentrant SDK read'])(
+      'rechecks the UI fragment through a Relay cache read after %s',
+      (change) => {
+        const { fragment } = opaqueCaptionFixture();
+        cache.get.mockImplementation((id) => {
+          if (change === 'media replacement') {
+            modern.timeRemainingAccessory.props.media = { ...fragment };
+          }
+          if (change === 'protection change') {
+            fragment.original_info.live = true;
+          }
+          if (change === 'session change') {
+            state.session.id = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+          }
+          if (change === 'reentrant SDK read') {
+            api.getState.mockImplementationOnce(() => {
+              modern.timeRemainingAccessory.props.media = { ...fragment };
+              return state;
+            });
+          }
+          return records.get(id);
+        });
+        expect(window.VSC.TwitterPlayer.resolveCaptionedLoop(video)).toBeNull();
+        expect(cache.get).toHaveBeenCalledOnce();
+      }
+    );
+
     it('certifies the finite captioned native presentation through the exact Relay/source-child route', () => {
       const { element, notifyPlay } = nativePresentationFixture();
       records.get('info').duration_millis = 373840;

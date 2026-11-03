@@ -582,7 +582,7 @@ window.VSC = window.VSC || {};
       (key) => Object.hasOwn(value, key) || !(key in value)
     );
 
-  function relayVariants(fiber, post, contentId, duration, download, current) {
+  function relayVariants(fiber, post, contentId, duration, download, current, expectedMediaRef) {
     const reads = [],
       methods = [],
       ancestors = new Set();
@@ -671,7 +671,11 @@ window.VSC = window.VSC || {};
         throw Error('Cache dependency budget');
       }
     }
-    if (!environment || !mediaRef) {
+    if (
+      !environment ||
+      !mediaRef ||
+      (expectedMediaRef !== undefined && mediaRef !== expectedMediaRef)
+    ) {
       return null;
     }
     capture(environment, '@@RelayModernEnvironment');
@@ -1077,7 +1081,9 @@ window.VSC = window.VSC || {};
           }
           const popped = own(modern, 'poppedOutSource');
           const supplied = own(popped, 'playerProps');
-          const media = own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media');
+          const accessory = own(modern, 'timeRemainingAccessory');
+          const accessoryProps = own(accessory, 'props');
+          const media = own(accessoryProps, 'media');
           const info = own(media, 'video_info');
           let variants = own(info, 'variants');
           const download = own(modern, 'downloadUrl');
@@ -1087,12 +1093,30 @@ window.VSC = window.VSC || {};
             !Object.getOwnPropertyDescriptor(modern, 'timeRemainingAccessory') &&
             !('timeRemainingAccessory' in modern)
           );
+          const fragmentKeys = ['original_info', '__fragments', '__id', '__fragmentOwner'];
+          const fragmentRef = own(media, '__id');
+          const fragment = Boolean(
+            requireUnlimitedLoop &&
+            loop &&
+            expectedDuration <= 60 &&
+            relayClear(media) &&
+            ['video_info', 'id_str', 'video_download_url'].every((key) => !(key in media)) &&
+            Reflect.ownKeys(media).length === fragmentKeys.length &&
+            fragmentKeys.every((key) => {
+              const field = Object.getOwnPropertyDescriptor(media, key);
+              return field && Object.hasOwn(field, 'value');
+            }) &&
+            typeof fragmentRef === 'string' &&
+            fragmentRef.length > 0 &&
+            fragmentRef.length <= 512 &&
+            relayClear(own(media, 'original_info'))
+          );
           const missingDownload = cached && [modern, supplied].every(noDownload);
           if (cached && download === undefined && !missingDownload) {
             return null;
           }
           let current;
-          if (cached || captionRole) {
+          if (cached || fragment || captionRole) {
             // Retain the metadata authority through the last rendition read.
             const doc = video.ownerDocument,
               root = doc.documentElement,
@@ -1129,6 +1153,14 @@ window.VSC = window.VSC || {};
               [state, 'source', 'content', 'session', 'playback', 'textTracks'],
               [source, 'src', 'kind', 'playlistDurationSec'],
               [modern, 'poppedOutSource', 'downloadUrl'],
+              ...(fragment
+                ? [
+                    [modern, 'timeRemainingAccessory'],
+                    [accessory, 'props'],
+                    [accessoryProps, 'media'],
+                    [media, ...fragmentKeys],
+                  ]
+                : []),
               [popped, 'hostKey', 'playerProps'],
               [supplied, 'src', 'content', 'downloadUrl'],
             ].flatMap(([object, ...keys]) => keys.map((key) => [object, key, own(object, key)]));
@@ -1145,6 +1177,7 @@ window.VSC = window.VSC || {};
               fields.every(([object, key, value]) => own(object, key) === value) &&
               (!captionRole ||
                 cached ||
+                fragment ||
                 (own(own(own(modern, 'timeRemainingAccessory'), 'props'), 'media') === media &&
                   own(media, 'video_info') === info &&
                   own(info, 'variants') === variants &&
@@ -1152,6 +1185,11 @@ window.VSC = window.VSC || {};
                   own(media, 'video_download_url') === download &&
                   near(own(info, 'duration_millis') / 1000, expectedDuration) &&
                   [media, info].every(relayClear))) &&
+              (!fragment ||
+                (Reflect.ownKeys(media).length === fragmentKeys.length &&
+                  ['video_info', 'id_str', 'video_download_url'].every((key) => !(key in media)) &&
+                  relayClear(media) &&
+                  relayClear(own(media, 'original_info')))) &&
               video.ownerDocument === doc &&
               doc.documentElement === root &&
               doc.URL === url &&
@@ -1197,12 +1235,20 @@ window.VSC = window.VSC || {};
               captionCurrent = current;
             }
           }
-          if (cached) {
-            // Without countdown UI, the same post's renditions live in Relay.
+          if (cached || fragment) {
+            // Bind Relay renditions to the current post and any supplied media fragment.
             if (!current()) {
               return null;
             }
-            variants = relayVariants(fiber, post, contentId, expectedDuration, download, current);
+            variants = relayVariants(
+              fiber,
+              post,
+              contentId,
+              expectedDuration,
+              download,
+              current,
+              fragment ? fragmentRef : undefined
+            );
             if (!variants) {
               return null;
             }
@@ -1217,6 +1263,7 @@ window.VSC = window.VSC || {};
             own(supplied, 'downloadUrl') !== download ||
             (missingDownload && ![modern, supplied].every(noDownload)) ||
             (!cached &&
+              !fragment &&
               (!clear(media) ||
                 !clear(info) ||
                 own(media, 'id_str') !== contentId ||
@@ -1292,7 +1339,7 @@ window.VSC = window.VSC || {};
           result = {
             ...binding,
             progressiveUrl: best.url,
-            cached,
+            cached: cached || fragment,
             loop,
             scope,
           };

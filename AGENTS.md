@@ -193,7 +193,10 @@ with direct `chrome.*` access.
     Automatic child-source takeover requires the current post's exact Relay media
     reference and SDK-local environment; read at most eight linked cache records
     and reuse the supplied-rendition ranking. Missing countdown UI permits this
-    route; present, inherited or invalid UI metadata remains an authoritative veto.
+    route. Unlimited clips up to 60 seconds may also join an exact own-data Relay
+    media fragment supplied by that UI; its `__id` must equal the current post's
+    sole media reference. Mixed expanded fields, inherited claims, accessors and
+    contradictory UI metadata remain authoritative vetoes.
     Cached playback renditions may omit the download URL only when both metadata
     owners have an absent or own-data-undefined field, rechecked around cache/SDK
     reads. Inherited, accessor, invalid and mixed fields remain vetoes. Exact
