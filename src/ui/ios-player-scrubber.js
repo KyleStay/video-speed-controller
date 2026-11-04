@@ -360,6 +360,16 @@ class IOSPlayerScrubber {
     if (!this.active || this.finishing || (event && event.pointerId !== this.pointerId)) {
       return;
     }
+    if (event?.type === 'lostpointercapture') {
+      try {
+        // Safari retargets native video capture transfers to the video itself.
+        if ((this.surface || this.range).hasPointerCapture?.(event.pointerId)) {
+          return;
+        }
+      } catch {
+        // A page can replace capture APIs; retain ordinary cancellation.
+      }
+    }
     this.finishing = true;
     try {
       if (event) {

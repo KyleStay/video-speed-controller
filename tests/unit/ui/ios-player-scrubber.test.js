@@ -293,6 +293,25 @@ describe('owned-player pointer precision scrubbing', () => {
     expect(paused).toBe(true);
   });
 
+  it('ignores capture transfer on a range but cancels when capture is actually lost', () => {
+    range.hasPointerCapture = vi.fn(() => true);
+    pointer('pointerdown');
+    pointer('pointermove', 190);
+    pointer('lostpointercapture', 190);
+    expect(scrubber.active).toBe(true);
+    pointer('pointerup', 190);
+    expect(owner.video.currentTime).toBe(60);
+    expect(scrubber.active).toBe(false);
+
+    pointer('pointerdown', 190);
+    pointer('pointermove', 220);
+    range.hasPointerCapture.mockReturnValue(false);
+    pointer('lostpointercapture', 220);
+    expect(owner.video.currentTime).toBe(60);
+    expect(scrubber.active).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('teardown removes active gesture listeners without restoring or resuming media', () => {
     pointer('pointerdown', 85);
     pointer('pointermove', 115);

@@ -103,6 +103,9 @@ starting position for finer precision. Vertical-only movement does not jump the
 selected time. A vertical swipe before scrubbing begins still scrolls an inline
 page. Taps retain interface visibility behavior; pinch remains available. The
 video pauses only after the scrub begins and resumes only if it was playing.
+Native video capture transfers can report `lostpointercapture` on that same
+video. Seeking continues while its surface still has capture; an actual loss or
+pointer cancellation restores the starting position.
 
 Unknown site overlays also forward horizontal drags when they share a
 picture-sized container with exactly one video. This gesture-only fallback

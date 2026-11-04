@@ -37,6 +37,60 @@ export default async function runCustomWebM({ launch }) {
       {},
       before
     );
+    const touch = await page.createCDPSession();
+    try {
+      for (const paused of [false, true]) {
+        await page.$eval(
+          'video',
+          (video, paused) => {
+            if (paused) {
+              video.pause();
+            }
+          },
+          paused
+        );
+        const start = await page.$eval('video', (video) => {
+          const rect = video.getBoundingClientRect();
+          return {
+            x: rect.x + rect.width * 0.3,
+            y: rect.y + rect.height * 0.55,
+            time: video.currentTime,
+          };
+        });
+        await touch.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: start.x, y: start.y, id: 1 }],
+        });
+        for (let step = 1; step <= 6; step++) {
+          await touch.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: start.x + step * 10, y: start.y, id: 1 }],
+          });
+        }
+        await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForFunction(
+          (start, paused) => {
+            const video = document.querySelector('video');
+            return (
+              video.currentTime > start + 5 &&
+              video.paused === paused &&
+              !video.seeking &&
+              !video.vsc.controlsManager.inlinePlayer.scrubber.active
+            );
+          },
+          {},
+          start.time,
+          paused
+        );
+      }
+    } finally {
+      await touch
+        .send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
+        .catch(() => {});
+      await touch.detach();
+    }
+    await page.$eval('video', (video) => video.play());
+    await page.waitForFunction(() => !window.__customWebMState().paused);
     const tap = async (selector) => {
       const bounds = await page.evaluate((selector) => {
         const target = document.querySelector('video').vsc.div.shadowRoot.querySelector(selector);
@@ -63,7 +117,7 @@ export default async function runCustomWebM({ launch }) {
     assert.true(state.closedPaused);
     errors.assertNone('native custom WebM ownership');
     console.log(
-      'PASS: custom WebM native takeover, decoded playback, speed, handback and close cleanup'
+      'PASS: custom WebM takeover, decoded playback, playing/paused picture scrubs, speed, handback and close cleanup'
     );
     return { passed: 1, failed: 0 };
   } finally {

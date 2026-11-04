@@ -355,6 +355,31 @@ describe('video-surface precision scrubbing', () => {
     expect(video.currentTime).toBe(50);
   });
 
+  it.each([false, true])(
+    'keeps inline video seeking through retargeted native capture transfer (paused=%s)',
+    (wasPaused) => {
+      paused = wasPaused;
+      video.getBoundingClientRect = stage.getBoundingClientRect;
+      video.setPointerCapture = vi.fn();
+      video.releasePointerCapture = vi.fn();
+      video.hasPointerCapture = vi.fn(() => true);
+      owner.ui.stage = video;
+      gestures.attach();
+      event('pointerdown', 110, 320);
+      event('pointermove', 150, 320);
+      event('lostpointercapture', 150, 320);
+      expect(scrubber.active).toBe(true);
+      expect(gestures.points.size).toBe(1);
+      event('pointermove', 190, 320);
+      event('pointerup', 190, 320);
+      expect(video.currentTime).toBe(70);
+      expect(scrubber.active).toBe(false);
+      expect(paused).toBe(wasPaused);
+      expect(owner.play).toHaveBeenCalledTimes(wasPaused ? 0 : 1);
+      expect(gestures.points.size).toBe(0);
+    }
+  );
+
   it('cancels active decoder work and capture on teardown without resuming', () => {
     event('pointerdown', 110, 320);
     event('pointermove', 150, 320);
