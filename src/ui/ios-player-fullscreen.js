@@ -408,7 +408,8 @@ class IOSPlayerFullscreen {
         this.owner.ownStyle(node, 'overflow', 'hidden');
       }
       this.viewportStyle = this.doc.createElement('style');
-      this.viewportStyle.textContent = `[data-vsc-owned-viewport-media=${JSON.stringify(this.owner.token)}]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:contain!important}`;
+      const fit = this.owner.fit === 'cover' ? 'cover' : 'contain';
+      this.viewportStyle.textContent = `[data-vsc-owned-viewport-media=${JSON.stringify(this.owner.token)}]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:${fit}!important}`;
       this.root.append(this.viewportStyle);
       this.target.showPopover();
       if (!this.current() || !this.owns()) {

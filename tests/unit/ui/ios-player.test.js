@@ -612,6 +612,20 @@ describe('iOS player ownership, playback, and restoration', () => {
       expect(parent.hasAttribute('popover')).toBe(false);
     });
 
+    it('retains the selected Fill mode when reopening the owned viewport', () => {
+      const { player } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      player.ui.refs.fit.click();
+      expect(player.fit).toBe('cover');
+      player.close();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.ui.refs.fit.getAttribute('aria-pressed')).toBe('true');
+      expect(player.ownedFullscreen.viewportStyle.textContent).toContain(
+        'object-fit:cover!important'
+      );
+    });
+
     it('uses only the owned viewport when browser fullscreen policy is disabled', () => {
       const { player, video, parent } = nativePlayer();
       const native = vi.fn();
