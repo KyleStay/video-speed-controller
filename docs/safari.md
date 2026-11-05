@@ -43,14 +43,14 @@ the iOS fixture server. These fixtures simulate the original decoder API;
 compatibility with a deployed decoder and physical-device behavior are separate
 runtime checks.
 
-For Twitter's retained original renderer, an explicit Full screen request uses
-Safari's original-video fullscreen when container fullscreen is unavailable.
-The same fallback remains available when the progressive transport declines the
-source. It preserves the original media and captions. Transport-decline fallback
-applies only to explicit Full screen actions, keeping Custom player and automatic
-requests on their existing refusal path. Explicit fullscreen policy denials and
-an unrelated active fullscreen session block this fallback. Native Safari owns
-the controls during original-video fullscreen.
+Full screen uses StayFast's player on iPhone, including Twitter. For a verified
+retained renderer, unavailable or refused container fullscreen uses a manual
+popover viewport with StayFast's controls. The original video, source, parent
+chain and native captions remain in place. The viewport owns only its markers,
+styles, placeholder and UI, restoring them on close or certificate loss. An
+existing site popover or unrelated fullscreen session is not acquired. Unsupported
+presentation or transport remains inline with an unavailable message; it never
+chooses the system player. More → Apple player is the explicit native bypass.
 
 ## Open Twitter regressions
 

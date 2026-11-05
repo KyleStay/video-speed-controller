@@ -141,6 +141,33 @@
       memoizedProps: props,
       return: { memoizedState: null, memoizedProps: metadata, return: null },
     };
+    const parameters = new URLSearchParams(location.search);
+    if (parameters.has('retained-presentation')) {
+      original.loop = false;
+      state.playback.shouldLoop = false;
+      delete props.loop;
+      const registry = Object.create({ notifyPlay() {} });
+      registry.entries = new Map([
+        [
+          'local-player',
+          { instanceId: 'local-player', controller: sdk.controller, element: parent },
+        ],
+      ]);
+      parent.__reactFiber$fixture.dependencies = {
+        firstContext: { memoizedValue: { registry }, next: null },
+      };
+      if (parameters.has('no-container-fullscreen')) {
+        for (const name of [
+          'requestFullscreen',
+          'webkitRequestFullscreen',
+          'webkitRequestFullScreen',
+        ]) {
+          Object.defineProperty(parent, name, { configurable: true, value: undefined });
+        }
+      }
+    }
+    let systemFullscreenEvents = 0;
+    original.addEventListener('webkitbeginfullscreen', () => systemFullscreenEvents++);
     let mse,
       buffer,
       initialMse,
@@ -192,6 +219,15 @@
         subscribers: subscribers.size,
         fullscreen: !!video.vsc?.iosPlayer?.active,
         canResolve: !!window.VSC?.TwitterPlayer?.resolve(original),
+        canPresent: !!window.VSC?.TwitterPlayer?.resolveNativePresentation(original),
+        ownedViewport: !!video.vsc?.iosPlayer?.ownedFullscreen?.viewport,
+        systemFullscreenEvents,
+        systemFullscreen: original.webkitDisplayingFullscreen === true,
+        documentFullscreen: !!document.fullscreenElement,
+        decodedFrames:
+          original.getVideoPlaybackQuality?.().totalVideoFrames ||
+          original.webkitDecodedFrameCount ||
+          0,
         measurement,
       };
     };

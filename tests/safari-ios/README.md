@@ -603,6 +603,13 @@ restore the selected simulator's original state after inspection. `--case <profi
 is a focused diagnostic run; the other 16 rows remain explicitly unrun. An absent
 activation, unsupported decode/API or automation failure cannot pass a profile.
 
+Native rate-reset checks observe the probe's passive `ratechange` updates while
+waiting for the delayed reset. Repeated Read button taps would supply unrelated
+trusted input inside the site's speed-command gesture window and change the
+behavior being measured. Frame reads retry only within their bounded deadline
+when a newly loaded child has not installed its telemetry listener. Native taps
+scroll observed offscreen targets into view before interaction.
+
 Native input selects rates and operates ordinary fixture controls. The page probe
 reads real media properties, decoded/presented-frame counters, caption identity,
 controller identity, disconnected owners and child-frame state. It never calls

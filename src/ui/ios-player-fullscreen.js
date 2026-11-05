@@ -81,6 +81,12 @@ class IOSPlayerFullscreen {
         this.owner.nativeGeneration === this.nativeGeneration &&
         this.ui.host.isConnected &&
         this.target.isConnected &&
+        (!this.viewport ||
+          (this.viewportStyle?.isConnected === true &&
+            this.target.getAttribute('popover') === 'manual' &&
+            this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token &&
+            this.owner.video.getAttribute('data-vsc-owned-viewport-media') === this.owner.token &&
+            this.target.matches(':popover-open'))) &&
         (!this.boundary ||
           (this.boundary.current() &&
             this.ui.host.parentNode === (this.mounted ? this.target : this.mountParent)))
@@ -158,6 +164,15 @@ class IOSPlayerFullscreen {
         )
       ) {
         return false;
+      }
+      if (this.viewport) {
+        return (
+          this.target.getAttribute('popover') === 'manual' &&
+          this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token &&
+          this.owner.video.getAttribute('data-vsc-owned-viewport-media') === this.owner.token &&
+          this.viewportStyle?.isConnected === true &&
+          this.target.matches(':popover-open')
+        );
       }
       return (
         documents.length > 0 ||
@@ -320,25 +335,167 @@ class IOSPlayerFullscreen {
     }
   }
 
+  enterViewport(scrollSnapshot) {
+    try {
+      if (
+        !this.inPlace ||
+        !this.current() ||
+        this.doc.fullscreenElement ||
+        this.doc.webkitFullscreenElement ||
+        this.target === this.owner.video ||
+        this.target.hasAttribute('popover') ||
+        this.target.hasAttribute('data-vsc-owned-viewport') ||
+        this.owner.video.hasAttribute('data-vsc-owned-viewport-media') ||
+        typeof this.target.showPopover !== 'function' ||
+        typeof this.target.hidePopover !== 'function'
+      ) {
+        return false;
+      }
+      this.cancelScrollRepair();
+      this.scrollSnapshot = scrollSnapshot || this.captureScroll();
+      this.guardScrollIntent(this.scrollSnapshot);
+      this.owner.pageScroll = new window.VSC.IOSPlayerScrollState(this.target, true);
+      const rect = this.target.getBoundingClientRect();
+      const placeholder = this.doc.createElement('span');
+      placeholder.style.cssText = `display:block;width:${rect.width}px;max-width:100%;height:${rect.height}px;pointer-events:none`;
+      const originalStyle = this.view.getComputedStyle(this.target);
+      for (const side of ['top', 'right', 'bottom', 'left']) {
+        placeholder.style.setProperty(
+          `margin-${side}`,
+          originalStyle.getPropertyValue(`margin-${side}`)
+        );
+      }
+      placeholder.setAttribute('aria-hidden', 'true');
+      this.target.before(placeholder);
+      this.owner.placeholder = placeholder;
+      this.request = {};
+      IOSPlayerFullscreen.boundaryRequests.set(this.target, this.request);
+      this.target.append(this.ui.host);
+      this.mounted = true;
+      this.viewport = true;
+      this.target.setAttribute('data-vsc-owned-viewport', this.owner.token);
+      this.owner.video.setAttribute('data-vsc-owned-viewport-media', this.owner.token);
+      this.target.setAttribute('popover', 'manual');
+      for (const [property, value] of Object.entries({
+        position: 'fixed',
+        top: '0',
+        right: '0',
+        bottom: '0',
+        left: '0',
+        width: '100dvw',
+        height: '100dvh',
+        'max-width': 'none',
+        'max-height': 'none',
+        'margin-top': '0',
+        'margin-right': '0',
+        'margin-bottom': '0',
+        'margin-left': '0',
+        'padding-top': '0',
+        'padding-right': '0',
+        'padding-bottom': '0',
+        'padding-left': '0',
+        'border-top-width': '0',
+        'border-right-width': '0',
+        'border-bottom-width': '0',
+        'border-left-width': '0',
+        transform: 'none',
+        overflow: 'hidden',
+        'background-color': '#000',
+      })) {
+        this.owner.ownStyle(this.target, property, value);
+      }
+      for (const node of [this.root, this.doc.body].filter(Boolean)) {
+        this.owner.ownStyle(node, 'overflow', 'hidden');
+      }
+      this.viewportStyle = this.doc.createElement('style');
+      this.viewportStyle.textContent = `[data-vsc-owned-viewport-media=${JSON.stringify(this.owner.token)}]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:contain!important}`;
+      this.root.append(this.viewportStyle);
+      this.target.showPopover();
+      if (!this.current() || !this.owns()) {
+        throw new Error('Retained viewport changed');
+      }
+      const viewport = this.view.visualViewport || this.view;
+      for (const node of [this.target, this.owner.video]) {
+        const bounds = node.getBoundingClientRect();
+        if (
+          bounds.width < (viewport.width || this.view.innerWidth) - 2 ||
+          bounds.height < (viewport.height || this.view.innerHeight) - 2
+        ) {
+          throw new Error('Retained viewport did not cover the screen');
+        }
+      }
+      const changed = () => {
+        if (this.viewport && (!this.current() || !this.owns())) {
+          this.closeInPlace();
+        }
+      };
+      this.listen(this.target, 'toggle', changed);
+      this.viewportObserver = new this.view.MutationObserver(changed);
+      this.viewportObserver.observe(this.target, {
+        attributes: true,
+        attributeFilter: ['popover', 'data-vsc-owned-viewport'],
+      });
+      this.viewportObserver.observe(this.owner.video, {
+        attributes: true,
+        attributeFilter: ['data-vsc-owned-viewport-media'],
+      });
+      this.wasOwned = true;
+      this.repairScroll();
+      this.position();
+      this.updateButton();
+      return true;
+    } catch {
+      this.releaseViewport();
+      return false;
+    }
+  }
+
+  releaseViewport() {
+    if (!this.viewport) {
+      return;
+    }
+    this.viewport = false;
+    this.viewportObserver?.disconnect();
+    this.viewportObserver = null;
+    try {
+      if (
+        IOSPlayerFullscreen.boundaryRequests.get(this.target) === this.request &&
+        this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token
+      ) {
+        if (this.target.getAttribute('popover') === 'manual') {
+          if (this.target.matches(':popover-open')) {
+            this.target.hidePopover();
+          }
+          if (this.target.getAttribute('popover') === 'manual') {
+            this.target.removeAttribute('popover');
+          }
+        }
+        if (this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token) {
+          this.target.removeAttribute('data-vsc-owned-viewport');
+        }
+      }
+    } catch {
+      // Removing our stylesheet and HUD must not depend on a page's popover API.
+    }
+    this.viewportStyle?.remove();
+    this.viewportStyle = null;
+    if (
+      IOSPlayerFullscreen.boundaryRequests.get(this.target) === this.request &&
+      this.owner.video.getAttribute('data-vsc-owned-viewport-media') === this.owner.token
+    ) {
+      this.owner.video.removeAttribute('data-vsc-owned-viewport-media');
+    }
+    this.restoreMount();
+  }
+
   enter(scrollSnapshot = null) {
     if (!this.available()) {
-      let useNative = false;
-      try {
-        useNative =
-          this.inPlace &&
-          this.current() &&
-          typeof this.owner.fallbackToNativeFullscreen === 'function';
-      } catch {
-        // A stale presentation cannot authorize a native fallback.
+      if (this.enterViewport(scrollSnapshot)) {
+        return true;
       }
       this.cancelScroll(scrollSnapshot);
       this.closeInPlace();
-      // iPhone Safari can expose video fullscreen without container fullscreen.
-      try {
-        return useNative && this.boundary.current() && this.owner.fallbackToNativeFullscreen();
-      } catch {
-        return false;
-      }
+      return false;
     }
     if (this.owns() || this.pending) {
       if (scrollSnapshot !== this.scrollSnapshot) {
@@ -382,7 +539,10 @@ class IOSPlayerFullscreen {
             if (!this.owns()) {
               this.restoreMount();
             }
-            if (!this.owns() && this.closeInPlace()) {
+            if (!this.owns() && this.inPlace) {
+              if (!this.enterViewport(this.scrollSnapshot)) {
+                this.closeInPlace();
+              }
               return;
             }
             if (this.current()) {
@@ -394,7 +554,10 @@ class IOSPlayerFullscreen {
           () => {
             this.pending = false;
             this.restoreMount();
-            if (this.closeInPlace()) {
+            if (this.inPlace) {
+              if (!this.enterViewport(this.scrollSnapshot)) {
+                this.closeInPlace();
+              }
               return;
             }
             if (this.current()) {
@@ -409,7 +572,11 @@ class IOSPlayerFullscreen {
       this.pending = false;
       this.restoreMount();
       this.repairScroll();
-      if (!this.closeInPlace()) {
+      if (this.inPlace) {
+        if (!this.enterViewport(this.scrollSnapshot)) {
+          this.closeInPlace();
+        }
+      } else {
         this.failure('Full screen is unavailable. Continue in this player.');
       }
       return false;
@@ -417,6 +584,13 @@ class IOSPlayerFullscreen {
   }
 
   exit(explicit) {
+    if (this.viewport) {
+      if (explicit) {
+        return this.closeInPlace();
+      }
+      this.releaseViewport();
+      return true;
+    }
     if (
       !this.owns() ||
       this.exitPending ||
@@ -490,7 +664,7 @@ class IOSPlayerFullscreen {
     try {
       const button = this.ui.refs.fullscreen;
       const owned = this.owns();
-      button.hidden = !owned && !this.available();
+      button.hidden = Boolean(this.viewport) || (!owned && !this.available());
       if (this.ui.setIcon) {
         this.ui.setIcon(button, owned ? 'contract' : 'expand');
       } else {

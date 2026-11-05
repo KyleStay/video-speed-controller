@@ -476,23 +476,6 @@ class IOSPlayer {
     }
   }
 
-  fallbackToNativeFullscreen() {
-    try {
-      if (
-        !this.canEnterNativeFullscreen() ||
-        this.doc.fullscreenElement ||
-        this.doc.webkitFullscreenElement ||
-        (this.doc.permissionsPolicy || this.doc.featurePolicy)?.allowsFeature?.('fullscreen') ===
-          false
-      ) {
-        return false;
-      }
-      return this.enterNativeFullscreen();
-    } catch {
-      return false;
-    }
-  }
-
   nativeFullscreenFailed(generation, recovery = null) {
     if (this.disposed || generation !== this.nativeGeneration) {
       return;
@@ -703,14 +686,6 @@ class IOSPlayer {
       }
       const staged = window.VSC.TwitterMP4Playback?.open(this.controller, options);
       if (staged !== null && staged !== undefined) {
-        if (
-          !staged &&
-          options.fullscreen === true &&
-          !options.automatic &&
-          this.fallbackToNativeFullscreen()
-        ) {
-          return true;
-        }
         if (!staged && !options.automatic) {
           this.setPresentationUnavailable(true);
           this.controller.controlsManager?.inlinePlayer?.error(

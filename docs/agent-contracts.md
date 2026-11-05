@@ -475,11 +475,13 @@ with direct `chrome.*` access.
   instead uses its exact registered site-player container: mount only the owned
   UI host inside it, leaving the original media and its ancestors in place.
   Resolve that container lazily from a bounded, unambiguous current SDK/group
-  binding. An explicit Full screen request may use the original video's native
-  fullscreen API when retained-native container entry is unavailable or the
-  progressive transport declines. Keep the original node/source; respect explicit
-  fullscreen policy denial and unrelated presentation ownership. Custom Player
-  and automatic entry do not use this transport-decline fallback.
+  binding. Full screen always retains StayFast's controls; never automatically
+  call the original video's system fullscreen APIs. For a certified retained
+  renderer, unavailable/refused container fullscreen may use an owned manual
+  popover viewport. Mount only the HUD, retain all media parents/source/tracks,
+  verify viewport coverage, and restore only owned markers/styles/placeholder.
+  Existing site popovers and unrelated fullscreen ownership are not acquired.
+  A declined transport without a separate presentation certificate stays inline.
   Explicit fullscreen entry while playing may notify that exact group
   of Play; discovery and metadata callbacks never do. Do not import private
   protection modules, fake visibility or filter site Pause calls. The external
@@ -512,7 +514,8 @@ with direct `chrome.*` access.
   native-presentation certificate. Keep the original renderer, parent chain,
   source and native captions in the exact registered SDK container; mount only
   a transparent, nonmodal StayFast UI there. Entry requires native container
-  fullscreen and never requests Play. Full current source/capability authority
+  fullscreen where available, otherwise the owned popover viewport, and never
+  requests Play. Full current source/capability authority
   gates input; SDK/source loss closes the UI. Source and track writes revoke
   that lease even when the page restores their old values. Its exact authored fullscreen
   token permits UI-only exit after media authority is lost. Rejecting or exiting
