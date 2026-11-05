@@ -143,8 +143,11 @@ function assertOriginal(current) {
   );
   assert.true(
     !current.nativeVideoFullscreen &&
-      current.nativeCalls.every((call) => call.name === 'requestFullscreen' && call.owned),
-    `Only the owned wrapper may request browser fullscreen: ${JSON.stringify(current)}`
+      current.nativeCalls.every(
+        (call) =>
+          call.name === 'requestFullscreen' && (call.owned || call.media === 'modern-player')
+      ),
+    `Only the owned wrapper or retained player container may request browser fullscreen: ${JSON.stringify(current)}`
   );
 }
 
@@ -513,6 +516,103 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
           () => !document.querySelector('vsc-ios-player') && !document.fullscreenElement
         );
         await assertScroll(page, before, 'owned fullscreen return');
+      }
+    );
+    await check(
+      'the labeled viewer action preserves site vertical swipes and source reuse',
+      async () => {
+        await navigate();
+        await tap(page, () =>
+          window.__modernX.video.vsc.div.shadowRoot.querySelector('.draggable')
+        );
+        await tap(page, () => window.__modernX.video.vsc.iosPlayer.siteViewerButton);
+        await page.waitForSelector('#site-theater[open]');
+        assert.true((await state(page)).theaters === 1 && !(await state(page)).active);
+        const client = await page.createCDPSession();
+        const point = await picturePoint(page);
+        await client.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: point.x, y: point.y }],
+        });
+        for (let step = 1; step <= 8; step++) {
+          await client.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: point.x, y: point.y - step * 12 }],
+          });
+        }
+        await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await client.detach();
+        await page.waitForFunction(
+          () => window.__modernX.viewerNext === 1 && window.__modernX.video.readyState >= 2
+        );
+        assertOriginal(await state(page));
+        await tapSelector(page, '#close-site-theater');
+        await page.waitForFunction(() => !document.querySelector('#site-theater'));
+        await tap(page, () =>
+          window.__modernX.video.vsc.div.shadowRoot.querySelector('.inline-fullscreen')
+        );
+        await page.waitForFunction(() => window.__modernX.video.vsc.iosPlayer.active);
+        await tapOwned(page, 'more');
+        await tapOwned(page, 'siteViewer');
+        await page.waitForSelector('#site-theater[open]');
+        assert.true((await state(page)).theaters === 2 && !(await state(page)).active);
+        await tapSelector(page, '#close-site-theater');
+      }
+    );
+    await check(
+      'explicit hide-site-controls survives retained fullscreen and late site chrome',
+      async () => {
+        const worker = browser.targets().find((target) => target.url().endsWith('/background.js'));
+        const extensionId = launched.extensionId || new URL(worker.url()).hostname;
+        const bootstrap = await browser.newPage();
+        await bootstrap.goto(`chrome-extension://${extensionId}/ui/options/options.html`);
+        const prior = await bootstrap.evaluate(() => chrome.storage.sync.get('siteRules'));
+        try {
+          await page.bringToFront();
+          await navigate();
+          await bootstrap.evaluate(() =>
+            chrome.storage.sync.set({
+              siteRules: [{ pattern: 'x.com', enabled: true, speed: null, hideSiteControls: true }],
+            })
+          );
+          await page.bringToFront();
+          await page.waitForFunction(
+            () => getComputedStyle(document.querySelector('#overlay-action')).display === 'none'
+          );
+          await tap(page, () =>
+            window.__modernX.video.vsc.div.shadowRoot.querySelector('.inline-fullscreen')
+          );
+          await page.waitForFunction(() => window.__modernX.video.vsc.iosPlayer.active);
+          await settle(page);
+          assert.true(
+            await page.$eval('#overlay-action', (node) => getComputedStyle(node).display === 'none')
+          );
+          await page.evaluate(() => {
+            const late = document.createElement('button');
+            late.id = 'late-site-control';
+            late.textContent = 'Late site control';
+            window.__modernX.player.append(late);
+          });
+          await page.waitForFunction(
+            () => getComputedStyle(document.querySelector('#late-site-control')).display === 'none'
+          );
+          assertOriginal(await state(page));
+          await tapOwned(page, 'done');
+          await page.waitForFunction(() => !window.__modernX.video.vsc.iosPlayer.active);
+          assert.true(
+            await page.$eval('#overlay-action', (node) => getComputedStyle(node).display === 'none')
+          );
+        } finally {
+          await bootstrap.evaluate(async (saved) => {
+            if (Object.hasOwn(saved, 'siteRules')) {
+              await chrome.storage.sync.set(saved);
+            } else {
+              await chrome.storage.sync.remove('siteRules');
+            }
+          }, prior);
+          await bootstrap.close();
+          await page.bringToFront();
+        }
       }
     );
     await check(

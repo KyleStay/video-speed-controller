@@ -54,6 +54,22 @@ existing site popover or unrelated fullscreen session is not acquired. Unsupport
 presentation or transport remains inline with an unavailable message; it never
 chooses the system player. More → Apple player is the explicit native bypass.
 
+Recognized single-video feed containers can retain their original renderer for
+StayFast fullscreen even when private SDK/session or alternate-source metadata
+is unavailable. This DOM-only presentation checks the exact controller, source,
+document, parent chain and bounded single-media scope, and closes on source or
+ownership loss. It never grants transport takeover, moves the video or requests Play.
+Recognized site chrome remains suppressed while the retained view is active.
+
+The speed panel and StayFast fullscreen's More menu offer **Twitter video viewer**
+when that exact player supplies an unambiguous same-origin, same-post video link.
+It closes StayFast, follows the observed site link and preserves the site's
+vertical swipe navigation. Full screen continues to mean StayFast; the separate
+viewer action does not synthesize URLs or choose Apple's player. Missing, ambiguous
+or stale links leave the action unavailable. Neutral fixtures cover feed MSE
+without private SDK metadata and viewer source reuse; live/physical input
+acceptance remains separate.
+
 ## Open Twitter regressions
 
 The original cases and requirements remain separate from execution and delivery

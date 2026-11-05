@@ -329,6 +329,111 @@ describe('iOS player ownership, playback, and restoration', () => {
       };
     }
 
+    it('opens a feed blob in place without private SDK or alternate transport metadata', () => {
+      const { player, video, parent } = nativePlayer();
+      window.VSC.TwitterPlayer.resolveNativePresentation.mockReturnValue(null);
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      vi.spyOn(window.VSC.TwitterMP4Playback, 'open').mockReturnValue(false);
+      parent.dataset.testid = 'videoPlayer';
+      video.srcObject = null;
+      video.src = 'blob:https://x.com/feed-original';
+      const source = video.src;
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.nativeBoundary.element).toBe(parent);
+      expect(video.parentNode).toBe(parent);
+      expect(video.src).toBe(source);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+      expect(window.VSC.TwitterMP4Playback.open).not.toHaveBeenCalled();
+      player.close();
+      expect(document.querySelector('vsc-ios-player')).toBeNull();
+    });
+
+    it('opens the observed swipe viewer from its labeled action after closing StayFast', () => {
+      const { player, video, parent } = nativePlayer();
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      parent.dataset.testid = 'videoPlayer';
+      const link = document.createElement('a');
+      link.href = '/creator/status/123/video/1';
+      const clicked = vi.fn((event) => event.preventDefault());
+      link.addEventListener('click', clicked);
+      parent.append(link);
+      player.refreshSiteViewer();
+      expect(player.siteViewerButton.hidden).toBe(false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.ui.refs.siteViewer.hidden).toBe(false);
+      player.ui.refs.siteViewer.click();
+      expect(clicked).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+      expect(video.parentNode).toBe(parent);
+      expect(window.VSC.IOSPlayer.siteRelinquished.has(video)).toBe(false);
+      link.remove();
+      player.refreshSiteViewer();
+      expect(player.siteViewerButton.hidden).toBe(true);
+      expect(player.openSiteViewer()).toBe(false);
+    });
+
+    it('returns a verified MP4 companion to its original before opening the site viewer', () => {
+      const { player, video, parent } = nativePlayer();
+      vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+      parent.dataset.testid = 'videoPlayer';
+      const original = document.createElement('video');
+      original.src = 'blob:https://x.com/original';
+      original.vsc = { video: original };
+      parent.append(original);
+      const link = document.createElement('a');
+      link.href = '/creator/status/123/video/1';
+      const clicked = vi.fn((event) => event.preventDefault());
+      link.addEventListener('click', clicked);
+      parent.append(link);
+      player.siteControls = { findStrongContainer: () => ({ node: parent }) };
+      video.vsc.iosPlayer = player;
+      const session = {
+        video,
+        original,
+        current: () => true,
+        cleanup: vi.fn(() => video.remove()),
+      };
+      vi.spyOn(window.VSC.TwitterMP4Playback, 'get').mockImplementation((target) =>
+        target === video ? session : null
+      );
+      expect(player.openSiteViewer()).toBe(true);
+      expect(session.cleanup).toHaveBeenCalledWith({ playing: true });
+      expect(clicked).toHaveBeenCalledOnce();
+      expect(original.src).toBe('blob:https://x.com/original');
+      expect(window.VSC.IOSPlayer.siteRelinquished.has(original)).toBe(false);
+    });
+
+    it('retains hide-all site control policy across fullscreen mutations and inline return', async () => {
+      const { player, video, parent } = nativePlayer();
+      parent.dataset.testid = 'videoPlayer';
+      video.vsc.iosPlayer = player;
+      const owner = new window.VSC.IOSSiteControls(video);
+      player.siteControls = owner;
+      video.vsc.siteControls = owner;
+      owner.setHideAllButtons(true);
+      const site = document.createElement('button');
+      site.textContent = 'Site controls';
+      parent.append(site);
+      expect(owner.acquire()).toBe(true);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(getComputedStyle(site).display).toBe('none');
+      const late = site.cloneNode(true);
+      parent.append(late);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(getComputedStyle(late).display).toBe('none');
+      player.close();
+      await Promise.resolve();
+      expect(getComputedStyle(site).display).toBe('none');
+      player.restoreSitePlayer();
+      expect(getComputedStyle(site).display).not.toBe('none');
+      expect(getComputedStyle(late).display).not.toBe('none');
+      owner.cleanup();
+    });
+
     it('enters exact native container with a transparent nonmodal HUD and no media or ancestor writes', async () => {
       const { player, video, parent, boundary, unsubscribe } = nativePlayer();
       const originalTree = Array.from(parent.childNodes);

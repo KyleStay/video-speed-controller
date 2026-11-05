@@ -95,6 +95,161 @@ class IOSSiteControls {
     }
   }
 
+  /** A feed presentation owns DOM layout, never the site's private transport. */
+  static xPlayerContainer(video) {
+    try {
+      if (
+        !this.isXDocument(video?.ownerDocument) ||
+        video.localName !== 'video' ||
+        !video.isConnected
+      ) {
+        return null;
+      }
+      const scope = video.vsc?.siteControls || new IOSSiteControls(video);
+      for (
+        let node = video.parentElement, depth = 0;
+        node && depth < 8;
+        node = node.parentElement, depth++
+      ) {
+        if (
+          node.matches('[data-testid="videoPlayer"],[data-testid="videoComponent"]') ||
+          (video.parentElement === node &&
+            node.querySelector(':scope > [data-slot="xds-context-menu-trigger"]'))
+        ) {
+          return scope.strongCandidate(node, { media: [video], required: video })?.node || null;
+        }
+      }
+    } catch {
+      /* A recycled or ambiguous feed cell is not a presentation boundary. */
+    }
+    return null;
+  }
+
+  static retainedPresentation(video) {
+    try {
+      const element = this.xPlayerContainer(video);
+      if (!element) {
+        return null;
+      }
+      const doc = video.ownerDocument,
+        root = doc.documentElement,
+        url = doc.URL;
+      const controller = video.vsc,
+        parent = video.parentNode;
+      const source = video.currentSrc || video.src,
+        attribute = video.getAttribute('src');
+      const scope = video.vsc?.siteControls || new IOSSiteControls(video);
+      let revoked = false;
+      const current = () => {
+        try {
+          return (
+            !revoked &&
+            video.isConnected &&
+            video.ownerDocument === doc &&
+            doc.documentElement === root &&
+            doc.URL === url &&
+            video.parentNode === parent &&
+            video.vsc === controller &&
+            controller?.video === video &&
+            !controller.disposed &&
+            video.readyState >= 1 &&
+            Number.isFinite(video.duration) &&
+            video.duration > 0 &&
+            !video.srcObject &&
+            !video.mediaKeys &&
+            !video.webkitKeys &&
+            /^(https?:|blob:)/.test(source) &&
+            (video.currentSrc || video.src) === source &&
+            video.getAttribute('src') === attribute &&
+            !!scope.strongCandidate(element, { media: [video], required: video })
+          );
+        } catch {
+          return false;
+        }
+      };
+      const boundary = Object.freeze({
+        element,
+        current,
+        activate: current,
+        subscribe(callback) {
+          if (typeof callback !== 'function' || !current()) {
+            return null;
+          }
+          const invalidate = () => {
+            revoked = true;
+            callback(false);
+          };
+          const types = ['emptied', 'loadstart', 'error'];
+          for (const type of types) {
+            video.addEventListener(type, invalidate);
+          }
+          return () => {
+            for (const type of types) {
+              video.removeEventListener(type, invalidate);
+            }
+          };
+        },
+      });
+      return current() ? boundary : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Follow an observed same-post viewer link; never invent a navigation URL. */
+  static xViewerControl(video) {
+    try {
+      const session = window.VSC.TwitterMP4Playback?.get(video);
+      if (session && (session.video !== video || session.closed || !session.current())) {
+        return null;
+      }
+      const original = session?.original || video;
+      const node = session
+          ? video.vsc?.iosPlayer?.siteControls?.findStrongContainer()?.node
+          : this.xPlayerContainer(video),
+        doc = original.ownerDocument;
+      if (
+        !this.isXDocument(doc) ||
+        !node?.contains(original) ||
+        original.closest('dialog[open],[role="dialog"][aria-modal="true"]')
+      ) {
+        return null;
+      }
+      const post = node.closest('article');
+      const postNodes = post
+        ? (original.vsc?.siteControls || new IOSSiteControls(original)).strongNodes(post)
+        : [];
+      if (!postNodes) {
+        return null;
+      }
+      const ids = postNodes
+        .filter((link) => link.matches('a[href*="/status/"]'))
+        .map(
+          (link) => new URL(link.href, doc.URL).pathname.match(/^\/[^/]+\/status\/(\d+)\/?$/)?.[1]
+        )
+        .filter(Boolean);
+      const links = node.querySelectorAll('a[href]');
+      if (links.length > 32) {
+        return null;
+      }
+      let entry = null;
+      for (const control of links) {
+        const url = new URL(control.href, doc.URL);
+        const path = url.pathname.match(/^\/[^/]+\/status\/(\d+)\/video\/[1-9]\d*\/?$/);
+        if (url.origin !== doc.location.origin || !path || (ids.length && !ids.includes(path[1]))) {
+          continue;
+        }
+        if (entry && entry.control.href !== control.href) {
+          return null;
+        }
+        entry = { node, video: original, control };
+      }
+      return entry;
+    } catch {
+      return null;
+    }
+  }
+
   /** X's current player has no legacy test IDs. Recognize its exact sibling structure. */
   static findXPlayer(video) {
     try {
@@ -342,6 +497,20 @@ class IOSSiteControls {
       return { start: node, exact: true, media: [original, video], required: original };
     }
     const player = video.vsc?.iosPlayer;
+    if (player?.active && player.nativeBoundary) {
+      const node = player.nativeBoundary.element;
+      return player.video === video &&
+        player.doc === doc &&
+        node?.contains(video) &&
+        player.ui?.host.isConnected &&
+        !player.nativeSourceChanged() &&
+        player.nativeBoundary.current() &&
+        player.nativeParents.every(
+          ([child, parent]) => (child.parentNode || child.host || null) === parent
+        )
+        ? { start: node, exact: true, media: [video], required: video }
+        : null;
+    }
     if (player?.active) {
       const portal = player.portalNode;
       const origin = player.originParent;

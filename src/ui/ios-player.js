@@ -90,6 +90,7 @@ class IOSPlayer {
       }
       this.open({ play: true });
     });
+    this.refreshSiteViewer();
 
     for (const type of [
       'timeupdate',
@@ -271,6 +272,7 @@ class IOSPlayer {
   }
 
   refreshSiteControls() {
+    this.refreshSiteViewer();
     this.controller.updateSiteControlsMode?.();
     if (!this.mediaPrepared || !this.shouldOwnInlineMedia()) {
       this.siteControls?.release();
@@ -285,6 +287,56 @@ class IOSPlayer {
     } catch {
       // Reparenting must not interrupt controller repair.
     }
+  }
+
+  refreshSiteViewer() {
+    const visible = !!window.VSC.IOSSiteControls?.xViewerControl(this.video);
+    if (visible && !this.siteViewerButton) {
+      this.siteViewerButton = this.doc.createElement('button');
+      this.siteViewerButton.type = 'button';
+      this.siteViewerButton.textContent = 'Twitter video viewer';
+      this.siteViewerButton.setAttribute('aria-label', 'Open Twitter video viewer');
+      this.siteViewerButton.title = 'Swipe to the next video';
+      this.siteViewerButton.style.cssText = 'min-width:44px;min-height:44px;';
+      this.controller.div?.shadowRoot?.querySelector('#controls')?.append(this.siteViewerButton);
+      this.listen(this.siteViewerButton, 'click', (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.openSiteViewer();
+      });
+    }
+    for (const button of [this.siteViewerButton, this.ui?.refs.siteViewer]) {
+      if (button) {
+        setControlProperty(button, 'hidden', !visible);
+      }
+    }
+  }
+
+  openSiteViewer() {
+    const entry = window.VSC.IOSSiteControls?.xViewerControl(this.video);
+    if (!entry) {
+      return false;
+    }
+    const href = entry.control.href;
+    const session = window.VSC.TwitterMP4Playback?.get(this.video);
+    const source = entry.video.currentSrc || entry.video.src;
+    const controller = entry.video.vsc;
+    const playing = !this.video.paused && !this.video.ended;
+    this.close();
+    this.scrollRestore?.cancel();
+    session?.cleanup({ playing });
+    const current = window.VSC.IOSSiteControls.xViewerControl(entry.video);
+    if (
+      current?.control !== entry.control ||
+      entry.control.href !== href ||
+      (entry.video.currentSrc || entry.video.src) !== source ||
+      (!session && entry.video.vsc !== controller)
+    ) {
+      return false;
+    }
+    entry.control.click();
+    entry.video.vsc?.controlsManager?.setTouchExpanded?.(entry.video.vsc.div?.shadowRoot, false);
+    return true;
   }
 
   setInlineOwnership(owned) {
@@ -667,30 +719,34 @@ class IOSPlayer {
     IOSPlayer.presentationRevision++;
     try {
       const nativeBoundary = !options.automatic
-        ? window.VSC.TwitterPlayer?.resolveNativePresentation?.(this.video, this.video.parentNode)
+        ? window.VSC.TwitterPlayer?.resolveNativePresentation?.(
+            this.video,
+            this.video.parentNode
+          ) || window.VSC.IOSSiteControls?.retainedPresentation(this.video)
         : null;
       if (nativeBoundary) {
         if (!nativeBoundary.current()) {
+          this.reportPresentationUnavailable();
           return false;
         }
         const scroll = new window.VSC.IOSPlayerScrollState(this.video, true);
         if (!this.openPresentation({ ...options, play: false, nativeBoundary })) {
           scroll.cancel();
+          this.reportPresentationUnavailable();
           return false;
         }
         if (!this.ownedFullscreen.enter(scroll)) {
           this.close();
+          this.reportPresentationUnavailable();
           return false;
         }
+        this.setPresentationUnavailable(false);
         return true;
       }
       const staged = window.VSC.TwitterMP4Playback?.open(this.controller, options);
       if (staged !== null && staged !== undefined) {
         if (!staged && !options.automatic) {
-          this.setPresentationUnavailable(true);
-          this.controller.controlsManager?.inlinePlayer?.error(
-            'Fullscreen is unavailable for this stream.'
-          );
+          this.reportPresentationUnavailable();
         } else if (staged) {
           this.setPresentationUnavailable(false);
         }
@@ -724,6 +780,13 @@ class IOSPlayer {
       window.VSC.logger?.warn(`Owned player unavailable: ${error?.message}`);
       return false;
     }
+  }
+
+  reportPresentationUnavailable() {
+    this.setPresentationUnavailable(true);
+    this.controller.controlsManager?.inlinePlayer?.error(
+      'Fullscreen is unavailable for this video.'
+    );
   }
 
   setPresentationUnavailable(unavailable) {
@@ -1048,6 +1111,7 @@ class IOSPlayer {
       );
     click(refs.done, () => this.close());
     click(refs.site, () => this.restoreSitePlayer());
+    click(refs.siteViewer, () => this.openSiteViewer());
     click(refs.more, () => this.toggleMore(!this.moreOpen));
     this.listen(refs.seek, 'pointerdown', () => this.toggleMore(false), true);
     click(refs.play, () => {
@@ -1836,6 +1900,7 @@ class IOSPlayer {
   }
 
   update() {
+    this.refreshSiteViewer();
     if (!this.active || this.controlsLocked || !this.presentationCurrent()) {
       return;
     }
@@ -2213,6 +2278,7 @@ class IOSPlayer {
       remove();
     }
     this.button?.remove();
+    this.siteViewerButton?.remove();
     this.releaseMediaOwnership();
     this.releaseInlinePlayback();
     this.attached = false;

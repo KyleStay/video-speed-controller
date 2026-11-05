@@ -142,6 +142,74 @@
       return: { memoizedState: null, memoizedProps: metadata, return: null },
     };
     const parameters = new URLSearchParams(location.search);
+    if (parameters.has('feed-dom')) {
+      // Feed renderer with no readable private SDK/catalog. Presentation must
+      // retain this real MSE producer rather than depend on transport metadata.
+      delete parent.__reactFiber$fixture;
+      parent.dataset.testid = 'videoPlayer';
+      const post = document.createElement('article');
+      parent.before(post);
+      post.append(parent);
+      parent.setAttribute('role', 'group');
+      parent.setAttribute('aria-label', 'Feed video');
+      const permalink = document.createElement('a');
+      permalink.href = `/creator/status/${postId}`;
+      permalink.textContent = 'Local post';
+      post.prepend(permalink);
+      const viewer = document.createElement('a');
+      viewer.href = `/creator/status/${postId}/video/1`;
+      viewer.textContent = 'Site video viewer';
+      parent.append(viewer);
+      viewer.addEventListener('click', (event) => {
+        event.preventDefault();
+        const anchor = document.createComment('site viewer origin');
+        parent.before(anchor);
+        const dialog = document.createElement('dialog');
+        dialog.id = 'site-viewer';
+        dialog.style.cssText =
+          'width:100%;max-width:none;margin:0;padding:12px;box-sizing:border-box;touch-action:none';
+        const title = document.createElement('h2');
+        title.textContent = 'Video 1';
+        const close = document.createElement('button');
+        close.textContent = 'Close site video viewer';
+        close.onclick = () => {
+          anchor.replaceWith(parent);
+          dialog.close();
+          dialog.remove();
+        };
+        dialog.append(title, close, parent);
+        document.body.append(dialog);
+        let startY;
+        dialog.addEventListener(
+          'touchstart',
+          (event) => {
+            startY = event.touches[0]?.clientY;
+          },
+          { passive: true }
+        );
+        dialog.addEventListener(
+          'touchend',
+          (event) => {
+            if (startY - event.changedTouches[0]?.clientY > 60) {
+              viewerNext++;
+              title.textContent = `Video ${viewerNext + 1}`;
+              void loadMSE().catch((failure) => {
+                error = failure.message;
+              });
+            }
+          },
+          { passive: true }
+        );
+        dialog.showModal();
+      });
+      for (const name of [
+        'requestFullscreen',
+        'webkitRequestFullscreen',
+        'webkitRequestFullScreen',
+      ]) {
+        Object.defineProperty(parent, name, { configurable: true, value: undefined });
+      }
+    }
     if (parameters.has('no-transport-catalog')) {
       delete metadata.downloadUrl;
       delete metadata.poppedOutSource.playerProps.downloadUrl;
@@ -184,6 +252,7 @@
       error = null,
       errors = 0,
       measurement = null;
+    let viewerNext = 0;
     const ownedUrls = new Set();
     const frameHandles = new Map();
     let interval;
@@ -203,6 +272,8 @@
         ready,
         error,
         errors,
+        viewerOpen: !!document.querySelector('#site-viewer[open]'),
+        viewerNext,
         emulation: 'localhost host helper and progressive URL only',
         originalConnected: original.isConnected,
         originalParentUnchanged: original.parentElement === parent,
@@ -229,7 +300,10 @@
         subscribers: subscribers.size,
         fullscreen: !!video.vsc?.iosPlayer?.active,
         canResolve: !!window.VSC?.TwitterPlayer?.resolve(original),
-        canPresent: !!window.VSC?.TwitterPlayer?.resolveNativePresentation(original),
+        canPresent: !!(
+          window.VSC?.TwitterPlayer?.resolveNativePresentation(original) ||
+          window.VSC?.IOSSiteControls?.retainedPresentation?.(original)
+        ),
         ownedViewport: !!video.vsc?.iosPlayer?.ownedFullscreen?.viewport,
         systemFullscreenEvents,
         systemFullscreen: original.webkitDisplayingFullscreen === true,
@@ -377,6 +451,10 @@
       const host = window.VSC.EventManager.isTwitterHost;
       window.VSC.EventManager.isTwitterHost = (hostname) =>
         hostname === location.hostname || host(hostname);
+      if (parameters.has('feed-dom')) {
+        const isXDocument = window.VSC.IOSSiteControls.isXDocument;
+        window.VSC.IOSSiteControls.isXDocument = (doc) => doc === document || isXDocument(doc);
+      }
       const resolve = window.VSC.TwitterPlayer.resolve;
       window.VSC.TwitterPlayer.resolve = function (...args) {
         const candidate = resolve.apply(this, args);

@@ -30,6 +30,104 @@ afterEach(() => {
 });
 
 describe('scoped iOS site controls', () => {
+  function feed() {
+    vi.spyOn(window.VSC.IOSSiteControls, 'isXDocument').mockReturnValue(true);
+    const item = fixture('');
+    item.container.dataset.testid = 'videoPlayer';
+    item.video.vsc = { video: item.video };
+    Object.defineProperty(item.video, 'readyState', { configurable: true, value: 2 });
+    Object.defineProperty(item.video, 'duration', { configurable: true, value: 120 });
+    item.video.src = 'blob:https://x.com/feed';
+    return item;
+  }
+
+  it('retains a feed renderer without reading private SDK data or requiring track APIs', () => {
+    const { container, video } = feed();
+    Object.defineProperty(container, '__reactFiber$private', {
+      get() {
+        throw Error('private');
+      },
+    });
+    const boundary = window.VSC.IOSSiteControls.retainedPresentation(video);
+    expect(boundary.element).toBe(container);
+    expect(boundary.activate()).toBe(true);
+    const notify = vi.fn();
+    const release = boundary.subscribe(notify);
+    video.dispatchEvent(new Event('emptied'));
+    expect(boundary.current()).toBe(false);
+    expect(notify).toHaveBeenCalledWith(false);
+    release();
+    video.dispatchEvent(new Event('loadstart'));
+    expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it.each(['second video', 'iframe', 'stream', 'drm', 'live', 'source', 'controller'])(
+    'refuses or revokes feed presentation after %s changes',
+    (kind) => {
+      const { container, video } = feed();
+      const boundary = window.VSC.IOSSiteControls.retainedPresentation(video);
+      expect(boundary.current()).toBe(true);
+      if (kind === 'second video') {
+        container.append(document.createElement('video'));
+      }
+      if (kind === 'iframe') {
+        container.append(document.createElement('iframe'));
+      }
+      if (kind === 'stream') {
+        video.srcObject = {};
+      }
+      if (kind === 'drm') {
+        Object.defineProperty(video, 'mediaKeys', { configurable: true, value: {} });
+      }
+      if (kind === 'live') {
+        Object.defineProperty(video, 'duration', { configurable: true, value: Infinity });
+      }
+      if (kind === 'source') {
+        video.src = 'blob:https://x.com/replacement';
+      }
+      if (kind === 'controller') {
+        video.vsc = { video };
+      }
+      expect(boundary.current()).toBe(false);
+    }
+  );
+
+  it('offers only an observed unambiguous same-post video viewer link', () => {
+    const { container, video } = feed();
+    const post = document.createElement('article');
+    container.replaceWith(post);
+    const permalink = document.createElement('a');
+    permalink.href = '/creator/status/123';
+    post.append(permalink, container);
+    const link = document.createElement('a');
+    link.href = '/creator/status/123/video/1';
+    container.append(link);
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)?.control).toBe(link);
+    link.href = '/creator/status/999/video/1';
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
+    link.href = 'https://elsewhere.test/creator/status/123/video/1';
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
+    link.href = '/creator/status/123/video/1';
+    const other = link.cloneNode();
+    other.href = '/creator/status/123/video/2';
+    container.append(other);
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
+  });
+
+  it('declines viewer lookup when the surrounding post exceeds the bounded walk', () => {
+    const { container, video } = feed();
+    const post = document.createElement('article');
+    container.replaceWith(post);
+    post.append(container);
+    const link = document.createElement('a');
+    link.href = '/creator/status/123/video/1';
+    container.append(link);
+    for (let index = 0; index < 520; index++) {
+      post.append(document.createElement('span'));
+    }
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
+  });
+
   it('reveals owned inline controls through a site overlay and removes wake listeners on handback', () => {
     const { container, video, owner, button } = fixture();
     const surfaceInteraction = vi.fn();
