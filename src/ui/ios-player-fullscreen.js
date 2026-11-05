@@ -506,6 +506,12 @@ class IOSPlayerFullscreen {
   }
 
   enter(scrollSnapshot = null) {
+    if (this.current() && (this.owns() || this.pending)) {
+      if (scrollSnapshot !== this.scrollSnapshot) {
+        this.cancelScroll(scrollSnapshot);
+      }
+      return true;
+    }
     if (!this.available()) {
       if (this.enterViewport(scrollSnapshot)) {
         return true;
@@ -513,12 +519,6 @@ class IOSPlayerFullscreen {
       this.cancelScroll(scrollSnapshot);
       this.closeInPlace();
       return false;
-    }
-    if (this.owns() || this.pending) {
-      if (scrollSnapshot !== this.scrollSnapshot) {
-        this.cancelScroll(scrollSnapshot);
-      }
-      return true;
     }
     this.cancelScrollRepair();
     this.scrollSnapshot = scrollSnapshot || this.captureScroll();

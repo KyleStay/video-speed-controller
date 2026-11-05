@@ -626,6 +626,21 @@ describe('iOS player ownership, playback, and restoration', () => {
       );
     });
 
+    it('keeps an already-owned viewport through a repeated fullscreen request', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      const ui = player.ui;
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.active).toBe(true);
+      expect(player.ui).toBe(ui);
+      expect(parent.showPopover).toHaveBeenCalledOnce();
+      expect(parent.hidePopover).not.toHaveBeenCalled();
+      expect(video.parentNode).toBe(parent);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
     it('uses only the owned viewport when browser fullscreen policy is disabled', () => {
       const { player, video, parent } = nativePlayer();
       const native = vi.fn();
