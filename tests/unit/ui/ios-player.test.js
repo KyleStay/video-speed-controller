@@ -412,6 +412,85 @@ describe('iOS player ownership, playback, and restoration', () => {
       expect(boundary.activate).not.toHaveBeenCalled();
     });
 
+    it.each(['disabled container fullscreen', 'missing container API'])(
+      'uses original-video fullscreen for %s without relocating or playing it',
+      (missing) => {
+        const paused = missing === 'disabled container fullscreen';
+        const { player, video, parent } = nativePlayer({ playing: !paused });
+        const native = vi.fn();
+        video.webkitEnterFullscreen = native;
+        player.captureNativeFullscreenMethods();
+        const request = parent.requestFullscreen;
+        if (missing === 'disabled container fullscreen') {
+          property(document, 'fullscreenEnabled', false);
+        } else {
+          property(parent, 'requestFullscreen', undefined);
+        }
+        const source = video.src;
+        expect(player.open({ fullscreen: true })).toBe(true);
+        expect(native).toHaveBeenCalledOnce();
+        expect(native.mock.contexts[0]).toBe(video);
+        expect(request).not.toHaveBeenCalled();
+        expect(video.parentNode).toBe(parent);
+        expect(video.src).toBe(source);
+        expect(video.paused).toBe(paused);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+        expect(player.active).toBe(false);
+        expect(player.nativeSession).toBe(true);
+      }
+    );
+
+    it('does not use native video fullscreen to bypass an explicit fullscreen policy denial', () => {
+      const { player, video } = nativePlayer();
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      property(document, 'fullscreenEnabled', false);
+      property(document, 'permissionsPolicy', { allowsFeature: () => false });
+      expect(player.open({ fullscreen: true })).toBe(false);
+      expect(native).not.toHaveBeenCalled();
+      expect(player.active).toBe(false);
+    });
+
+    it('does not use a presentation certificate invalidated while removing its HUD', () => {
+      const { player, video, boundary } = nativePlayer();
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      property(document, 'fullscreenEnabled', false);
+      const close = player.close.bind(player);
+      vi.spyOn(player, 'close').mockImplementation(() => {
+        close();
+        boundary.current.mockReturnValue(false);
+      });
+      expect(player.open({ fullscreen: true })).toBe(false);
+      expect(native).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ fullscreen: true }, true],
+      [{}, false],
+      [{ fullscreen: true, automatic: true }, false],
+    ])(
+      'uses native fallback after a declined transport only for explicit fullscreen (%j)',
+      (options, fallback) => {
+        const { player, video, parent } = nativePlayer({ playing: false });
+        window.VSC.TwitterPlayer.resolveNativePresentation.mockReturnValue(null);
+        vi.spyOn(window.VSC.TwitterMP4Playback, 'open').mockReturnValue(false);
+        const native = vi.fn();
+        video.webkitEnterFullscreen = native;
+        player.captureNativeFullscreenMethods();
+        const source = video.src;
+        expect(player.open(options)).toBe(fallback);
+        expect(native).toHaveBeenCalledTimes(fallback ? 1 : 0);
+        expect(video.parentNode).toBe(parent);
+        expect(video.src).toBe(source);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+      }
+    );
+
     it('removes ordinary dynamic caption/audio options on native exit without changing original tracks', async () => {
       const { player, video } = nativePlayer();
       const caption = { kind: 'subtitles', label: 'English', language: 'en', mode: 'showing' };

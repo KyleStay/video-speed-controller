@@ -69,16 +69,21 @@ function assertUnchanged(before, after) {
   }
 }
 
-async function waitHidden(page, hidden, ids = controls) {
+async function waitHidden(page, hidden, ids = controls, ownedPlay = false) {
   await page.waitForFunction(
-    (ids, hidden) =>
+    (ids, hidden, ownedPlay) =>
       ids.every((id) => {
         const node = document.getElementById(id);
-        return node && (getComputedStyle(node).display === 'none') === hidden;
+        return (
+          node &&
+          (getComputedStyle(node).display === 'none') ===
+            (hidden || (ownedPlay && id === 'site-play'))
+        );
       }),
     {},
     ids,
-    hidden
+    hidden,
+    ownedPlay
   );
 }
 
@@ -154,7 +159,7 @@ export default async function runSiteControls({
     await page.evaluate(() => {
       window.__siteControlsFixture.controller = window.__siteControlsFixture.video.vsc;
     });
-    await waitHidden(page, false);
+    await waitHidden(page, false, controls, ios);
     const rule = (value) => ({
       pattern: hostname,
       enabled: true,
@@ -178,7 +183,7 @@ export default async function runSiteControls({
         {},
         value
       );
-      await waitHidden(page, hidden);
+      await waitHidden(page, hidden, controls, ios);
       assertUnchanged(before, await snapshot(page));
     };
 
@@ -272,7 +277,7 @@ export default async function runSiteControls({
       async () =>
         (await chrome.storage.sync.get('siteRules')).siteRules[0].hideSiteControls === false
     );
-    await waitHidden(page, false, [...controls, 'late-control']);
+    await waitHidden(page, false, [...controls, 'late-control'], ios);
     assertUnchanged(beforeOptions, await snapshot(page));
     await bootstrap.reload();
     await bootstrap.waitForSelector('#faster .customKey');

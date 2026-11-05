@@ -5,6 +5,14 @@ const SITE_CONTROL_ATTRIBUTE = 'data-vsc-ios-site-controls';
 const HIDDEN_CONTROL_ATTRIBUTE = 'data-vsc-site-hidden-control';
 const STRONG_NODE_LIMIT = 512;
 const GENERIC_CONTROL_PROFILE = { controls: [] };
+const PICTURE_CONTROL_PROFILE = {
+  controls: [
+    ':is(.play-button,.playButton,.PlayButton,.play-overlay,.playOverlay,.play-icon,.playIcon)',
+    ...['Play', 'Play video', 'Pause', 'Pause video', 'Replay', 'Replay video'].map(
+      (label) => `:is(button,[role="button"]):is([aria-label="${label}" i],[title="${label}" i])`
+    ),
+  ],
+};
 const PROTECTED_CONTENT = [
   'video',
   'audio',
@@ -289,6 +297,11 @@ class IOSSiteControls {
     }
   }
 
+  get surfaceContainer() {
+    // Play-only suppression must retain the generic gesture scope's hit-test guards.
+    return this.profile === PICTURE_CONTROL_PROFILE ? null : this.container;
+  }
+
   strongContext() {
     const video = this.video;
     const doc = video.ownerDocument;
@@ -499,6 +512,10 @@ class IOSSiteControls {
         }
         return { node, profile, doc };
       }
+      if (video.vsc?.controlsManager?.inlinePlayer?.owned) {
+        const candidate = this.findStrongContainer();
+        return candidate ? { ...candidate, profile: PICTURE_CONTROL_PROFILE } : null;
+      }
     } catch {
       // Page APIs and reparenting can invalidate a container during discovery.
     }
@@ -538,6 +555,9 @@ class IOSSiteControls {
         }
         if (recognized.has(control)) {
           return true;
+        }
+        if (!this.hideAllButtons) {
+          return false;
         }
         if (!control.matches(STRONG_CONTROLS)) {
           return false;
@@ -635,12 +655,12 @@ class IOSSiteControls {
         const current =
           this.container.getAttribute(SITE_CONTROL_ATTRIBUTE) === this.token &&
           this.style?.isConnected === true;
-        if (current && this.hideAllButtons) {
+        if (current && candidate.nodes) {
           this.refreshHiddenControls(candidate);
         }
         return current;
       } catch {
-        if (this.hideAllButtons) {
+        if (candidate.nodes) {
           this.release();
         }
         return false;
@@ -664,20 +684,20 @@ class IOSSiteControls {
       const scope = `[${SITE_CONTROL_ATTRIBUTE}="${this.token}"]`;
       const inline = this.video.vsc?.controlsManager?.inlinePlayer;
       const touchPolicy = `${scope} { touch-action: pan-y pinch-zoom !important; }`;
-      style.textContent = this.hideAllButtons
+      style.textContent = candidate.nodes
         ? `${scope} [${HIDDEN_CONTROL_ATTRIBUTE}="${this.token}"] { display: none !important; }${inline ? `\n${touchPolicy}` : ''}`
         : `${profile.controls
             .map((control) => `${scope} ${control} { display: none !important; }`)
             .join('\n')}\n${touchPolicy}`;
       node.setAttribute(SITE_CONTROL_ATTRIBUTE, this.token);
       (this.root === doc ? doc.head || doc.documentElement : this.root).appendChild(style);
-      if (this.hideAllButtons) {
+      if (candidate.nodes) {
         this.refreshHiddenControls(candidate);
         this.observeStrongScope();
       }
       // Site picture overlays can receive input instead of the video itself.
       // Keep wake-up scoped to the same validated single-video container.
-      if (inline) {
+      if (inline && profile !== PICTURE_CONTROL_PROFILE) {
         this.releaseSurface = inline.observeSurface?.(node);
         this.releaseInteraction = window.VSC.IOSInlinePlayer?.observeInteractions?.(
           node,

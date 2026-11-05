@@ -149,6 +149,7 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
           await page.click('#show-transport');
         }
         await page.waitForFunction(() => document.querySelector('video').vsc?.iosPlayer?.attached);
+        await page.waitForFunction(() => window.__customFeedState().playOverlayHidden);
         const s = await state(page);
         assert.true(
           s.sameSource && s.sameVideo && s.connected && s.paused && !s.owned && s.controllers === 1,
@@ -179,9 +180,15 @@ export default async function runCustomFeed({ launch = launchChromeWithExtension
         'picture seeking isolates the trailing tap and retains vertical scrolling',
         async () => {
           await page.evaluate(() => {
+            window.__previousPlayOverlay = document.querySelector('#site-play-overlay');
             document.querySelector('video').currentTime = 20;
           });
           await drag(page, { x: 90, y: 310 }, { x: 220, y: 310 });
+          await page.waitForFunction(
+            () =>
+              window.__customFeedState().playOverlayHidden &&
+              document.querySelector('#site-play-overlay') !== window.__previousPlayOverlay
+          );
           const after = await state(page);
           assert.true(
             after.time > 20.5 && after.paused && !after.owned && after.trace.pictureTouches === 0,

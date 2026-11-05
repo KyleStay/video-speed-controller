@@ -460,8 +460,11 @@ with direct `chrome.*` access.
   ordinary Play stays inline. On iOS, attachment owns `controls=false` and inline
   transport without moving/loading/playing the media, opening fullscreen or
   writing page scroll. Exact known chrome is hidden only in unambiguous
-  single-video YouTube/Video.js/Plyr/JW/X containers; captions and arbitrary
-  unrecognized controls remain. Ownership is bounded and reversible.
+  single-video YouTube/Video.js/Plyr/JW/X containers. Other bounded single-video
+  picture scopes suppress recognizable play/pause/replay overlays during inline
+  ownership, including late replacements; captions and unrelated controls remain.
+  Safari native play icons use the owned video's scoped stylesheet. All suppression
+  is reversible on handback.
   A per-media observer watches only these two attributes; after a bounded eight
   conflicts it hands back to the site. Cleanup/Use site player restores the
   latest site intent; a new source or explicit Custom Player re-enables inline
@@ -472,7 +475,12 @@ with direct `chrome.*` access.
   instead uses its exact registered site-player container: mount only the owned
   UI host inside it, leaving the original media and its ancestors in place.
   Resolve that container lazily from a bounded, unambiguous current SDK/group
-  binding. Explicit fullscreen entry while playing may notify that exact group
+  binding. An explicit Full screen request may use the original video's native
+  fullscreen API when retained-native container entry is unavailable or the
+  progressive transport declines. Keep the original node/source; respect explicit
+  fullscreen policy denial and unrelated presentation ownership. Custom Player
+  and automatic entry do not use this transport-decline fallback.
+  Explicit fullscreen entry while playing may notify that exact group
   of Play; discovery and metadata callbacks never do. Do not import private
   protection modules, fake visibility or filter site Pause calls. The external
   target needs both its current source/registration and an authored request token;

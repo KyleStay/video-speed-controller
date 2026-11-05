@@ -88,7 +88,10 @@ A domain mentioned in another site's path or query does not match. Regex rules
 and other text patterns still match the full URL. Port-qualified rules match the
 effective port, including HTTPS port 443 and HTTP port 80 when omitted.
 
-To hide a site's video buttons and play/pause overlays, turn on **Hide site video
+On iOS, recognizable play/pause overlays in a single-video picture stay hidden
+while StayFast owns playback, including layers recreated after seeking.
+Safari's start/play icons are hidden on the owned inline video as well.
+To hide additional site video buttons, turn on **Hide site video
 buttons** in the popup, or **Hide buttons** under **Advanced → Site rules**.
 Changes apply to open videos immediately and include controls added later.
 StayFast controls and captions remain available. The option is off by default;
@@ -178,7 +181,8 @@ Controls adapt to the visible video area with 44px targets. The original video
 stays in its site DOM; attachment does not load, play, open fullscreen or scroll
 the page. StayFast prepares inline playback even when the site omitted inline flags.
 Recognized single-video YouTube, Video.js, Plyr, JW Player and X controls are
-hidden while StayFast owns playback; captions and unrecognized buttons remain.
+hidden while StayFast owns playback. Bounded single-video picture scopes also
+hide recognizable play/pause/replay overlays; captions and unrelated buttons remain.
 
 **Full screen**, **Custom Player**, and supported site video/container fullscreen
 API requests made synchronously during the active trusted click or keydown open
@@ -189,6 +193,9 @@ Where Safari permits it,
 the player can also expand its container using webpage fullscreen. On iPhone,
 Safari's browser bars may remain visible. **More → Apple player** explicitly
 opens Apple's native video fullscreen when available.
+Twitter's explicit Full screen action also uses the original video's native
+fullscreen when container fullscreen is unavailable or its transport handoff
+declines. Safari provides the controls in that mode; the original media stays in place.
 StayFast also clears old presentation and scroll state when a
 feed reuses a video for a new source, so PiP/history return and old fullscreen
 callbacks cannot reopen the previous view or replay its scroll position. See the

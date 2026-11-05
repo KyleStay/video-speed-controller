@@ -414,7 +414,7 @@ describe('owned iOS inline transport', () => {
     expect(player.idle).toBe(true);
   });
 
-  it('restores scoped touch policy on handback without changing inline touch styles', () => {
+  it('releases scoped touch and native play-overlay rules on handback', () => {
     video.style.touchAction = 'manipulation';
     video.setAttribute('data-vsc-inline-scrub', 'site-value');
     player.setOwned(true);
@@ -422,6 +422,17 @@ describe('owned iOS inline transport', () => {
     expect(policy.style.isConnected).toBe(true);
     expect(video.style.touchAction).toBe('manipulation');
     expect(policy.style.textContent).toContain('pan-y pinch-zoom');
+    for (const pseudo of [
+      '::-webkit-media-controls-start-playback-button',
+      '::-webkit-media-controls-overlay-play-button',
+    ]) {
+      const rule = [...policy.style.sheet.cssRules].find((rule) =>
+        rule.selectorText?.endsWith(pseudo)
+      );
+      expect(rule.selectorText).toBe(`video[data-vsc-inline-scrub="${policy.token}"]${pseudo}`);
+      expect(rule.style.getPropertyValue('display')).toBe('none');
+      expect(rule.style.getPropertyPriority('display')).toBe('important');
+    }
     player.setOwned(false);
     expect(video.getAttribute('data-vsc-inline-scrub')).toBe('site-value');
     expect(policy.style.isConnected).toBe(false);
@@ -470,7 +481,7 @@ describe('owned iOS inline transport', () => {
     const cover = document.createElement('button');
     cover.getBoundingClientRect = () => media;
     container.append(video, cover);
-    video.vsc.iosPlayer.siteControls = { container };
+    video.vsc.iosPlayer.siteControls = { container, surfaceContainer: container };
     player.setOwned(true);
     const release = player.observeSurface(container);
     const pointer = (type, x) => {
@@ -512,7 +523,7 @@ describe('owned iOS inline transport', () => {
     container.append(video, trigger);
     post.append(container);
     document.body.append(post);
-    video.vsc.iosPlayer.siteControls = { container };
+    video.vsc.iosPlayer.siteControls = { container, surfaceContainer: container };
     player.setOwned(true);
     const release = player.observeSurface(container);
     const pointer = (type, x, y, target = trigger) => {
@@ -551,7 +562,7 @@ describe('owned iOS inline transport', () => {
     component.firstChild.append(video);
     const cover = component.querySelector('[data-testid^="video-player-mini-ui-"]');
     cover.getBoundingClientRect = () => media;
-    video.vsc.iosPlayer.siteControls = { container };
+    video.vsc.iosPlayer.siteControls = { container, surfaceContainer: container };
     player.setOwned(true);
     const release = player.observeSurface(container);
     const pointer = (type, x, y, target = cover) => {
@@ -749,7 +760,7 @@ describe('owned iOS inline transport', () => {
       container.tabIndex = 0;
       document.body.append(dialog);
       dialog.append(container);
-      video.vsc.iosPlayer.siteControls = { container };
+      video.vsc.iosPlayer.siteControls = { container, surfaceContainer: container };
       player.refreshSurfaceContainer();
       const release = player.observeSurface(container);
       pointer('pointerdown');
@@ -1011,7 +1022,7 @@ describe('owned iOS inline transport', () => {
       known.getBoundingClientRect = () => media;
       container.prepend(known);
       known.append(video);
-      video.vsc.iosPlayer.siteControls = { container: known };
+      video.vsc.iosPlayer.siteControls = { container: known, surfaceContainer: known };
       const dialog = document.createElement('div');
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
