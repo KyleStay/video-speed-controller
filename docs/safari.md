@@ -45,7 +45,8 @@ runtime checks.
 
 Full screen uses StayFast's player on iPhone, including Twitter. For a verified
 retained renderer, unavailable or refused container fullscreen uses a manual
-popover viewport with StayFast's controls. The original video, source, parent
+popover viewport with StayFast's controls. Stylesheets injected into the player
+by another extension do not keep a closed panel on screen. The original video, source, parent
 chain and native captions remain in place. The viewport owns only its markers,
 styles, placeholder and UI, restoring them on close or certificate loss. An
 existing site popover or unrelated fullscreen session is not acquired. Unsupported

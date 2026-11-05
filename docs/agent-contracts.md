@@ -520,7 +520,9 @@ with direct `chrome.*` access.
   that lease even when the page restores their old values. Its exact authored fullscreen
   token permits UI-only exit after media authority is lost. Rejecting or exiting
   this route returns inline without a portal fallback. Cleanup preserves foreign
-  media adopted into the UI tree. This certificate grants no transport takeover.
+  media adopted into the UI tree. Stylesheet-only additions from other extensions
+  do not retain a closed HUD; foreign content or nested shadow trees still do.
+  This certificate grants no transport takeover.
   It requires exact SDK/source/session/group and native track authority, with
   either no captions or the supported native subtitle identity. It does not need
   alternate rendition/download metadata to retain the original renderer.

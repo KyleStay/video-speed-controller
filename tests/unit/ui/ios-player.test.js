@@ -995,6 +995,51 @@ describe('iOS player ownership, playback, and restoration', () => {
       }
     );
 
+    it.each(['container', 'viewport'])(
+      'removes a closed %s HUD with injected styles before reopening',
+      async (kind) => {
+        const { player, video, parent } = nativePlayer();
+        if (kind === 'viewport') {
+          property(document, 'fullscreenEnabled', false);
+        }
+        const source = video.src;
+        for (let iteration = 0; iteration < 2; iteration++) {
+          expect(player.open({ fullscreen: true })).toBe(true);
+          await Promise.resolve();
+          const ui = player.ui;
+          const style = document.createElement('style');
+          style.textContent = '.hud { color: white; }';
+          ui.shadow.append(style);
+          expect(ui.ownsTree()).toBe(true);
+          expect(document.querySelectorAll('vsc-ios-player')).toHaveLength(1);
+          ui.refs.more.click();
+          ui.refs.done.click();
+          await Promise.resolve();
+          expect(player.active).toBe(false);
+          expect(ui.host.isConnected).toBe(false);
+          expect(document.querySelectorAll('vsc-ios-player')).toHaveLength(0);
+          expect(video.parentNode).toBe(parent);
+          expect(video.src).toBe(source);
+        }
+      }
+    );
+
+    it('preserves foreign media even inside an injected style element', () => {
+      const { player } = nativePlayer();
+      player.open();
+      const ui = player.ui;
+      const style = document.createElement('style');
+      const foreign = document.createElement('video');
+      style.append(foreign);
+      ui.shadow.append(style);
+      expect(ui.ownsTree()).toBe(false);
+      player.close();
+      expect(foreign.isConnected).toBe(true);
+      expect(foreign.parentNode).toBe(style);
+      style.remove();
+      ui.destroy();
+    });
+
     it('retains a foreign SVG caption subtree instead of treating tag names as ownership', () => {
       const { player } = nativePlayer();
       player.open();

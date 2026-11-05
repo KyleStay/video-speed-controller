@@ -242,7 +242,11 @@ measurements, paused-rate changes and fullscreen handback. Run
 `testStartFromOwnedFullscreen` for a speed command issued inside the original
 owned presentation entry. Assert that the verified companion opens at 1× with
 the original parent, MediaSource and SourceBuffer unchanged before selecting 4×.
-Require at least 60 presented frames, rate progress within
+The fullscreen-start case reads the visible StayFast speed, play state and advancing
+seek clock while its modal is open, then reads retained media/source identities
+after handback. Fixture diagnostics stay outside product-owned UI so they cannot
+change cleanup behavior. The separate decoded measurements require at least
+60 presented frames, rate progress within
 10%, gaps below 500 ms, one controller, no errors and retained original
 source/MediaSource/SourceBuffer identities. This neutral structural fixture is
 separate from live X and physical-device acceptance. `twitter-live-mp4` uses a
@@ -603,8 +607,8 @@ restore the selected simulator's original state after inspection. `--case <profi
 is a focused diagnostic run; the other 16 rows remain explicitly unrun. An absent
 activation, unsupported decode/API or automation failure cannot pass a profile.
 
-Native rate-reset checks observe the probe's passive `ratechange` updates while
-waiting for the delayed reset. Repeated Read button taps would supply unrelated
+Native rate-reset checks leave the three-second reset window free of diagnostic
+taps, then read its completed result once. Repeated Read button taps would supply unrelated
 trusted input inside the site's speed-command gesture window and change the
 behavior being measured. Frame reads retry only within their bounded deadline
 when a newly loaded child has not installed its telemetry listener. Native taps

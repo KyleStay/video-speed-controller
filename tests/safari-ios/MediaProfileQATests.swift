@@ -268,11 +268,12 @@ import UIKit
         try tap("Queue site rate reset")
         // Polling the Read button creates fresh user gestures and would make
         // the delayed reset look like an intentional site speed command.
-        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard let state = self.decode() else { return false }
-            return state.fixture?.resets == 1 && abs((state.clip()?.rate ?? 0) - rate) < 0.01
-        }, object: safari)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 15), .completed, lastJSON)
+        RunLoop.current.run(until: Date().addingTimeInterval(4.5))
+        let settled = try read()
+        try require(settled.fixture?.resets == 1 && settled.fixture?.pendingReset == false,
+                    "Delayed reset did not execute: " + lastJSON)
+        try require(abs((settled.clip()?.rate ?? 0) - rate) < 0.01,
+                    "Delayed reset replaced the selected rate: " + lastJSON)
         try tap("Queue site rate reset"); try tap("LOW")
         try wait("Source replacement did not cancel stale reset") { $0.fixture?.pendingReset == false }
         try play(); try same(original, ready()); try finish()
