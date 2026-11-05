@@ -568,6 +568,7 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
         await bootstrap.goto(`chrome-extension://${extensionId}/ui/options/options.html`);
         const prior = await bootstrap.evaluate(() => chrome.storage.sync.get('siteRules'));
         try {
+          await page.bringToFront();
           await navigate();
           await bootstrap.evaluate(() =>
             chrome.storage.sync.set({
