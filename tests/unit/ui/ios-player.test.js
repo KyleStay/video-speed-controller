@@ -290,6 +290,34 @@ describe('iOS player ownership, playback, and restoration', () => {
         document.dispatchEvent(new Event('fullscreenchange'));
         return Promise.resolve();
       });
+      let popover = false;
+      const matches = parent.matches.bind(parent);
+      parent.matches = (selector) =>
+        selector === ':popover-open'
+          ? popover && parent.hasAttribute('popover')
+          : matches(selector);
+      parent.showPopover = vi.fn(() => {
+        popover = true;
+      });
+      parent.hidePopover = vi.fn(() => {
+        popover = false;
+      });
+      for (const node of [parent, video]) {
+        const bounds = node.getBoundingClientRect.bind(node);
+        node.getBoundingClientRect = () =>
+          popover
+            ? {
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: innerWidth,
+                bottom: innerHeight,
+                width: innerWidth,
+                height: innerHeight,
+              }
+            : bounds();
+      }
       return {
         ...item,
         boundary,
@@ -367,6 +395,11 @@ describe('iOS player ownership, playback, and restoration', () => {
         }
         await Promise.resolve();
         await Promise.resolve();
+        if (ending === 'denied entry') {
+          expect(player.active).toBe(true);
+          expect(div.style.display).toBe('none');
+          player.close();
+        }
         expect(div.style.display).toBe('inline-flex');
         expect(div.style.getPropertyPriority('display')).toBe('');
         expect(div.style.color).toBe('red');
@@ -413,7 +446,7 @@ describe('iOS player ownership, playback, and restoration', () => {
     });
 
     it.each(['disabled container fullscreen', 'missing container API'])(
-      'uses original-video fullscreen for %s without relocating or playing it',
+      'keeps StayFast around the original for %s without system fullscreen',
       (missing) => {
         const paused = missing === 'disabled container fullscreen';
         const { player, video, parent } = nativePlayer({ playing: !paused });
@@ -427,54 +460,220 @@ describe('iOS player ownership, playback, and restoration', () => {
           property(parent, 'requestFullscreen', undefined);
         }
         const source = video.src;
+        const style = parent.getAttribute('style');
         expect(player.open({ fullscreen: true })).toBe(true);
-        expect(native).toHaveBeenCalledOnce();
-        expect(native.mock.contexts[0]).toBe(video);
+        expect(native).not.toHaveBeenCalled();
         expect(request).not.toHaveBeenCalled();
+        expect(parent.showPopover).toHaveBeenCalledOnce();
+        expect(parent.matches(':popover-open')).toBe(true);
         expect(video.parentNode).toBe(parent);
         expect(video.src).toBe(source);
         expect(video.paused).toBe(paused);
         expect(video.play).not.toHaveBeenCalled();
         expect(video.pause).not.toHaveBeenCalled();
-        expect(player.active).toBe(false);
-        expect(player.nativeSession).toBe(true);
+        expect(player.active).toBe(true);
+        expect(player.nativeSession).not.toBe(true);
+        expect(player.ui.host.parentNode).toBe(parent);
+        player.close();
+        expect(parent.hasAttribute('popover')).toBe(false);
+        expect(parent.matches(':popover-open')).toBe(false);
+        expect(parent.getAttribute('style') || '').toBe(style || '');
+        expect(document.querySelector('[data-vsc-owned-viewport-media]')).toBeNull();
       }
     );
 
-    it('does not use native video fullscreen to bypass an explicit fullscreen policy denial', () => {
-      const { player, video } = nativePlayer();
+    it.each(['missing', 'throwing', 'canceled', 'foreign popover'])(
+      'refuses a %s viewport without opening the system player',
+      (failure) => {
+        const { player, video, parent } = nativePlayer();
+        property(document, 'fullscreenEnabled', false);
+        const native = vi.fn();
+        video.webkitEnterFullscreen = native;
+        player.captureNativeFullscreenMethods();
+        if (failure === 'missing') {
+          parent.showPopover = undefined;
+        }
+        if (failure === 'throwing') {
+          parent.showPopover = () => {
+            throw new Error('denied');
+          };
+        }
+        if (failure === 'canceled') {
+          parent.showPopover = () => {};
+        }
+        if (failure === 'foreign popover') {
+          parent.setAttribute('popover', 'auto');
+        }
+        const style = parent.getAttribute('style');
+        expect(player.open({ fullscreen: true })).toBe(false);
+        expect(player.active).toBe(false);
+        expect(native).not.toHaveBeenCalled();
+        expect(parent.getAttribute('style') || '').toBe(style || '');
+        expect(parent.getAttribute('popover')).toBe(failure === 'foreign popover' ? 'auto' : null);
+        expect(document.querySelector('[data-vsc-owned-viewport-media]')).toBeNull();
+      }
+    );
+
+    it.each(['close', 'source loss', 'external hide', 'changed marker'])(
+      'releases the owned viewport after %s without media playback writes',
+      async (ending) => {
+        const { player, video, parent, invalidate } = nativePlayer();
+        property(document, 'fullscreenEnabled', false);
+        const source = video.src;
+        const rootStyle = document.documentElement.getAttribute('style');
+        expect(player.open({ fullscreen: true })).toBe(true);
+        const ui = player.ui;
+        if (ending === 'source loss') {
+          invalidate();
+        } else if (ending === 'external hide') {
+          parent.hidePopover();
+          parent.dispatchEvent(new Event('toggle'));
+        } else if (ending === 'changed marker') {
+          video.setAttribute('data-vsc-owned-viewport-media', 'site-value');
+          await Promise.resolve();
+        } else {
+          player.close();
+        }
+        expect(player.active).toBe(false);
+        expect(ui.host.isConnected).toBe(false);
+        expect(parent.hasAttribute('popover')).toBe(false);
+        expect(document.documentElement.getAttribute('style') || '').toBe(rootStyle || '');
+        expect(video.src).toBe(source);
+        expect(video.parentNode).toBe(parent);
+        expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).not.toHaveBeenCalled();
+        expect(video.getAttribute('data-vsc-owned-viewport-media')).toBe(
+          ending === 'changed marker' ? 'site-value' : null
+        );
+      }
+    );
+
+    it('retains StayFast when container fullscreen throws synchronously', () => {
+      const { player, video, parent } = nativePlayer();
+      parent.requestFullscreen = () => {
+        throw new Error('unavailable');
+      };
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.active).toBe(true);
+      expect(parent.matches(':popover-open')).toBe(true);
+      expect(native).not.toHaveBeenCalled();
+    });
+
+    it.each(['container', 'video', 'non-finite'])(
+      'rejects invalid %s viewport geometry',
+      (displaced) => {
+        const { player, video, parent } = nativePlayer();
+        property(document, 'fullscreenEnabled', false);
+        const target = displaced === 'container' ? parent : video;
+        target.getBoundingClientRect = () => ({
+          left: displaced === 'non-finite' ? NaN : 100,
+          top: 0,
+          right: innerWidth + 100,
+          bottom: innerHeight,
+          width: innerWidth,
+          height: innerHeight,
+        });
+        expect(player.open({ fullscreen: true })).toBe(false);
+        expect(player.active).toBe(false);
+        expect(parent.hasAttribute('popover')).toBe(false);
+        expect(document.querySelector('[data-vsc-owned-viewport-media]')).toBeNull();
+      }
+    );
+
+    it('restores owned attributes even when a page replaces hidePopover with a throwing method', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      parent.hidePopover = () => {
+        throw new Error('site replacement');
+      };
+      player.close();
+      expect(parent.hasAttribute('popover')).toBe(false);
+      expect(parent.hasAttribute('data-vsc-owned-viewport')).toBe(false);
+      expect(video.hasAttribute('data-vsc-owned-viewport-media')).toBe(false);
+      expect(parent.matches(':popover-open')).toBe(false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+    });
+
+    it('opens Apple fullscreen only through the explicit Apple control', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(native).not.toHaveBeenCalled();
+      player.ui.refs.native.click();
+      expect(native).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+      expect(parent.hasAttribute('popover')).toBe(false);
+    });
+
+    it('retains the selected Fill mode when reopening the owned viewport', () => {
+      const { player } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      player.ui.refs.fit.click();
+      expect(player.fit).toBe('cover');
+      player.close();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.ui.refs.fit.getAttribute('aria-pressed')).toBe('true');
+      expect(player.ownedFullscreen.viewportStyle.textContent).toContain(
+        'object-fit:cover!important'
+      );
+    });
+
+    it('keeps an already-owned viewport through a repeated fullscreen request', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      const ui = player.ui;
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.active).toBe(true);
+      expect(player.ui).toBe(ui);
+      expect(parent.showPopover).toHaveBeenCalledOnce();
+      expect(parent.hidePopover).not.toHaveBeenCalled();
+      expect(video.parentNode).toBe(parent);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(video.pause).not.toHaveBeenCalled();
+    });
+
+    it('uses only the owned viewport when browser fullscreen policy is disabled', () => {
+      const { player, video, parent } = nativePlayer();
       const native = vi.fn();
       video.webkitEnterFullscreen = native;
       player.captureNativeFullscreenMethods();
       property(document, 'fullscreenEnabled', false);
       property(document, 'permissionsPolicy', { allowsFeature: () => false });
-      expect(player.open({ fullscreen: true })).toBe(false);
+      expect(player.open({ fullscreen: true })).toBe(true);
       expect(native).not.toHaveBeenCalled();
-      expect(player.active).toBe(false);
+      expect(parent.requestFullscreen).not.toHaveBeenCalled();
+      expect(player.active).toBe(true);
     });
 
-    it('does not use a presentation certificate invalidated while removing its HUD', () => {
-      const { player, video, boundary } = nativePlayer();
+    it('rolls back a viewport whose certificate is invalidated during entry', () => {
+      const { player, video, parent, boundary } = nativePlayer();
       const native = vi.fn();
       video.webkitEnterFullscreen = native;
       player.captureNativeFullscreenMethods();
       property(document, 'fullscreenEnabled', false);
-      const close = player.close.bind(player);
-      vi.spyOn(player, 'close').mockImplementation(() => {
-        close();
+      const show = parent.showPopover;
+      parent.showPopover = () => {
+        show();
         boundary.current.mockReturnValue(false);
-      });
+      };
       expect(player.open({ fullscreen: true })).toBe(false);
       expect(native).not.toHaveBeenCalled();
+      expect(parent.hasAttribute('popover')).toBe(false);
+      expect(player.active).toBe(false);
     });
 
-    it.each([
-      [{ fullscreen: true }, true],
-      [{}, false],
-      [{ fullscreen: true, automatic: true }, false],
-    ])(
-      'uses native fallback after a declined transport only for explicit fullscreen (%j)',
-      (options, fallback) => {
+    it.each([{ fullscreen: true }, {}, { fullscreen: true, automatic: true }])(
+      'never chooses Apple fullscreen after a declined transport (%j)',
+      (options) => {
         const { player, video, parent } = nativePlayer({ playing: false });
         window.VSC.TwitterPlayer.resolveNativePresentation.mockReturnValue(null);
         vi.spyOn(window.VSC.TwitterMP4Playback, 'open').mockReturnValue(false);
@@ -482,8 +681,8 @@ describe('iOS player ownership, playback, and restoration', () => {
         video.webkitEnterFullscreen = native;
         player.captureNativeFullscreenMethods();
         const source = video.src;
-        expect(player.open(options)).toBe(fallback);
-        expect(native).toHaveBeenCalledTimes(fallback ? 1 : 0);
+        expect(player.open(options)).toBe(false);
+        expect(native).not.toHaveBeenCalled();
         expect(video.parentNode).toBe(parent);
         expect(video.src).toBe(source);
         expect(video.play).not.toHaveBeenCalled();
@@ -531,7 +730,7 @@ describe('iOS player ownership, playback, and restoration', () => {
       expect(player.active).toBe(false);
     });
 
-    it('rejects native fullscreen without falling back to a portal or starting playback', async () => {
+    it('retains StayFast after container rejection without a portal or Play', async () => {
       const { player, video, parent } = nativePlayer({
         requestResult: Promise.reject(new Error('denied')),
       });
@@ -539,8 +738,9 @@ describe('iOS player ownership, playback, and restoration', () => {
       const ui = player.ui;
       await Promise.resolve();
       await Promise.resolve();
-      expect(player.active).toBe(false);
-      expect(ui.host.isConnected).toBe(false);
+      expect(player.active).toBe(true);
+      expect(ui.host.isConnected).toBe(true);
+      expect(parent.matches(':popover-open')).toBe(true);
       expect(video.parentNode).toBe(parent);
       expect(video.play).not.toHaveBeenCalled();
       expect(video.pause).not.toHaveBeenCalled();
@@ -794,6 +994,51 @@ describe('iOS player ownership, playback, and restoration', () => {
         destination.remove();
       }
     );
+
+    it.each(['container', 'viewport'])(
+      'removes a closed %s HUD with injected styles before reopening',
+      async (kind) => {
+        const { player, video, parent } = nativePlayer();
+        if (kind === 'viewport') {
+          property(document, 'fullscreenEnabled', false);
+        }
+        const source = video.src;
+        for (let iteration = 0; iteration < 2; iteration++) {
+          expect(player.open({ fullscreen: true })).toBe(true);
+          await Promise.resolve();
+          const ui = player.ui;
+          const style = document.createElement('style');
+          style.textContent = '.hud { color: white; }';
+          ui.shadow.append(style);
+          expect(ui.ownsTree()).toBe(true);
+          expect(document.querySelectorAll('vsc-ios-player')).toHaveLength(1);
+          ui.refs.more.click();
+          ui.refs.done.click();
+          await Promise.resolve();
+          expect(player.active).toBe(false);
+          expect(ui.host.isConnected).toBe(false);
+          expect(document.querySelectorAll('vsc-ios-player')).toHaveLength(0);
+          expect(video.parentNode).toBe(parent);
+          expect(video.src).toBe(source);
+        }
+      }
+    );
+
+    it('preserves foreign media even inside an injected style element', () => {
+      const { player } = nativePlayer();
+      player.open();
+      const ui = player.ui;
+      const style = document.createElement('style');
+      const foreign = document.createElement('video');
+      style.append(foreign);
+      ui.shadow.append(style);
+      expect(ui.ownsTree()).toBe(false);
+      player.close();
+      expect(foreign.isConnected).toBe(true);
+      expect(foreign.parentNode).toBe(style);
+      style.remove();
+      ui.destroy();
+    });
 
     it('retains a foreign SVG caption subtree instead of treating tag names as ownership', () => {
       const { player } = nativePlayer();

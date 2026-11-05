@@ -170,6 +170,9 @@ export function installNativeProbe(document) {
     output.textContent = `Profile state: ${JSON.stringify({ ...localState(), children, pendingFrames: children.filter((child) => !child.state).length })}`;
   }
   function collect() {
+    if (disposed) {
+      return;
+    }
     sequence++;
     frames.clear();
     for (const frame of document.querySelectorAll('iframe')) {
@@ -181,6 +184,7 @@ export function installNativeProbe(document) {
     publish();
   }
   listen(read, 'click', collect);
+  listen(document, 'ratechange', () => view.queueMicrotask(collect), true);
   listen(
     document,
     'click',

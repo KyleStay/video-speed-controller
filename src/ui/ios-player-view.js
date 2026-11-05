@@ -369,8 +369,9 @@
     }
 
     ownsTree() {
+      // Other extensions can style our shadow UI without owning its contents.
       return [this.shadow, ...this.shadow.querySelectorAll('*')].every(
-        (node) => !node.shadowRoot && this.ownedTree.has(node)
+        (node) => !node.shadowRoot && (this.ownedTree.has(node) || node.localName === 'style')
       );
     }
 

@@ -193,9 +193,10 @@ Where Safari permits it,
 the player can also expand its container using webpage fullscreen. On iPhone,
 Safari's browser bars may remain visible. **More → Apple player** explicitly
 opens Apple's native video fullscreen when available.
-Twitter's explicit Full screen action also uses the original video's native
-fullscreen when container fullscreen is unavailable or its transport handoff
-declines. Safari provides the controls in that mode; the original media stays in place.
+Full screen always uses StayFast's controls. When a verified retained player
+cannot enter browser container fullscreen, StayFast uses its own viewport while
+leaving the original video, stream and captions in place. Apple's player opens
+only through the explicit Apple player action.
 StayFast also clears old presentation and scroll state when a
 feed reuses a video for a new source, so PiP/history return and old fullscreen
 callbacks cannot reopen the previous view or replay its scroll position. See the

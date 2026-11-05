@@ -510,12 +510,12 @@ export default async function runTwitterMP4({ launch }) {
       );
     });
     await check(
-      'explicit fullscreen uses the original video when the transport is declined',
+      'declined transport preserves the original and never chooses system fullscreen',
       async () => {
         const original = await retained();
         await clickProduct('.inline-fullscreen');
         await page.waitForFunction(
-          () => document.fullscreenElement === window.__twitterMP4Fixture.original
+          () => window.__twitterMP4Fixture.original.vsc.iosPlayer.presentationUnavailable
         );
         const entered = await retained();
         assert.true(
@@ -524,11 +524,11 @@ export default async function runTwitterMP4({ launch }) {
             entered.hosts === 0,
           JSON.stringify(entered)
         );
-        await page.evaluate(() => document.exitFullscreen());
-        await page.waitForFunction(
-          () =>
-            !document.fullscreenElement &&
-            !window.__twitterMP4Fixture.original.vsc.iosPlayer.nativeSession
+        assert.false(await page.evaluate(() => !!document.fullscreenElement));
+        assert.false(
+          await page.evaluate(
+            () => !!window.__twitterMP4Fixture.original.vsc.iosPlayer.nativeSession
+          )
         );
         await retained();
       }

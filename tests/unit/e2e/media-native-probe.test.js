@@ -92,6 +92,35 @@ it('bounds native frame sampling and cancels callbacks on source changes, remova
   f.dispose();
   expect(f.document.body.style.paddingTop).toBe('3px');
 });
+it('observes rate changes without diagnostic clicks that could imply user speed intent', async () => {
+  let rate = 1.5;
+  const f = probe(undefined, (window) => {
+    Object.defineProperty(window.document.querySelector('video'), 'playbackRate', {
+      get: () => rate,
+      set: () => {
+        throw new Error('Probe must not write media');
+      },
+    });
+  });
+  const button = f.document.querySelector('button');
+  const click = vi.spyOn(button, 'click');
+  const before = f.state().sequence;
+  rate = 1;
+  f.document.querySelector('video').dispatchEvent(new f.window.Event('ratechange'));
+  await new Promise((done) => f.window.queueMicrotask(done));
+  expect(f.state().sequence).toBe(before + 1);
+  expect(f.state().media[0].rate).toBe(1);
+  expect(f.state().trusted).toBe(0);
+  expect(click).not.toHaveBeenCalled();
+});
+it('discards a queued passive rate observation after probe disposal', async () => {
+  const f = probe();
+  const read = vi.spyOn(f.window, '__mediaMockState');
+  f.document.querySelector('video').dispatchEvent(new f.window.Event('ratechange'));
+  f.dispose();
+  await new Promise((done) => f.window.queueMicrotask(done));
+  expect(read).not.toHaveBeenCalled();
+});
 it('rejects stale, wrong-origin and wrong-window child telemetry', () => {
   const f = probe(undefined, (window) => {
     const frame = window.document.createElement('iframe');

@@ -58,6 +58,13 @@ import UIKit
     func tap(_ label: String) throws {
         let button = safari.buttons[label].firstMatch
         try require(button.exists || button.waitForExistence(timeout: 8), "Missing button: " + label)
+        for _ in 0..<3 {
+            if button.isHittable { break }
+            if button.frame.minY > safari.frame.maxY - 120 { safari.swipeUp() }
+            else if button.frame.maxY < 120 { safari.swipeDown() }
+            else { break }
+        }
+        try require(button.isHittable, "Native target stayed covered: " + label)
         button.tap()
     }
     func decode() -> Snapshot? {
@@ -70,8 +77,9 @@ import UIKit
         let before = decode()
         try tap("Read profile state")
         let deadline = Date().addingTimeInterval(10)
+        var nextFrameRead = Date().addingTimeInterval(1)
         repeat {
-            if let value = decode(), value.sequence > (before?.sequence ?? -1), value.pendingFrames == 0 {
+            if let value = decode(), (value.document != before?.document || value.sequence > (before?.sequence ?? -1)), value.pendingFrames == 0 {
                 try require(value.errors.isEmpty, "Page/CSP error: \(value.errors)")
                 try require(value.retired.allSatisfy { !$0.controlled }, "Retired owner retained")
                 for child in value.children ?? [] {
@@ -79,6 +87,10 @@ import UIKit
                     try require(child.state?.retired.allSatisfy { !$0.controlled } == true, "Retired frame owner retained")
                 }
                 return value
+            }
+            if Date() >= nextFrameRead {
+                try tap("Read profile state")
+                nextFrameRead = Date().addingTimeInterval(1)
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
@@ -106,6 +118,10 @@ import UIKit
         url.queryItems = query
         guard let target = url.url else { throw Failure.check("Invalid local profile URL") }
         XCUIDevice.shared.system.open(target)
+        let fresh = safari.staticTexts.matching(NSPredicate(format:
+            "label BEGINSWITH 'Profile state: ' AND label CONTAINS %@ AND NOT (label CONTAINS %@)",
+            "\"profile\":\"\(id)\"", previous.document)).firstMatch
+        try require(fresh.waitForExistence(timeout: 20), "Fresh profile document unavailable")
         try wait("Fresh local profile did not load") { $0.profile == id && $0.document != previous.document }
 
     }
@@ -250,9 +266,14 @@ import UIKit
         try open("rendition-watch")
         let original = try ready(), rate = try faster()
         try tap("Queue site rate reset")
-        try wait("Delayed author reset replaced selected rate") {
-            $0.fixture?.resets == 1 && abs(($0.clip()?.rate ?? 0) - rate) < 0.01
-        }
+        // Polling the Read button creates fresh user gestures and would make
+        // the delayed reset look like an intentional site speed command.
+        RunLoop.current.run(until: Date().addingTimeInterval(4.5))
+        let settled = try read()
+        try require(settled.fixture?.resets == 1 && settled.fixture?.pendingReset == false,
+                    "Delayed reset did not execute: " + lastJSON)
+        try require(abs((settled.clip()?.rate ?? 0) - rate) < 0.01,
+                    "Delayed reset replaced the selected rate: " + lastJSON)
         try tap("Queue site rate reset"); try tap("LOW")
         try wait("Source replacement did not cancel stale reset") { $0.fixture?.pendingReset == false }
         try play(); try same(original, ready()); try finish()
