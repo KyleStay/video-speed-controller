@@ -114,6 +114,20 @@ describe('scoped iOS site controls', () => {
     expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
   });
 
+  it('declines viewer lookup when the surrounding post exceeds the bounded walk', () => {
+    const { container, video } = feed();
+    const post = document.createElement('article');
+    container.replaceWith(post);
+    post.append(container);
+    const link = document.createElement('a');
+    link.href = '/creator/status/123/video/1';
+    container.append(link);
+    for (let index = 0; index < 520; index++) {
+      post.append(document.createElement('span'));
+    }
+    expect(window.VSC.IOSSiteControls.xViewerControl(video)).toBeNull();
+  });
+
   it('reveals owned inline controls through a site overlay and removes wake listeners on handback', () => {
     const { container, video, owner, button } = fixture();
     const surfaceInteraction = vi.fn();

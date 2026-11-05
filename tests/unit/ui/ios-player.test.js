@@ -404,6 +404,36 @@ describe('iOS player ownership, playback, and restoration', () => {
       expect(window.VSC.IOSPlayer.siteRelinquished.has(original)).toBe(false);
     });
 
+    it('retains hide-all site control policy across fullscreen mutations and inline return', async () => {
+      const { player, video, parent } = nativePlayer();
+      parent.dataset.testid = 'videoPlayer';
+      video.vsc.iosPlayer = player;
+      const owner = new window.VSC.IOSSiteControls(video);
+      player.siteControls = owner;
+      video.vsc.siteControls = owner;
+      owner.setHideAllButtons(true);
+      const site = document.createElement('button');
+      site.textContent = 'Site controls';
+      parent.append(site);
+      expect(owner.acquire()).toBe(true);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(getComputedStyle(site).display).toBe('none');
+      const late = site.cloneNode(true);
+      parent.append(late);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(getComputedStyle(late).display).toBe('none');
+      player.close();
+      await Promise.resolve();
+      expect(getComputedStyle(site).display).toBe('none');
+      player.restoreSitePlayer();
+      expect(getComputedStyle(site).display).not.toBe('none');
+      expect(getComputedStyle(late).display).not.toBe('none');
+      owner.cleanup();
+    });
+
     it('enters exact native container with a transparent nonmodal HUD and no media or ancestor writes', async () => {
       const { player, video, parent, boundary, unsubscribe } = nativePlayer();
       const originalTree = Array.from(parent.childNodes);

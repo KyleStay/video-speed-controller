@@ -560,6 +560,61 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
       }
     );
     await check(
+      'explicit hide-site-controls survives retained fullscreen and late site chrome',
+      async () => {
+        const worker = browser.targets().find((target) => target.url().endsWith('/background.js'));
+        const extensionId = launched.extensionId || new URL(worker.url()).hostname;
+        const bootstrap = await browser.newPage();
+        await bootstrap.goto(`chrome-extension://${extensionId}/ui/options/options.html`);
+        const prior = await bootstrap.evaluate(() => chrome.storage.sync.get('siteRules'));
+        try {
+          await navigate();
+          await bootstrap.evaluate(() =>
+            chrome.storage.sync.set({
+              siteRules: [{ pattern: 'x.com', enabled: true, speed: null, hideSiteControls: true }],
+            })
+          );
+          await page.bringToFront();
+          await page.waitForFunction(
+            () => getComputedStyle(document.querySelector('#overlay-action')).display === 'none'
+          );
+          await tap(page, () =>
+            window.__modernX.video.vsc.div.shadowRoot.querySelector('.inline-fullscreen')
+          );
+          await page.waitForFunction(() => window.__modernX.video.vsc.iosPlayer.active);
+          await settle(page);
+          assert.true(
+            await page.$eval('#overlay-action', (node) => getComputedStyle(node).display === 'none')
+          );
+          await page.evaluate(() => {
+            const late = document.createElement('button');
+            late.id = 'late-site-control';
+            late.textContent = 'Late site control';
+            window.__modernX.player.append(late);
+          });
+          await page.waitForFunction(
+            () => getComputedStyle(document.querySelector('#late-site-control')).display === 'none'
+          );
+          assertOriginal(await state(page));
+          await tapOwned(page, 'done');
+          await page.waitForFunction(() => !window.__modernX.video.vsc.iosPlayer.active);
+          assert.true(
+            await page.$eval('#overlay-action', (node) => getComputedStyle(node).display === 'none')
+          );
+        } finally {
+          await bootstrap.evaluate(async (saved) => {
+            if (Object.hasOwn(saved, 'siteRules')) {
+              await chrome.storage.sync.set(saved);
+            } else {
+              await chrome.storage.sync.remove('siteRules');
+            }
+          }, prior);
+          await bootstrap.close();
+          await page.bringToFront();
+        }
+      }
+    );
+    await check(
       'controlled retained-entry variant genuinely routes the modern X anchor to owned fullscreen',
       async () => {
         await navigate(true);

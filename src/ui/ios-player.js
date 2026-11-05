@@ -726,18 +726,18 @@ class IOSPlayer {
         : null;
       if (nativeBoundary) {
         if (!nativeBoundary.current()) {
-          this.setPresentationUnavailable(true);
+          this.reportPresentationUnavailable();
           return false;
         }
         const scroll = new window.VSC.IOSPlayerScrollState(this.video, true);
         if (!this.openPresentation({ ...options, play: false, nativeBoundary })) {
           scroll.cancel();
-          this.setPresentationUnavailable(true);
+          this.reportPresentationUnavailable();
           return false;
         }
         if (!this.ownedFullscreen.enter(scroll)) {
           this.close();
-          this.setPresentationUnavailable(true);
+          this.reportPresentationUnavailable();
           return false;
         }
         this.setPresentationUnavailable(false);
@@ -746,7 +746,7 @@ class IOSPlayer {
       const staged = window.VSC.TwitterMP4Playback?.open(this.controller, options);
       if (staged !== null && staged !== undefined) {
         if (!staged && !options.automatic) {
-          this.setPresentationUnavailable(true);
+          this.reportPresentationUnavailable();
         } else if (staged) {
           this.setPresentationUnavailable(false);
         }
@@ -782,13 +782,15 @@ class IOSPlayer {
     }
   }
 
+  reportPresentationUnavailable() {
+    this.setPresentationUnavailable(true);
+    this.controller.controlsManager?.inlinePlayer?.error(
+      'Fullscreen is unavailable for this video.'
+    );
+  }
+
   setPresentationUnavailable(unavailable) {
     this.presentationUnavailable = unavailable;
-    if (unavailable) {
-      this.controller.controlsManager?.inlinePlayer?.error(
-        'Fullscreen is unavailable for this video.'
-      );
-    }
     if (this.button) {
       this.button.textContent = unavailable ? 'Use site player' : 'Custom player';
       this.button.setAttribute(

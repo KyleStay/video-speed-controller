@@ -216,7 +216,14 @@ class IOSSiteControls {
         return null;
       }
       const post = node.closest('article');
-      const ids = Array.from(post?.querySelectorAll('a[href*="/status/"]') || [])
+      const postNodes = post
+        ? (original.vsc?.siteControls || new IOSSiteControls(original)).strongNodes(post)
+        : [];
+      if (!postNodes) {
+        return null;
+      }
+      const ids = postNodes
+        .filter((link) => link.matches('a[href*="/status/"]'))
         .map(
           (link) => new URL(link.href, doc.URL).pathname.match(/^\/[^/]+\/status\/(\d+)\/?$/)?.[1]
         )
@@ -490,6 +497,20 @@ class IOSSiteControls {
       return { start: node, exact: true, media: [original, video], required: original };
     }
     const player = video.vsc?.iosPlayer;
+    if (player?.active && player.nativeBoundary) {
+      const node = player.nativeBoundary.element;
+      return player.video === video &&
+        player.doc === doc &&
+        node?.contains(video) &&
+        player.ui?.host.isConnected &&
+        !player.nativeSourceChanged() &&
+        player.nativeBoundary.current() &&
+        player.nativeParents.every(
+          ([child, parent]) => (child.parentNode || child.host || null) === parent
+        )
+        ? { start: node, exact: true, media: [video], required: video }
+        : null;
+    }
     if (player?.active) {
       const portal = player.portalNode;
       const origin = player.originParent;
