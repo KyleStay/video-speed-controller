@@ -415,11 +415,21 @@ class IOSPlayerFullscreen {
         throw new Error('Retained viewport changed');
       }
       const viewport = this.view.visualViewport || this.view;
+      const left = viewport.offsetLeft || 0;
+      const top = viewport.offsetTop || 0;
+      const right = left + (viewport.width || this.view.innerWidth);
+      const bottom = top + (viewport.height || this.view.innerHeight);
+      if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top) {
+        throw new Error('Retained viewport dimensions unavailable');
+      }
       for (const node of [this.target, this.owner.video]) {
         const bounds = node.getBoundingClientRect();
         if (
-          bounds.width < (viewport.width || this.view.innerWidth) - 2 ||
-          bounds.height < (viewport.height || this.view.innerHeight) - 2
+          ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite) ||
+          Math.abs(bounds.left - left) > 2 ||
+          Math.abs(bounds.top - top) > 2 ||
+          Math.abs(bounds.right - right) > 2 ||
+          Math.abs(bounds.bottom - bottom) > 2
         ) {
           throw new Error('Retained viewport did not cover the screen');
         }
@@ -457,25 +467,31 @@ class IOSPlayerFullscreen {
     this.viewport = false;
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
+    const owned = () =>
+      IOSPlayerFullscreen.boundaryRequests.get(this.target) === this.request &&
+      this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token;
     try {
-      if (
-        IOSPlayerFullscreen.boundaryRequests.get(this.target) === this.request &&
-        this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token
-      ) {
-        if (this.target.getAttribute('popover') === 'manual') {
-          if (this.target.matches(':popover-open')) {
-            this.target.hidePopover();
-          }
-          if (this.target.getAttribute('popover') === 'manual') {
-            this.target.removeAttribute('popover');
-          }
-        }
-        if (this.target.getAttribute('data-vsc-owned-viewport') === this.owner.token) {
-          this.target.removeAttribute('data-vsc-owned-viewport');
+      if (owned() && this.target.getAttribute('popover') === 'manual') {
+        if (this.target.matches(':popover-open')) {
+          this.target.hidePopover();
         }
       }
     } catch {
-      // Removing our stylesheet and HUD must not depend on a page's popover API.
+      // Attribute restoration still closes our popover if a page replaces hidePopover.
+    }
+    try {
+      if (owned() && this.target.getAttribute('popover') === 'manual') {
+        this.target.removeAttribute('popover');
+      }
+    } catch {
+      // Continue through page-owned attribute accessors independently.
+    }
+    try {
+      if (owned()) {
+        this.target.removeAttribute('data-vsc-owned-viewport');
+      }
+    } catch {
+      // Removing our stylesheet and HUD must not depend on page attribute methods.
     }
     this.viewportStyle?.remove();
     this.viewportStyle = null;
@@ -573,9 +589,10 @@ class IOSPlayerFullscreen {
       this.restoreMount();
       this.repairScroll();
       if (this.inPlace) {
-        if (!this.enterViewport(this.scrollSnapshot)) {
-          this.closeInPlace();
+        if (this.enterViewport(this.scrollSnapshot)) {
+          return true;
         }
+        this.closeInPlace();
       } else {
         this.failure('Full screen is unavailable. Continue in this player.');
       }

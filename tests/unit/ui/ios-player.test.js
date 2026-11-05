@@ -292,7 +292,10 @@ describe('iOS player ownership, playback, and restoration', () => {
       });
       let popover = false;
       const matches = parent.matches.bind(parent);
-      parent.matches = (selector) => (selector === ':popover-open' ? popover : matches(selector));
+      parent.matches = (selector) =>
+        selector === ':popover-open'
+          ? popover && parent.hasAttribute('popover')
+          : matches(selector);
       parent.showPopover = vi.fn(() => {
         popover = true;
       });
@@ -544,6 +547,70 @@ describe('iOS player ownership, playback, and restoration', () => {
         );
       }
     );
+
+    it('retains StayFast when container fullscreen throws synchronously', () => {
+      const { player, video, parent } = nativePlayer();
+      parent.requestFullscreen = () => {
+        throw new Error('unavailable');
+      };
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(player.active).toBe(true);
+      expect(parent.matches(':popover-open')).toBe(true);
+      expect(native).not.toHaveBeenCalled();
+    });
+
+    it.each(['container', 'video', 'non-finite'])(
+      'rejects invalid %s viewport geometry',
+      (displaced) => {
+        const { player, video, parent } = nativePlayer();
+        property(document, 'fullscreenEnabled', false);
+        const target = displaced === 'container' ? parent : video;
+        target.getBoundingClientRect = () => ({
+          left: displaced === 'non-finite' ? NaN : 100,
+          top: 0,
+          right: innerWidth + 100,
+          bottom: innerHeight,
+          width: innerWidth,
+          height: innerHeight,
+        });
+        expect(player.open({ fullscreen: true })).toBe(false);
+        expect(player.active).toBe(false);
+        expect(parent.hasAttribute('popover')).toBe(false);
+        expect(document.querySelector('[data-vsc-owned-viewport-media]')).toBeNull();
+      }
+    );
+
+    it('restores owned attributes even when a page replaces hidePopover with a throwing method', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+      parent.hidePopover = () => {
+        throw new Error('site replacement');
+      };
+      player.close();
+      expect(parent.hasAttribute('popover')).toBe(false);
+      expect(parent.hasAttribute('data-vsc-owned-viewport')).toBe(false);
+      expect(video.hasAttribute('data-vsc-owned-viewport-media')).toBe(false);
+      expect(parent.matches(':popover-open')).toBe(false);
+      expect(player.open({ fullscreen: true })).toBe(true);
+    });
+
+    it('opens Apple fullscreen only through the explicit Apple control', () => {
+      const { player, video, parent } = nativePlayer();
+      property(document, 'fullscreenEnabled', false);
+      const native = vi.fn();
+      video.webkitEnterFullscreen = native;
+      player.captureNativeFullscreenMethods();
+      expect(player.open({ fullscreen: true })).toBe(true);
+      expect(native).not.toHaveBeenCalled();
+      player.ui.refs.native.click();
+      expect(native).toHaveBeenCalledOnce();
+      expect(player.active).toBe(false);
+      expect(parent.hasAttribute('popover')).toBe(false);
+    });
 
     it('uses only the owned viewport when browser fullscreen policy is disabled', () => {
       const { player, video, parent } = nativePlayer();
