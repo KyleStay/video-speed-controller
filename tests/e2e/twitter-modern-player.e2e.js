@@ -143,8 +143,11 @@ function assertOriginal(current) {
   );
   assert.true(
     !current.nativeVideoFullscreen &&
-      current.nativeCalls.every((call) => call.name === 'requestFullscreen' && call.owned),
-    `Only the owned wrapper may request browser fullscreen: ${JSON.stringify(current)}`
+      current.nativeCalls.every(
+        (call) =>
+          call.name === 'requestFullscreen' && (call.owned || call.media === 'modern-player')
+      ),
+    `Only the owned wrapper or retained player container may request browser fullscreen: ${JSON.stringify(current)}`
   );
 }
 
@@ -513,6 +516,47 @@ export default async function runTwitterModernPlayer({ launch = launchChromeWith
           () => !document.querySelector('vsc-ios-player') && !document.fullscreenElement
         );
         await assertScroll(page, before, 'owned fullscreen return');
+      }
+    );
+    await check(
+      'the labeled viewer action preserves site vertical swipes and source reuse',
+      async () => {
+        await navigate();
+        await tap(page, () =>
+          window.__modernX.video.vsc.div.shadowRoot.querySelector('.draggable')
+        );
+        await tap(page, () => window.__modernX.video.vsc.iosPlayer.siteViewerButton);
+        await page.waitForSelector('#site-theater[open]');
+        assert.true((await state(page)).theaters === 1 && !(await state(page)).active);
+        const client = await page.createCDPSession();
+        const point = await picturePoint(page);
+        await client.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: point.x, y: point.y }],
+        });
+        for (let step = 1; step <= 8; step++) {
+          await client.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: point.x, y: point.y - step * 12 }],
+          });
+        }
+        await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await client.detach();
+        await page.waitForFunction(
+          () => window.__modernX.viewerNext === 1 && window.__modernX.video.readyState >= 2
+        );
+        assertOriginal(await state(page));
+        await tapSelector(page, '#close-site-theater');
+        await page.waitForFunction(() => !document.querySelector('#site-theater'));
+        await tap(page, () =>
+          window.__modernX.video.vsc.div.shadowRoot.querySelector('.inline-fullscreen')
+        );
+        await page.waitForFunction(() => window.__modernX.video.vsc.iosPlayer.active);
+        await tapOwned(page, 'more');
+        await tapOwned(page, 'siteViewer');
+        await page.waitForSelector('#site-theater[open]');
+        assert.true((await state(page)).theaters === 2 && !(await state(page)).active);
+        await tapSelector(page, '#close-site-theater');
       }
     );
     await check(

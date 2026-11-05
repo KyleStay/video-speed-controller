@@ -570,6 +570,43 @@ export default async function runTwitterMP4({ launch }) {
         );
       }
     );
+    await check(
+      'feed MSE without private SDK metadata opens StayFast fullscreen twice',
+      async () => {
+        await page.goto(`${fixture.baseUrl}/twitter-mp4.html?feed-dom`, { waitUntil: 'load' });
+        await page.waitForFunction(
+          () =>
+            window.__twitterMP4State?.().ready &&
+            !!window.__twitterMP4Fixture.original.vsc?.iosPlayer?.attached
+        );
+        const before = await retained();
+        assert.false(before.canResolve, 'No transport certificate is available in the feed case');
+        await page.click('#play');
+        for (let repeat = 0; repeat < 2; repeat++) {
+          await clickProduct('.inline-fullscreen');
+          await page.waitForFunction(() => window.__twitterMP4State().ownedViewport);
+          const start = await state();
+          await page.waitForFunction(
+            (time) => window.__twitterMP4State().time > time + 1,
+            {},
+            start.time
+          );
+          const open = await retained();
+          assert.true(open.decodedFrames > start.decodedFrames, JSON.stringify(open));
+          assert.true(
+            open.systemFullscreenEvents === 0 && open.ownedPlayers === 1 && !open.native,
+            JSON.stringify(open)
+          );
+          const done = await page.evaluateHandle(
+            () => window.__twitterMP4Fixture.original.vsc.iosPlayer.ui.refs.done
+          );
+          await done.asElement().click();
+          await done.dispose();
+          await page.waitForFunction(() => window.__twitterMP4State().ownedPlayers === 0);
+          await retained();
+        }
+      }
+    );
     await writeFile(
       resolve(directory, 'acceptance.json'),
       `${JSON.stringify(

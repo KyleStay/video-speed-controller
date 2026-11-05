@@ -323,6 +323,7 @@
                   <button type="button" data-ref="pip" aria-label="Picture in Picture">PiP</button>
                   <button type="button" data-ref="airplay" aria-label="Choose AirPlay device">AirPlay</button>
                   <button type="button" data-ref="native" aria-label="Open Apple fullscreen player" hidden>Apple player</button>
+                  <button type="button" data-ref="siteViewer" aria-label="Open Twitter video viewer" title="Swipe to the next video" hidden>Twitter video viewer</button>
                   <button type="button" class="escape" data-ref="site">Use site player</button>
                 </div>
                 <p class="status" data-ref="status" role="status" aria-live="polite" aria-atomic="true"></p>

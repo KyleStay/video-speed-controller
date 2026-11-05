@@ -1,5 +1,14 @@
 # Native iPhone Safari regression check
 
+For feed fullscreen without private SDK metadata, open
+`/twitter-mp4.html?feed-dom` and run
+`TwitterMP4QATests/testFeedFullscreenWithoutSDK`. This retains a real MSE producer
+through two genuine fullscreen entries/returns. On a fresh copy of that fixture,
+`TwitterMP4QATests/testFeedVideoViewer` uses More → Twitter video viewer, swipes
+vertically to the next generated-media source session and returns to the page.
+The fixture emulates only host recognition; it supplies no SDK or transport
+certificate. These are structural native regressions, not authenticated feed proof.
+
 This standalone XCTest harness exercises the installed Safari extension through
 native taps. It was verified on the dedicated **StayFast Safari QA** iPhone 17 Pro
 simulator running iOS 26.2. It does not establish compatibility with every OS,

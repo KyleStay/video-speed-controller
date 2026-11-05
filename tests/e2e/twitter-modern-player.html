@@ -292,6 +292,7 @@
         player.before(anchor);
         const dialog = document.createElement('dialog');
         dialog.id = 'site-theater';
+        dialog.style.touchAction = 'none';
         dialog.setAttribute('aria-label', 'Site theater');
         const close = document.createElement('button');
         close.id = 'close-site-theater';
@@ -302,6 +303,26 @@
           dialog.remove();
         });
         dialog.append(close, player);
+        let startY;
+        dialog.addEventListener(
+          'touchstart',
+          (event) => {
+            startY = event.touches[0]?.clientY;
+          },
+          { passive: true }
+        );
+        dialog.addEventListener(
+          'touchend',
+          (event) => {
+            if (startY - event.changedTouches[0]?.clientY > 60) {
+              trace.viewerNext = (trace.viewerNext || 0) + 1;
+              // Structural source-reuse fixture: another session of generated media.
+              video.src = '/__stayfast_modern.webm?item=' + trace.viewerNext;
+              trace.source = video.src;
+            }
+          },
+          { passive: true }
+        );
         document.body.append(dialog);
         dialog.showModal();
       });

@@ -529,6 +529,16 @@ with direct `chrome.*` access.
   It requires exact SDK/source/session/group and native track authority, with
   either no captions or the supported native subtitle identity. It does not need
   alternate rendition/download metadata to retain the original renderer.
+  If that private certificate is unavailable, a recognized single-video X feed
+  container may grant a DOM-only retained presentation instead. It checks bounded
+  media scope, exact controller/source/document/parent identity and finite native
+  readiness; streams, DRM, ambiguous media and source/ownership loss veto it. This
+  certificate never grants alternate transport or changes the original renderer.
+  Retained views keep scoped site-chrome suppression while preserving captions.
+  A separately labeled Twitter video viewer action in the speed panel and More
+  menu follows only an observed, unambiguous same-origin/same-post video link.
+  Close the owned presentation and cancel pending scroll repair before site
+  navigation; preserve site vertical swipes and revalidate stale/recycled links.
   Present protection and identity contradictions still veto entry; source-switch
   eligibility and its catalog requirements remain separate and unchanged.
 - **Recycled media sources**: both `emptied` and `loadstart` invalidate the old

@@ -197,6 +197,11 @@ Full screen always uses StayFast's controls. When a verified retained player
 cannot enter browser container fullscreen, StayFast uses its own viewport while
 leaving the original video, stream and captions in place. Apple's player opens
 only through the explicit Apple player action.
+
+For Twitter's swipeable video viewer, open the speed panel or fullscreen **More**
+menu and choose **Twitter video viewer**. This follows the site's existing video
+link so its vertical swipes can move to the next video. The action appears only
+when a matching link is available; **Full screen** still opens StayFast.
 StayFast also clears old presentation and scroll state when a
 feed reuses a video for a new source, so PiP/history return and old fullscreen
 callbacks cannot reopen the previous view or replay its scroll position. See the

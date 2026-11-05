@@ -132,7 +132,34 @@ import XCTest
 
     /// Fresh retained-presentation&retained-loop&no-transport-catalog fixture;
     /// add silent and/or no-container-fullscreen for the corresponding native paths.
-    func testRetainedLoopFullscreen() {
+    func testRetainedLoopFullscreen() { retainedFullscreen() }
+
+    /// Open /twitter-mp4.html?feed-dom: real MSE with no private SDK metadata.
+    func testFeedFullscreenWithoutSDK() { retainedFullscreen() }
+
+    func testFeedVideoViewer() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        wait(safari) { $0["ready"] as? Bool == true && $0["canPresent"] as? Bool == true }
+        safari.buttons["Open video fullscreen"].tap()
+        openMore(safari)
+        safari.buttons["Open Twitter video viewer"].tap()
+        XCTAssertTrue(safari.buttons["Close site video viewer"].waitForExistence(timeout: 10))
+        let picture = safari.otherElements["Feed video"].firstMatch
+        XCTAssertTrue(picture.waitForExistence(timeout: 5))
+        let start = picture.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.6))
+        let end = picture.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.1))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(safari.staticTexts["Video 2"].waitForExistence(timeout: 10))
+        capture(safari, "feed-site-viewer-next-video")
+        safari.buttons["Close site video viewer"].tap()
+        wait(safari) { $0["viewerNext"] as? Int == 1 && $0["viewerOpen"] as? Bool == false && $0["controllers"] as? Int == 1 }
+        XCTAssertEqual(state(safari)["ownedPlayers"] as? Int, 0)
+        XCTAssertEqual(state(safari)["errors"] as? Int, 0)
+        XCTAssertEqual(state(safari)["systemFullscreenEvents"] as? Int, 0)
+    }
+
+    private func retainedFullscreen() {
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.activate()
         wait(safari) {
