@@ -237,20 +237,8 @@
       const player = current().vsc?.iosPlayer;
       document.body.dataset.fullscreen = String(!!player?.active);
       const text = 'MP4 playback: ' + JSON.stringify(snapshot());
+      // Diagnostics must not add foreign nodes to the player's cleanup boundary.
       document.querySelector('#status').textContent = text;
-      // Native accessibility makes the page inert beneath a modal dialog.
-      // Keep fixture diagnostics readable inside the active test presentation.
-      if (player?.active) {
-        let status = player.ui.dialog.querySelector('[data-qa-status]');
-        if (!status) {
-          status = document.createElement('p');
-          status.setAttribute('data-qa-status', '');
-          status.style.cssText =
-            'position:absolute;top:72px;left:8px;right:8px;max-height:60px;overflow:hidden;font:8px monospace;pointer-events:none;';
-          player.ui.dialog.append(status);
-        }
-        status.textContent = text;
-      }
     };
     const once = (target, event) =>
       new Promise((resolve, reject) => {
