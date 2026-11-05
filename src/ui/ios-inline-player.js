@@ -590,7 +590,10 @@ class IOSInlinePlayer {
     const style = this.video.ownerDocument.createElement('style');
     // A scoped rule also covers media in open shadow roots without taking over
     // inline styles that the owned fullscreen presentation must independently restore.
-    style.textContent = `video[${attribute}="${token}"] { touch-action: pan-y pinch-zoom !important; }`;
+    const selector = `video[${attribute}="${token}"]`;
+    style.textContent = `${selector} { touch-action: pan-y pinch-zoom !important; }
+      ${selector}::-webkit-media-controls-start-playback-button { display: none !important; }
+      ${selector}::-webkit-media-controls-overlay-play-button { display: none !important; }`;
     this.surfacePolicy = { root, parent: this.video.parentNode, attribute, original, token, style };
     try {
       this.video.setAttribute(attribute, token);
@@ -626,7 +629,7 @@ class IOSInlinePlayer {
     }
   }
 
-  /** Generic gesture scope only; unknown site chrome is never hidden. */
+  /** Bounded picture scope for forwarding overlay gestures. */
   findSurfaceContainer() {
     try {
       const rect = this.video.getBoundingClientRect();
@@ -676,7 +679,7 @@ class IOSInlinePlayer {
 
   refreshSurfaceContainer() {
     const candidate = this.available() ? this.findSurfaceContainer() : null;
-    const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+    const known = this.video.vsc?.iosPlayer?.siteControls?.surfaceContainer;
     // A site's theater may put its input layer outside the recognized player.
     const node = candidate && !known?.contains(candidate) ? candidate : null;
     if (node === this.surfaceContainer?.node) {
@@ -699,7 +702,7 @@ class IOSInlinePlayer {
       this.surfaceContainer.releaseInteraction = IOSInlinePlayer.observeInteractions(
         node,
         (event) => {
-          const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+          const known = this.video.vsc?.iosPlayer?.siteControls?.surfaceContainer;
           if (!event.composedPath().includes(known)) {
             this.surfaceInteraction(event);
           }
@@ -795,7 +798,7 @@ class IOSInlinePlayer {
             return;
           }
           const scope = this.surfaceContainer?.node === target ? this.surfaceContainer : null;
-          if (scope && path.includes(this.video.vsc?.iosPlayer?.siteControls?.container)) {
+          if (scope && path.includes(this.video.vsc?.iosPlayer?.siteControls?.surfaceContainer)) {
             return;
           }
           if (
@@ -916,7 +919,7 @@ class IOSInlinePlayer {
       if (path.includes(this.video)) {
         return true;
       }
-      const known = this.video.vsc?.iosPlayer?.siteControls?.container;
+      const known = this.video.vsc?.iosPlayer?.siteControls?.surfaceContainer;
       const knownContainer = path.includes(known) ? known : null;
       const container = knownContainer || this.surfaceContainer?.node;
       if (!container || !path.includes(container)) {

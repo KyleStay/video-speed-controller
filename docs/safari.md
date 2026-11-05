@@ -43,6 +43,15 @@ the iOS fixture server. These fixtures simulate the original decoder API;
 compatibility with a deployed decoder and physical-device behavior are separate
 runtime checks.
 
+For Twitter's retained original renderer, an explicit Full screen request uses
+Safari's original-video fullscreen when container fullscreen is unavailable.
+The same fallback remains available when the progressive transport declines the
+source. It preserves the original media and captions. Transport-decline fallback
+applies only to explicit Full screen actions, keeping Custom player and automatic
+requests on their existing refusal path. Explicit fullscreen policy denials and
+an unrelated active fullscreen session block this fallback. Native Safari owns
+the controls during original-video fullscreen.
+
 ## Open Twitter regressions
 
 The original cases and requirements remain separate from execution and delivery
@@ -71,7 +80,13 @@ remains compact at the top; the controller does not grow into a video-sized
 hit box. Existing placement events update rail coordinates after occlusion and
 ancestor scaling, without writing scroll or polling.
 Site metadata and controls do not move the rail upward.
-By default, unknown site controls can overlap it and retain their input priority;
+For otherwise unrecognized players, recognizable play/pause/replay overlays in
+a bounded, unambiguous picture container stay hidden while StayFast owns inline
+playback, including replacements
+inserted after seeking. Safari's native start/overlay play icons are also hidden
+by rules scoped to the owned video. Handback restores the site controls and
+removes those rules. Captions, media and unrelated actions remain visible.
+Other unknown site controls can overlap the timeline and retain their input priority;
 uncovered rail input, keyboard seeking and picture swipes remain available.
 The popup's **Hide site video buttons** option and **Advanced → Site rules →
 Hide buttons** opt into broader suppression for a matching site rule. It applies

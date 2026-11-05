@@ -36,6 +36,77 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+describe('owned picture play overlays', () => {
+  function ownedPicture() {
+    const result = fixture('custom-player');
+    result.owner.setHideAllButtons(false);
+    result.video.vsc = { controlsManager: { inlinePlayer: { owned: true } } };
+    return result;
+  }
+
+  it('keeps icon-only and labelled play overlays hidden through seek-time replacement', async () => {
+    const { container, owner, button } = ownedPicture();
+    const overlay = document.createElement('div');
+    overlay.className = 'playButton';
+    overlay.innerHTML = '<svg aria-hidden="true"></svg>';
+    container.append(overlay);
+    expect(owner.acquire()).toBe(true);
+    expect(owner.surfaceContainer).toBeNull();
+    expect(getComputedStyle(overlay).display).toBe('none');
+    expect(getComputedStyle(button).display).not.toBe('none');
+    overlay.style.display = 'flex';
+    const replacement = document.createElement('button');
+    replacement.setAttribute('aria-label', 'Play video');
+    overlay.replaceWith(replacement);
+    await settle();
+    expect(getComputedStyle(replacement).display).toBe('none');
+    replacement.setAttribute('aria-label', 'Pause video');
+    await settle();
+    expect(getComputedStyle(replacement).display).toBe('none');
+    owner.release();
+    expect(getComputedStyle(replacement).display).not.toBe('none');
+    expect(getComputedStyle(overlay).display).toBe('flex');
+  });
+
+  it('preserves media, captions, unrelated actions and overlays outside the picture', () => {
+    const { container, video, owner, button } = ownedPicture();
+    video.className = 'playButton';
+    const caption = document.createElement('div');
+    caption.className = 'caption';
+    caption.innerHTML = '<button aria-label="Play">Caption action</button>';
+    const mediaWrapper = document.createElement('div');
+    mediaWrapper.className = 'playButton';
+    video.replaceWith(mediaWrapper);
+    mediaWrapper.append(video);
+    bounds(mediaWrapper);
+    container.append(caption);
+    const outside = document.createElement('button');
+    outside.setAttribute('aria-label', 'Play');
+    document.body.append(outside);
+    expect(owner.acquire()).toBe(true);
+    for (const node of [video, mediaWrapper, caption, caption.firstChild, button, outside]) {
+      expect(getComputedStyle(node).display).not.toBe('none');
+    }
+  });
+
+  it('restores the site overlay on ambiguity and on inline handback', async () => {
+    const { container, video, owner, button } = ownedPicture();
+    button.setAttribute('aria-label', 'Play');
+    expect(owner.acquire()).toBe(true);
+    expect(getComputedStyle(button).display).toBe('none');
+    const frame = document.createElement('iframe');
+    container.append(frame);
+    await settle();
+    expect(owner.container).toBeNull();
+    expect(getComputedStyle(button).display).not.toBe('none');
+    frame.remove();
+    expect(owner.acquire()).toBe(true);
+    video.vsc.controlsManager.inlinePlayer.owned = false;
+    expect(owner.acquire()).toBe(false);
+    expect(getComputedStyle(button).display).not.toBe('none');
+  });
+});
+
 describe('opt-in site button suppression', () => {
   it.each([true, false])(
     'hides late controls while paused=%s without media writes',

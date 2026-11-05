@@ -151,6 +151,8 @@ mute, speed presets and shortcuts, horizontal picture seeking, trailing site tap
 isolation, real vertical scrolling, an occluding metadata link, a site-expanded
 viewer, repeated owned fullscreen returns, frame controls, Fit/Fill, Lock/Unlock,
 caption selection, PiP restriction gating, and replacement/recycled next clips.
+The site play layer is recreated on pause, seeking and playback; it must stay
+hidden while the owned inline controls are active, including after a picture drag.
 Results are saved under `test-results/custom-feed/results.json`. Each control must
 retain a 44px target and receive the real input. Media identity and feed geometry
 must survive presentation changes. The timeline stays at the visible video bottom,

@@ -510,6 +510,30 @@ export default async function runTwitterMP4({ launch }) {
       );
     });
     await check(
+      'explicit fullscreen uses the original video when the transport is declined',
+      async () => {
+        const original = await retained();
+        await clickProduct('.inline-fullscreen');
+        await page.waitForFunction(
+          () => document.fullscreenElement === window.__twitterMP4Fixture.original
+        );
+        const entered = await retained();
+        assert.true(
+          !entered.native &&
+            entered.originalPaused === original.originalPaused &&
+            entered.hosts === 0,
+          JSON.stringify(entered)
+        );
+        await page.evaluate(() => document.exitFullscreen());
+        await page.waitForFunction(
+          () =>
+            !document.fullscreenElement &&
+            !window.__twitterMP4Fixture.original.vsc.iosPlayer.nativeSession
+        );
+        await retained();
+      }
+    );
+    await check(
       'rapid cancellation cannot attach a stale MP4 and reset changes the active rate',
       async () => {
         await load();

@@ -68,6 +68,14 @@
         position: absolute;
         inset: 0;
       }
+      .playButton {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 72px;
+        height: 72px;
+      }
       .metadata {
         position: absolute;
         z-index: 2;
@@ -211,6 +219,8 @@
         pageY: scrollY,
         mediaTop: video.getBoundingClientRect().top,
         bottomRail: bottomRail(),
+        playOverlayHidden:
+          getComputedStyle(document.querySelector('#site-play-overlay')).display === 'none',
         controllers: document.querySelectorAll('vsc-controller').length,
         trace: { ...trace },
         errors: [...errors],
@@ -269,6 +279,11 @@
           'error',
         ])
           media.addEventListener(type, update);
+        for (const type of ['pause', 'seeking', 'playing']) {
+          media.addEventListener(type, () => {
+            if (media === video) showPlayOverlay();
+          });
+        }
         if (params.has('captions')) {
           let track = captionTracks.get(media);
           if (!track || !Array.from(media.textTracks).includes(track)) {
@@ -281,6 +296,18 @@
           track.mode = 'disabled';
         }
       };
+      // The site recreates its play layer during seeking, even while playing.
+      function showPlayOverlay() {
+        document.querySelector('#site-play-overlay')?.remove();
+        const overlay = document.createElement('button');
+        overlay.id = 'site-play-overlay';
+        overlay.className = 'playButton';
+        overlay.setAttribute('aria-label', 'Play video');
+        overlay.style.display = 'grid';
+        overlay.textContent = '▶';
+        picture.append(overlay);
+      }
+      showPlayOverlay();
       prepare(video);
 
       // Deliberately unsophisticated site tap handling exercises trailing-touch

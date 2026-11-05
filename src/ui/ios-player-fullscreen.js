@@ -322,9 +322,23 @@ class IOSPlayerFullscreen {
 
   enter(scrollSnapshot = null) {
     if (!this.available()) {
+      let useNative = false;
+      try {
+        useNative =
+          this.inPlace &&
+          this.current() &&
+          typeof this.owner.fallbackToNativeFullscreen === 'function';
+      } catch {
+        // A stale presentation cannot authorize a native fallback.
+      }
       this.cancelScroll(scrollSnapshot);
       this.closeInPlace();
-      return false;
+      // iPhone Safari can expose video fullscreen without container fullscreen.
+      try {
+        return useNative && this.boundary.current() && this.owner.fallbackToNativeFullscreen();
+      } catch {
+        return false;
+      }
     }
     if (this.owns() || this.pending) {
       if (scrollSnapshot !== this.scrollSnapshot) {
