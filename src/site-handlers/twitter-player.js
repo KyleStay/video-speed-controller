@@ -182,14 +182,20 @@ window.VSC = window.VSC || {};
       nodes = video.querySelectorAll('track'),
       audio = video.audioTracks;
     const noCaptions = purpose === 'presentation' && tracks?.length === 0 && nodes.length === 0;
-    const count = noCaptions ? 0 : 1;
-    if (tracks?.length !== count || nodes.length !== count || audio?.length !== 1) {
+    const count = noCaptions ? 0 : 1,
+      audioCount = audio?.length;
+    if (
+      tracks?.length !== count ||
+      nodes.length !== count ||
+      (audioCount !== 1 && !(purpose === 'presentation' && audioCount === 0))
+    ) {
       return null;
     }
     const track = noCaptions ? null : tracks[0],
       node = noCaptions ? null : nodes[0],
-      audioTrack = audio[0],
-      duration = video.duration;
+      audioTrack = audioCount === 1 ? audio[0] : null,
+      duration = video.duration,
+      nativeLoop = video.loop;
     const values = (object, keys) =>
       keys.every((key) => {
         const field = Object.getOwnPropertyDescriptor(object, key);
@@ -197,7 +203,7 @@ window.VSC = window.VSC || {};
       });
     if (
       (!noCaptions && !values(track, ['kind', 'language', 'label', 'mode'])) ||
-      !values(audioTrack, ['enabled'])
+      (audioCount === 1 && !values(audioTrack, ['enabled']))
     ) {
       return null;
     }
@@ -219,7 +225,8 @@ window.VSC = window.VSC || {};
           node.srclang !== language ||
           node.label !== label ||
           node.attributes.length > 8)) ||
-      audioTrack.enabled !== true ||
+      (audioCount === 1 && audioTrack.enabled !== true) ||
+      (purpose === 'presentation' && typeof nativeLoop !== 'boolean') ||
       !Number.isFinite(duration) ||
       duration < 1 ||
       duration > (purpose === 'presentation' ? 3600 : 60)
@@ -279,13 +286,14 @@ window.VSC = window.VSC || {};
               track.language === language &&
               track.label === label &&
               track.mode === 'showing')) &&
-          (purpose !== 'presentation' || video.loop === false) &&
+          (purpose !== 'presentation' || video.loop === nativeLoop) &&
           video.duration === duration &&
           video.audioTracks === audio &&
-          audio.length === 1 &&
-          audio[0] === audioTrack &&
-          values(audioTrack, ['enabled']) &&
-          audioTrack.enabled === true
+          audio.length === audioCount &&
+          (audioCount === 0 ||
+            (audio[0] === audioTrack &&
+              values(audioTrack, ['enabled']) &&
+              audioTrack.enabled === true))
         );
       },
       sdkCurrent(state) {
@@ -905,8 +913,11 @@ window.VSC = window.VSC || {};
           // SDK shouldLoop can permit only a finite number of remaining repeats.
           if (
             typeof loop !== 'boolean' ||
-            (captionRole && loop !== (captionRole.purpose !== 'presentation')) ||
-            (requireUnlimitedLoop && loop && !unlimitedLoop(props, content, selected))
+            (captionRole && captionRole.purpose !== 'presentation' && !loop) ||
+            (requireUnlimitedLoop &&
+              captionRole?.purpose !== 'presentation' &&
+              loop &&
+              !unlimitedLoop(props, content, selected))
           ) {
             return null;
           }
@@ -1049,7 +1060,7 @@ window.VSC = window.VSC || {};
               !video.srcObject &&
               !video.mediaKeys &&
               !video.webkitKeys &&
-              own(own(state, 'playback'), 'shouldLoop') === false;
+              own(own(state, 'playback'), 'shouldLoop') === loop;
             captionCurrent = () =>
               stable() &&
               getState.call(api) === state &&

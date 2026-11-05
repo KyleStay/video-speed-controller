@@ -242,6 +242,12 @@ measurements, paused-rate changes and fullscreen handback. Run
 `testStartFromOwnedFullscreen` for a speed command issued inside the original
 owned presentation entry. Assert that the verified companion opens at 1× with
 the original parent, MediaSource and SourceBuffer unchanged before selecting 4×.
+For retained loops, open `/twitter-mp4.html?retained-presentation&retained-loop&no-transport-catalog`
+and run `testRetainedLoopFullscreen`. Add `no-container-fullscreen` to check the
+owned viewport fallback and `silent` when the fixture server supplies the generated
+video-only `/silent.mp4`. Require two entries/returns, an advancing visible clock,
+unchanged loop flags and original source, zero system-player events, and no closed
+panels left in the document. These fixtures do not establish live-site acceptance.
 The fullscreen-start case reads the visible StayFast speed, play state and advancing
 seek clock while its modal is open, then reads retained media/source identities
 after handback. Fixture diagnostics stay outside product-owned UI so they cannot

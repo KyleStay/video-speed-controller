@@ -2472,11 +2472,39 @@ describe('TwitterPlayer current MSE identity', () => {
     });
   });
 
-  describe('finite captioned native presentation certificate', () => {
+  describe('finite native presentation certificate', () => {
     const native = () => window.VSC.TwitterPlayer.resolveNativePresentation(video);
     let fixture;
     beforeEach(() => {
       fixture = nativePresentationFixture();
+    });
+
+    it.each([
+      [false, false],
+      [false, true],
+      [true, false],
+      [true, true],
+    ])('retains the renderer with native loop=%s and SDK loop=%s', (nativeLoop, sdkLoop) => {
+      video.loop = nativeLoop;
+      state.playback.shouldLoop = sdkLoop;
+      const play = vi.spyOn(video, 'play'),
+        pause = vi.spyOn(video, 'pause'),
+        load = vi.spyOn(video, 'load');
+      const certificate = native();
+      expect(certificate?.current()).toBe(true);
+      expect(certificate?.activate()).toBe(true);
+      expect(video.loop).toBe(nativeLoop);
+      expect(state.playback.shouldLoop).toBe(sdkLoop);
+      expect(play).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      expect(resolve()).toBeNull();
+      expect(window.VSC.TwitterPlayer.resolveCaptionedLoop(video)).toBeNull();
+      video.loop = !nativeLoop;
+      expect(certificate.current()).toBe(false);
+      video.loop = nativeLoop;
+      state.playback.shouldLoop = !sdkLoop;
+      expect(certificate.current()).toBe(false);
     });
 
     it.each([true, false])(
@@ -2575,6 +2603,44 @@ describe('TwitterPlayer current MSE identity', () => {
       state.textTracks.tracks.push(fixture.record);
       expect(certificate.current()).toBe(false);
       expect(native()).toBeNull();
+    });
+
+    it('retains a captionless loop without an alternate transport catalog', () => {
+      missingCatalog();
+      fixture.node.remove();
+      property(video, 'textTracks', []);
+      state.textTracks.tracks = [];
+      video.loop = true;
+      state.playback.shouldLoop = true;
+      content.maxLoopCount = 2;
+      const certificate = native();
+      expect(certificate?.current()).toBe(true);
+      expect(certificate?.activate()).toBe(true);
+      expect(resolve()).toBeNull();
+      expect(window.VSC.TwitterPlayer.resolveCaptionedLoop(video)).toBeNull();
+      expect(video.loop).toBe(true);
+      expect(state.playback.shouldLoop).toBe(true);
+      state.playback.shouldLoop = false;
+      expect(certificate.current()).toBe(false);
+    });
+
+    it('retains a silent captionless loop without acquiring an audio track', () => {
+      missingCatalog();
+      fixture.node.remove();
+      property(video, 'textTracks', []);
+      const audio = [];
+      property(video, 'audioTracks', audio);
+      state.textTracks.tracks = [];
+      video.loop = true;
+      state.playback.shouldLoop = true;
+      const certificate = native();
+      expect(certificate?.current()).toBe(true);
+      expect(certificate?.activate()).toBe(true);
+      expect(audio).toEqual([]);
+      expect(resolve()).toBeNull();
+      expect(window.VSC.TwitterPlayer.resolveCaptionedLoop(video)).toBeNull();
+      audio.push({ enabled: true });
+      expect(certificate.current()).toBe(false);
     });
 
     it.each([
@@ -2701,8 +2767,6 @@ describe('TwitterPlayer current MSE identity', () => {
       'duration below',
       'no captions',
       'hidden captions',
-      'native loop',
-      'SDK loop',
       'DRM',
       'live',
       'audio disabled',
@@ -2726,12 +2790,6 @@ describe('TwitterPlayer current MSE identity', () => {
       }
       if (change === 'hidden captions') {
         fixture.track.mode = 'hidden';
-      }
-      if (change === 'native loop') {
-        video.loop = true;
-      }
-      if (change === 'SDK loop') {
-        state.playback.shouldLoop = true;
       }
       if (change === 'DRM') {
         content.drm = true;

@@ -43,8 +43,9 @@ the iOS fixture server. These fixtures simulate the original decoder API;
 compatibility with a deployed decoder and physical-device behavior are separate
 runtime checks.
 
-Full screen uses StayFast's player on iPhone, including Twitter. For a verified
-retained renderer, unavailable or refused container fullscreen uses a manual
+Full screen uses StayFast's player on iPhone, including Twitter. Finite looping
+and silent native renderers retain their existing playback policy without requiring
+an alternate transport. For a verified retained renderer, unavailable or refused container fullscreen uses a manual
 popover viewport with StayFast's controls. Stylesheets injected into the player
 by another extension do not keep a closed panel on screen. The original video, source, parent
 chain and native captions remain in place. The viewport owns only its markers,
