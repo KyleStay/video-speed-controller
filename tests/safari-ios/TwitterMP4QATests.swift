@@ -129,4 +129,35 @@ import XCTest
         wait(safari) { $0["native"] as? Bool == false }
         retained(safari)
     }
+
+    /// Fresh retained-presentation&retained-loop&no-transport-catalog fixture;
+    /// add silent and/or no-container-fullscreen for the corresponding native paths.
+    func testRetainedLoopFullscreen() {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        wait(safari) {
+            $0["ready"] as? Bool == true && $0["canPresent"] as? Bool == true &&
+            $0["canResolve"] as? Bool == false && $0["nativeLoop"] as? Bool == true &&
+            $0["sdkLoop"] as? Bool == true
+        }
+        safari.buttons["Play original"].tap()
+        wait(safari) { $0["originalPaused"] as? Bool == false }
+        for iteration in 1...2 {
+            let enter = safari.buttons["Open video fullscreen"]
+            XCTAssertTrue(enter.waitForExistence(timeout: 10))
+            enter.tap()
+            ownedPlayback(safari, speed: "1×")
+            capture(safari, "retained-loop-fullscreen-\(iteration)")
+            safari.buttons["Close StayFast video player"].tap()
+            wait(safari) {
+                $0["fullscreen"] as? Bool == false && $0["ownedPlayers"] as? Int == 0
+            }
+            retained(safari)
+            let row = state(safari)
+            XCTAssertEqual(row["native"] as? Bool, false)
+            XCTAssertEqual(row["nativeLoop"] as? Bool, true)
+            XCTAssertEqual(row["sdkLoop"] as? Bool, true)
+            XCTAssertEqual(row["systemFullscreenEvents"] as? Int, 0)
+        }
+    }
 }

@@ -510,7 +510,7 @@ with direct `chrome.*` access.
   Native events alone never open the player or cause exit/reentry loops.
   Safari's bars may remain; webpage controls cannot modify Apple's UI.
   Inline-attribute ownership is separate and begins at attachment.
-  Verified finite, nonlooping X originals may instead use a separate
+  Verified finite X originals may instead use a separate
   native-presentation certificate. Keep the original renderer, parent chain,
   source and native captions in the exact registered SDK container; mount only
   a transparent, nonmodal StayFast UI there. Entry requires native container
@@ -523,6 +523,9 @@ with direct `chrome.*` access.
   media adopted into the UI tree. Stylesheet-only additions from other extensions
   do not retain a closed HUD; foreign content or nested shadow trees still do.
   This certificate grants no transport takeover.
+  Retained presentation accepts the original native/SDK loop flags and zero or
+  one native audio track. It preserves those identities and policies, revoking
+  the lease on drift; unlimited-loop transport eligibility remains separate.
   It requires exact SDK/source/session/group and native track authority, with
   either no captions or the supported native subtitle identity. It does not need
   alternate rendition/download metadata to retain the original renderer.

@@ -142,9 +142,16 @@
       return: { memoizedState: null, memoizedProps: metadata, return: null },
     };
     const parameters = new URLSearchParams(location.search);
+    if (parameters.has('no-transport-catalog')) {
+      delete metadata.downloadUrl;
+      delete metadata.poppedOutSource.playerProps.downloadUrl;
+      const media = metadata.timeRemainingAccessory.props.media;
+      delete media.video_info;
+      delete media.video_download_url;
+    }
     if (parameters.has('retained-presentation')) {
-      original.loop = false;
-      state.playback.shouldLoop = false;
+      original.loop = parameters.has('retained-loop');
+      state.playback.shouldLoop = original.loop;
       delete props.loop;
       const registry = Object.create({ notifyPlay() {} });
       registry.entries = new Map([
@@ -209,11 +216,14 @@
         originalPaused: original.paused,
         originalRate: original.playbackRate,
         native: video !== original,
+        nativeLoop: original.loop,
+        sdkLoop: state.playback.shouldLoop,
         nativeReady: video !== original && video.readyState >= 2,
         time: video.currentTime,
         paused: video.paused,
         rate: video.playbackRate,
         controllers: window.VSC?.stateManager?.controllers.size || 0,
+        ownedPlayers: document.querySelectorAll('vsc-ios-player').length,
         hosts: document.querySelectorAll('[data-vsc-twitter-mp4]').length,
         videos: document.querySelectorAll('video').length,
         subscribers: subscribers.size,
@@ -256,7 +266,10 @@
       const Media = window.ManagedMediaSource || window.MediaSource;
       if (!Media) throw new Error('No real MediaSource implementation');
       original.disableRemotePlayback = true;
-      const mime = 'video/mp4; codecs="avc1.42c01e, mp4a.40.2"';
+      const silent = parameters.has('silent');
+      const mime = silent
+        ? 'video/mp4; codecs="avc1.42c01e"'
+        : 'video/mp4; codecs="avc1.42c01e, mp4a.40.2"';
       if (!Media.isTypeSupported(mime)) throw new Error(`Unsupported MSE type: ${mime}`);
       mse = new Media();
       const url = URL.createObjectURL(mse);
@@ -265,7 +278,7 @@
       original.src = url;
       await opened;
       buffer = mse.addSourceBuffer(mime);
-      const bytes = await (await fetch('/sample.mp4')).arrayBuffer();
+      const bytes = await (await fetch(silent ? '/silent.mp4' : '/sample.mp4')).arrayBuffer();
       const appended = once(buffer, 'updateend');
       buffer.appendBuffer(bytes);
       await appended;
