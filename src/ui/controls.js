@@ -7,6 +7,81 @@ window.VSC = window.VSC || {};
 class ControlsManager {
   static inlineScrollGroups = new WeakMap();
 
+  static canAirPlay(media) {
+    try {
+      return (
+        ['VIDEO', 'AUDIO'].includes(media?.tagName) &&
+        typeof media.webkitShowPlaybackTargetPicker === 'function' &&
+        !media.disableRemotePlayback &&
+        !media.hasAttribute('disableremoteplayback') &&
+        !media.webkitWirelessVideoPlaybackDisabled &&
+        !media.hasAttribute('x-webkit-wirelessvideoplaybackdisabled') &&
+        media.getAttribute('x-webkit-airplay')?.toLowerCase() !== 'deny' &&
+        !(media.getAttribute('controlslist') || '').split(/\s+/).includes('noremoteplayback')
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  static showAirPlayPicker(media) {
+    try {
+      // Keep the native request in the input call stack for user activation.
+      if (media?.isConnected && ControlsManager.canAirPlay(media)) {
+        media.webkitShowPlaybackTargetPicker();
+      }
+    } catch {
+      /* The system or site may reject this optional picker. */
+    }
+  }
+
+  /** Observe restrictions and the selected route, without scanning for receivers. */
+  static observeAirPlayButton(button, media) {
+    const update = () => {
+      const allowed = ControlsManager.canAirPlay(media);
+      let wireless = false;
+      try {
+        wireless = allowed && media.webkitCurrentPlaybackTargetIsWireless === true;
+      } catch {
+        /* Page-defined accessors cannot interrupt the controls. */
+      }
+      button.hidden = !allowed;
+      button.disabled = !allowed;
+      button.setAttribute('aria-pressed', String(wireless));
+      const label = wireless ? 'Change AirPlay device' : 'Choose AirPlay device';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    };
+    update();
+    try {
+      if (typeof media?.webkitShowPlaybackTargetPicker !== 'function') {
+        return () => {};
+      }
+    } catch {
+      return () => {};
+    }
+    const events = ['webkitcurrentplaybacktargetiswirelesschanged', 'loadedmetadata', 'emptied'];
+    for (const type of events) {
+      media.addEventListener(type, update);
+    }
+    const observer = new media.ownerDocument.defaultView.MutationObserver(update);
+    observer.observe(media, {
+      attributes: true,
+      attributeFilter: [
+        'disableremoteplayback',
+        'x-webkit-airplay',
+        'x-webkit-wirelessvideoplaybackdisabled',
+        'controlslist',
+      ],
+    });
+    return () => {
+      observer.disconnect();
+      for (const type of events) {
+        media.removeEventListener(type, update);
+      }
+    };
+  }
+
   static canStepFrame(video) {
     try {
       if (
@@ -756,6 +831,10 @@ class ControlsManager {
    * @private
    */
   setupButtonHandlers(shadow, video = this.video) {
+    const airplay = shadow.querySelector('[data-action="airplay"]');
+    if (airplay) {
+      this.cleanupHandlers.push(ControlsManager.observeAirPlayButton(airplay, video));
+    }
     const frameButtons = shadow.querySelectorAll('.frame-step');
     const updateFrameButtons = () => {
       const disabled = !ControlsManager.canStepFrame(video);
@@ -796,6 +875,11 @@ class ControlsManager {
       // Click handler
       const click = (e) => {
         const action = button.dataset.action;
+        if (action === 'airplay') {
+          ControlsManager.showAirPlayPicker(video);
+          e.stopPropagation();
+          return;
+        }
         if (button.classList.contains('frame-step') && !ControlsManager.canStepFrame(video)) {
           updateFrameButtons();
           e.stopPropagation();
@@ -832,7 +916,7 @@ class ControlsManager {
       // Touch handler to prevent conflicts
       const touch = (e) => e.stopPropagation();
       button.addEventListener('touchstart', touch, true);
-      if (button.classList.contains('frame-step')) {
+      if (button.classList.contains('frame-step') || button === airplay) {
         this.cleanupHandlers.push(() => {
           button.removeEventListener('click', click, true);
           button.removeEventListener('touchstart', touch, true);

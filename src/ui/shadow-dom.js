@@ -251,6 +251,9 @@ class ShadowDOMManager {
         color: #ffffff;
         font-weight: bold;
       }
+
+      button[data-action='airplay'][hidden] { display: none !important; }
+      button[data-action='airplay'][aria-pressed='true'] { color: #67e8f9; border-color: currentColor; }
       
       button.rw {
         color: #a8ddea;
@@ -680,6 +683,7 @@ class ShadowDOMManager {
       { action: 'advance', text: '»', class: 'rw', label: 'Advance' },
       { action: 'rewindFrame', text: '|◀', class: 'frame-step', label: 'Frame back' },
       { action: 'advanceFrame', text: '▶|', class: 'frame-step', label: 'Frame forward' },
+      { action: 'airplay', text: 'AirPlay', class: '', label: 'Choose AirPlay device' },
     ];
 
     buttons.forEach((btnConfig) => {
@@ -692,6 +696,9 @@ class ShadowDOMManager {
       button.setAttribute('aria-label', btnConfig.label);
       button.setAttribute('title', btnConfig.label);
       button.textContent = btnConfig.text;
+      if (btnConfig.action === 'airplay') {
+        button.hidden = true;
+      }
       controls.appendChild(button);
     });
 

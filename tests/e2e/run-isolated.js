@@ -13,6 +13,7 @@ import { installBridgeTestHooks } from './bridge-test-hooks.js';
 import { profileRoots } from './browser-process-ownership.js';
 import runYouTube from './youtube.e2e.js';
 import runMobile from './mobile.e2e.js';
+import runAirPlay from './airplay.e2e.js';
 import runIOSPlayer from './ios-player.e2e.js';
 import runTwitterInline from './twitter-inline.e2e.js';
 import runTwitterLayout from './twitter-layout.e2e.js';
@@ -54,6 +55,7 @@ const suites = {
   options: runOptions,
   youtube: runYouTube,
   mobile: runMobile,
+  airplay: runAirPlay,
   'ios-player': runIOSPlayer,
   'ios-surface': (options) => runIOSPlayer({ ...options, onlyChecks: ['video-surface'] }),
   'twitter-inline': runTwitterInline,
@@ -83,7 +85,7 @@ if (!names.length) {
 }
 if (names.some((name) => name !== 'cleanup' && !suites[name] && !externalSuites[name])) {
   throw new Error(
-    'Use site-mocks, site-mock-cases, media-patterns, site-controls, site-controls-core, site-controls-ios, gif-images, loops, startup, resume, basic, options, mobile, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
+    'Use site-mocks, site-mock-cases, media-patterns, site-controls, site-controls-core, site-controls-ios, gif-images, loops, startup, resume, basic, options, mobile, airplay, ios-player, ios-surface, twitter-inline, twitter-layout, twitter-visual, twitter-pristine, twitter-modern, custom-feed, video-diagnostics, youtube, fixtures, and/or benchmarks'
   );
 }
 

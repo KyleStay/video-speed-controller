@@ -193,6 +193,11 @@ Where Safari permits it,
 the player can also expand its container using webpage fullscreen. On iPhone,
 Safari's browser bars may remain visible. **More → Apple player** explicitly
 opens Apple's native video fullscreen when available.
+Choose **AirPlay** in the expanded media controls on Mac, iPhone or iPad to open
+Apple's device picker. It is also available in the custom player's **More** menu.
+The option appears when the browser exposes AirPlay and the media allows remote
+playback; an active route highlights the button. Device availability, supported
+formats and playback speed on the receiver depend on Safari and the receiver.
 Full screen always uses StayFast's controls. When a verified retained player
 cannot enter browser container fullscreen, StayFast uses its own viewport while
 leaving the original video, stream and captions in place. Apple's player opens

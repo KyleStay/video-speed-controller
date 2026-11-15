@@ -682,6 +682,12 @@ with direct `chrome.*` access.
   cleared with its timer on close/cleanup. Native audio
   selection and captions stay separate; volume, PiP and
   AirPlay are capability-gated and honor the media's restriction flags.
+  `ControlsManager` shares AirPlay eligibility, synchronous native picker requests
+  and route/restriction observation between the expanded video/audio controls and
+  the iOS More menu. Honor remote-playback and WebKit wireless-playback opt-outs,
+  including `controlslist="noremoteplayback"`; never rewrite them. No receiver
+  discovery subscription or polling is installed. Release the media listeners and
+  attribute observer on controller removal or owned-player close.
 - **Rate state**: cooldown, fight count and timers are per-media in
   `EventManager.mediaRateStates`. Arm cooldown before writing `playbackRate`;
   synchronous ratechange must not recurse. `VideoController.remove()` releases
