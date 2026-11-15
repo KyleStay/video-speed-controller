@@ -25,6 +25,10 @@ const browserArgument = process.argv.find((argument) => argument.startsWith('--b
 const explicitBrowser = browserArgument?.split('=', 2)[1];
 const requestedBrowsers = isAllBrowsers ? RELEASE_READY_BROWSERS : [explicitBrowser || 'chrome'];
 
+if (requestedBrowsers.includes('safari')) {
+  throw new Error('Safari development moved to the private KyleStay/stayfast-safari repository.');
+}
+
 if (isWatch && (isAllBrowsers || explicitBrowser)) {
   throw new Error('Watch mode uses the default Chrome dist/. Omit --all and --browser.');
 }

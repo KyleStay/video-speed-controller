@@ -12,7 +12,6 @@ scripts remain identical so the ISOLATED bridge, MAIN-world controller,
 | `npm run build`                  | Development Chrome build in `dist/`                 |
 | `npm run build:chrome`           | Chrome build in `dist/chrome/`                      |
 | `npm run build:firefox`          | Firefox build in `dist/firefox/`                    |
-| `npm run build:safari`           | Safari 18.4+ extension resources in `dist/safari/`  |
 | `npm run build:browsers`         | Chrome and Firefox development builds               |
 | `npm run build:release:browsers` | Minified Chrome and Firefox builds                  |
 | `npm run release:browsers`       | Release-ready Chrome and Firefox ZIPs in `release/` |
@@ -44,19 +43,6 @@ approval or signing.
 
 ### Safari
 
-The Safari build targets Safari 18.4+, iOS/iPadOS 18.4+, and macOS 15.4+ for the
-containing app. It preserves the ISOLATED bridge, MAIN-world controller,
-`document_start`, `all_frames`, and `match_about_blank` declarations. Safari 18
-added the `world` key and Safari 18.4 added `match_about_blank`; older converter
-warnings about those keys are not an accurate support matrix for this baseline.
-The generated manifest removes Chrome's minimum-version field and Safari's
-unsupported `options_ui.open_in_tab` field.
-Its description is kept within Apple's 112-character Safari extension limit;
-the Chrome and Firefox descriptions retain the shared source text.
-
-Safari remains outside aggregate release ZIPs. Resources alone are not an
-installable iOS app or an App Store submission. The checked-in containing app,
-build commands, activation steps, platform limits, and verification requirements
-are described in [Safari development](safari.md). Safari release readiness
-requires actual Safari and physical iPhone/iPad verification, separately from
-Chrome touch emulation and successful Xcode compilation.
+Safari builds and the native app moved to private `KyleStay/stayfast-safari`.
+The pure Safari manifest profile remains for legacy compatibility regression
+checks; this repository's build and candidate-packaging commands reject Safari.

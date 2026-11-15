@@ -6,8 +6,12 @@ taste in `/Users/kyle/.codex/AGENTS.md`.
 
 StayFast is a Manifest V3 extension for HTML5 video/audio and supported animated
 GIF images, with no backend. Source is in `src/`; esbuild resources are in
-`dist/` or `dist/<browser>/`. Safari has a native containing app under `apple/`
-and targets Safari/iOS 18.4+.
+`dist/` or `dist/<browser>/`. Safari development lives in the private repository linked below.
+
+Safari native packaging, release tooling and device tests moved to the private
+`KyleStay/stayfast-safari` repository. This repository owns Chrome/Firefox.
+Shared legacy runtime and compatibility tests remain MIT-licensed here.
+Do Safari and TestFlight work in the private checkout.
 
 ## Essential invariants
 
@@ -39,13 +43,13 @@ and targets Safari/iOS 18.4+.
 | Content worlds, bridge, startup, storage or popup commands            | [Execution model and bridge protocol](docs/agent-contracts.md#execution-model-read-this-before-touching-content-script-code)     |
 | Media, GIFs, source selection, captions, controllers or observers     | [Module contracts](docs/agent-contracts.md#module-map-src) and [invariants](docs/agent-contracts.md#conventions--invariants)     |
 | Shortcuts, rate authority, settings, lifecycle, touch or presentation | [Runtime invariants](docs/agent-contracts.md#conventions--invariants)                                                            |
-| Safari packaging, touch UI, source/clock/handback or diagnostics      | [Safari contracts and acceptance](docs/safari.md); native setup in [apple/README.md](apple/README.md)                            |
-| Browser/native verification, device experiments or cleanup            | [Verification workflow](docs/agent-workflow.md) and [native QA guide](tests/safari-ios/README.md)                                |
+| Safari packaging, touch UI, source/clock/handback or diagnostics      | [Safari contracts and acceptance](docs/safari.md); native setup in the private Safari repository                                 |
+| Browser/native verification, device experiments or cleanup            | [Verification workflow](docs/agent-workflow.md) and [Safari repository boundary](docs/safari.md)                                 |
 | CI migration, dependency audit or local verification                  | [Local CI policy](docs/LOCAL-CI.md), [scripts/local-ci.py](scripts/local-ci.py) and [package.json](package.json)                 |
 | Authorized landing or TestFlight delivery                             | [Delivery authorization](docs/agent-workflow.md#authorized-landing-and-testflight-work) and [release packet](docs/testflight.md) |
 | Behavior evidence, scope substitutions or completion reports          | [Acceptance and reviewer guidance](docs/acceptance-review.md)                                                                    |
 | Historical candidate measurements or build narratives                 | [Safari history](docs/safari-history.md) and [TestFlight history](docs/testflight-history.md)                                    |
-| Current upload, processing or tester availability                     | [Generated release ledger](docs/generated/safari-release-status.json); preserve observation timestamps and unknown states        |
+| Current upload, processing or tester availability                     | [Private Safari release records](docs/testflight.md); preserve observation timestamps and unknown states                         |
 
 ## Verification
 

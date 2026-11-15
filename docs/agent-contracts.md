@@ -6,6 +6,10 @@ from `AGENTS.md` without weakening their requirements. Paths in code spans are
 relative to the repository root. Update this reference with changes that
 invalidate it; use [the entry guide](../AGENTS.md) for workflow navigation.
 
+Safari-specific releases and future Safari changes belong to the private
+`KyleStay/stayfast-safari` repository. Existing shared compatibility modules
+retain their original contracts in both forks. Changes are ported explicitly.
+
 ## Execution model (read this before touching content-script code)
 
 Three JS contexts, isolated by design:

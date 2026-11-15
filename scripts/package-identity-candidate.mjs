@@ -19,9 +19,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRODUCTION_CHROME_ID = 'inojpjdelhcipcommmoibfahlgkekijo';
 const PRODUCTION_FIREFOX_ID = 'stayfast-video@staytech.co';
 const DEVELOPMENT_FIREFOX_ID = 'stayfast-development@staytech.co';
-const SAFARI_APP_ID = 'co.staytech.stayfast';
-const SAFARI_EXTENSION_ID = `${SAFARI_APP_ID}.Extension`;
-const SAFARI_TEAM_ID = 'TF2BG2VDPD';
 const DEVELOPMENT_CHROME_ID = 'jhkigijhcbfmndinioedenfmjegefgeb';
 
 function parseArgs(argv) {
@@ -176,26 +173,6 @@ async function walkFiles(directory, prefix = '') {
   return files.sort();
 }
 
-async function validateSafariNativeIdentity() {
-  const projectPath = path.join(
-    ROOT,
-    'apple/StayFast Video/StayFast Video.xcodeproj/project.pbxproj'
-  );
-  const project = await readFile(projectPath, 'utf8');
-  const ids = [...project.matchAll(/PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/g)].map(
-    (match) => match[1]
-  );
-  if (ids.length !== 8 || ids.some((id) => ![SAFARI_APP_ID, SAFARI_EXTENSION_ID].includes(id))) {
-    throw new Error(
-      'Safari native bundle identity did not match the retained app and extension IDs'
-    );
-  }
-  const teamIds = [...project.matchAll(/DEVELOPMENT_TEAM = ([^;]+);/g)].map((match) => match[1]);
-  if (teamIds.some((team) => team !== SAFARI_TEAM_ID)) {
-    throw new Error('Safari native team identity differs from the retained team ID');
-  }
-}
-
 export async function packageCandidate({
   browser,
   mode,
@@ -203,6 +180,8 @@ export async function packageCandidate({
   productionPublicKeyPath,
   productionId,
 }) {
+  if (browser === 'safari')
+    throw new Error('Safari development moved to KyleStay/stayfast-safari.');
   if (!['chrome', 'firefox', 'safari'].includes(browser))
     throw new Error('Browser must be chrome, firefox, or safari');
   const packageJson = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
@@ -218,7 +197,6 @@ export async function packageCandidate({
   if (chromeId(Buffer.from(devPublicKey.trim(), 'base64')) !== DEVELOPMENT_CHROME_ID) {
     throw new Error('Pinned development public key no longer matches its documented extension ID');
   }
-  if (browser === 'safari') await validateSafariNativeIdentity();
   const productionPublicKey = productionPublicKeyPath
     ? await readFile(path.resolve(productionPublicKeyPath), 'utf8')
     : null;

@@ -20,6 +20,10 @@ acceptance scope remains a reviewer decision.
 
 ## Authorized landing and TestFlight work
 
+Safari/TestFlight work now runs in private `KyleStay/stayfast-safari`; the
+following delivery authorization remains applicable there. This public
+repository owns Chrome/Firefox and its local browser checks.
+
 When Kyle requests landing and a TestFlight update, carry both outcomes through
 the installed `land-all-branches` and `testflight-release` workflows without
 separate confirmation for recovery snapshots, reviews, routine repairs, PRs,

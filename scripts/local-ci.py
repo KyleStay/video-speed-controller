@@ -31,7 +31,6 @@ def main():
     steps = [
         ('lint', ['node', 'node_modules/eslint/bin/eslint.js', 'src/**/*.js', 'tests/**/*.js']),
         ('build-chrome-firefox', ['node', 'scripts/build.mjs', '--all']),
-        ('build-safari-resources', ['node', 'scripts/build.mjs', '--browser=safari']),
         ('unit-integration', ['node', 'node_modules/vitest/vitest.mjs', 'run',
                               '--configLoader=native', '--config', 'vitest.local-ci.config.mjs']),
         ('python-process-ownership', [sys.executable, 'tests/unit/e2e/browser-process-info.test.py']),
@@ -42,7 +41,7 @@ def main():
         'browser-fixtures-and-controls': 'Use existing permitted local browser runners separately; no launch in offline CI.',
         'performance': 'Requires permitted local browser execution; compilation is not performance evidence.',
         'browser-basic-and-options': 'Requires permitted local browser execution.',
-        'native-safari-and-phone': 'Requires native runtime/device access; resource builds are not runtime acceptance.',
+        'native-safari-and-phone': 'Transferred with Safari native tests and release tooling to private KyleStay/stayfast-safari.',
     }
     if args.plan:
         print(json.dumps({'steps': steps, 'unrun': unrun}, indent=2))

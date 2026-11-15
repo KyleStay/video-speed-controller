@@ -14,7 +14,7 @@ packages, caches and logs there. Registered `dist/`, existing `release/` artifac
 and the Git index are untouched. `--output-root /absolute/owned/path` changes the
 parent of the unique run directory. Avoid editing source while the copy is made.
 
-The runner checks lint, minified Chrome/Firefox and Safari resource builds, the
+The runner checks lint, minified Chrome/Firefox resource builds, the
 full unit/integration suite, Python process-ownership tests and Chrome/Firefox
 packaging. Every result and command is recorded in `results.json`; failed checks
 produce a nonzero exit. A report still marked `running` or lacking `finished_at`
@@ -43,3 +43,6 @@ source triggers and run state rather than inferring execution from the listing.
 The generated Dependabot Updates workflow rejected API disablement with HTTP 422;
 keep security settings unchanged rather than using them as a workaround. Preserve
 existing GitHub logs and artifacts when disabling workflows or cancelling runs.
+
+Safari native/resource checks moved together with their tests to the private
+`KyleStay/stayfast-safari` repository. Shared compatibility coverage remains here.

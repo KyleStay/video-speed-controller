@@ -672,7 +672,7 @@ export default async function runIOSPlayer({
     fixtures = await startFixtureServer({
       htmlRoutes: {
         '/scroll-frame.html': (
-          await readFile(resolve('tests/safari-ios/scroll-frame.html'), 'utf8')
+          await readFile(resolve('tests/e2e/fixtures/scroll-frame.html'), 'utf8')
         )
           .replace('/mobile.html?mp4&amp;', '/mobile.html?standard-fullscreen&amp;')
           .replace('<iframe', '<iframe allowfullscreen'),
