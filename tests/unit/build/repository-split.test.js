@@ -7,7 +7,9 @@ import { packageCandidate } from '../../../scripts/package-identity-candidate.mj
 
 function retainedSafariResources() {
   const directory = 'dist/safari';
-  if (!existsSync(directory)) return null;
+  if (!existsSync(directory)) {
+    return null;
+  }
   return readdirSync(directory, { recursive: true })
     .filter((name) => statSync(join(directory, name)).isFile())
     .sort()
