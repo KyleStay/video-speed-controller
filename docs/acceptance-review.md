@@ -1,7 +1,10 @@
 # Acceptance scope and evidence review
 
-The original case definitions live in
-[`tests/safari-ios/acceptance-cases.js`](../tests/safari-ios/acceptance-cases.js),
+The Safari acceptance matrix, validator and native tests now live in the private
+`KyleStay/stayfast-safari` repository. Run the following Safari-specific commands
+from that checkout. Chrome/Firefox fixture results do not replace native evidence.
+The original case definitions live there in
+`tests/safari-ios/acceptance-cases.js`,
 separate from execution results. They retain the original long-post matrix,
 short-loop contexts, feed persistence and reported interface regressions, with
 stable IDs and links to the retained source records. They are a conservative

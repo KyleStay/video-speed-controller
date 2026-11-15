@@ -158,61 +158,14 @@ retain a 44px target and receive the real input. Media identity and feed geometr
 must survive presentation changes. The timeline stays at the visible video bottom,
 including beside overlapping metadata, while independent site links retain their input.
 
-For manual browser or native Safari checks, start the shared local server:
+### Native Safari coverage
 
-```sh
-node tests/safari-ios/fixture-server.mjs --port 62938
-```
+The Safari fixture server, native routes and all iPhone simulator/device tests
+moved together to the private `KyleStay/stayfast-safari` repository. Run native
+QA from that repository using its `tests/safari-ios/README.md` instructions.
+The public built-browser runners above continue to own their local fixtures.
 
-Use these routes; `mp4` selects the generated H.264/AAC sample for native Safari.
-Omit it for the generated WebM browser sample.
-
-| Route                                    | Scenario                                                               |
-| ---------------------------------------- | ---------------------------------------------------------------------- |
-| `/custom-feed.html?mp4`                  | Muted looping clip with custom transport, metadata and picture overlay |
-| `/custom-feed.html?mp4&late-controls`    | Existing decorative loop becomes interactive after Show clip controls  |
-| `/custom-feed.html?mp4&recycle`          | Next clip reuses the same video node and changes its source            |
-| `/custom-feed.html?mp4&captions`         | Browser-native synthetic caption track, selectable in More             |
-| `/custom-feed.html?mp4&recycle&captions` | Combined source recycling and caption coverage                         |
-
-Open site viewer models same-document reparenting; it retains the video and leaves
-a same-sized feed slot. Close site viewer restores it. Next clip either replaces
-the video or recycles it, according to the query. The deliberate site touch-end
-handler exposes regressions where a horizontal drag accidentally becomes Play.
-The status line and `window.__customFeedState()` report only local fixture state.
-
-For iPhone Simulator acceptance, follow [the native setup](../safari-ios/README.md),
-including the dedicated UDID, signed app install and extension activation. Copy
-`CustomFeedQATests.swift` with the other QA sources, open
-`http://127.0.0.1:62938/custom-feed.html?mp4`, then run:
-
-```sh
-xcodebuild -project build/safari-ios-qa/StayFastSafariQA.xcodeproj -scheme StayFastSafariQA -destination "platform=iOS Simulator,id=$STAYFAST_SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/safari-ios-qa/DerivedData -resultBundlePath test-results/custom-feed/native.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 240 -collect-test-diagnostics never -only-testing:StayFastSafariQATests/CustomFeedQATests/testCustomFeedControlsAndReturn test
-```
-
-Use a fresh result path for repeats. The same test supports `late-controls` and
-`recycle`; the browser matrix covers caption selection. Preserve failed evidence,
-then inspect the native hierarchy before changing code or automation. These mocks
-verify interaction, lifecycle and layout contracts. Decoder smoothness, live
-network behavior, hardware audio routes, DRM and external AirPlay/PiP destinations
-need separate runtime coverage.
-
-### Native iPhone Safari validation
-
-All 17 profiles also have native iPhone Safari tests in
-[`MediaProfileQATests.swift`](../safari-ios/MediaProfileQATests.swift). Run
-`tests/safari-ios/run-media-profiles.mjs` on an explicitly selected, activated,
-disposable iPhone simulator; see the [native instructions](../safari-ios/README.md#neutral-media-profiles-on-iphone-safari).
-The runner retains every profile, including failed and unrun cases. Genuine
-native UI input and real decoded progress are mandatory; Chromium/mobile
-emulation results do not substitute for this gate.
-
-An opt-in, read-only `media-native-probe.js` reports native playback/caption/owner
-identity and validated child-frame snapshots. Ordinary pages do not install it.
-Safari media routes use the shared byte-range responder, including generated
-MP4/WebM and fMP4 fragments. The live fixture supports native MediaSource and
-ManagedMediaSource; it never replaces native timing or seekable ranges. Managed
-playback disables remote playback on this synthetic element, following
-[WebKit's API requirements](https://webkit.org/blog/14735/webkit-features-in-safari-17-1/).
-Retain actual WebM and HLS VOD decode checks on Safari instead of silently swapping
-those formats for MP4. A missing codec or API remains incomplete.
+Genuine native UI input and decoded progress remain separate requirements;
+Chromium/mobile emulation does not replace them. Decoder smoothness, live network
+behavior, hardware audio routes, DRM and external AirPlay/PiP receivers require
+separate runtime evidence. Missing codecs or APIs remain incomplete.
