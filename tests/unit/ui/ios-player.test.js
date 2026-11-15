@@ -4132,6 +4132,29 @@ describe('iOS player ownership, playback, and restoration', () => {
     expect(player.active).toBe(true);
   });
 
+  it('updates AirPlay routing and restrictions in More, and releases them on close', async () => {
+    const { player, video } = makeController();
+    video.webkitShowPlaybackTargetPicker = vi.fn();
+    player.attach();
+    player.open();
+    const { airplay } = player.ui.refs;
+    airplay.click();
+    expect(video.webkitShowPlaybackTargetPicker).toHaveBeenCalledOnce();
+    video.webkitCurrentPlaybackTargetIsWireless = true;
+    video.dispatchEvent(new Event('webkitcurrentplaybacktargetiswirelesschanged'));
+    expect(airplay.getAttribute('aria-pressed')).toBe('true');
+    video.setAttribute('x-webkit-airplay', 'deny');
+    await Promise.resolve();
+    expect(airplay.hidden).toBe(true);
+    video.removeAttribute('x-webkit-airplay');
+    await Promise.resolve();
+    expect(airplay.hidden).toBe(false);
+    player.close();
+    video.webkitCurrentPlaybackTargetIsWireless = false;
+    video.dispatchEvent(new Event('webkitcurrentplaybacktargetiswirelesschanged'));
+    expect(airplay.getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('keeps native play available when source inspection throws without changing the session', () => {
     const { player, video } = makeController();
     player.attach();

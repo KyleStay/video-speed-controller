@@ -77,6 +77,17 @@ describe('owned iOS player view', () => {
     expect(style.getPropertyValue('right')).toContain('env(safe-area-inset-right)');
   });
 
+  it('highlights an active AirPlay route in More without changing inactive buttons', () => {
+    const selector = ".extra-options [data-ref='airplay'][aria-pressed='true']";
+    const button = view.refs.airplay;
+    expect(button.matches(selector)).toBe(false);
+    button.setAttribute('aria-pressed', 'true');
+    expect(button.matches(selector)).toBe(true);
+    expect(styleFor(selector, 'color').getPropertyValue('color')).toBe('rgb(103, 232, 249)');
+    button.setAttribute('aria-pressed', 'false');
+    expect(button.matches(selector)).toBe(false);
+  });
+
   it('uses decorative icons with accessible names and numeric speed controls', () => {
     for (const ref of [
       'done',

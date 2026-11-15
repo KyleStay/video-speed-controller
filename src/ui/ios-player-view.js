@@ -183,6 +183,7 @@
           .transport .play .vsc-control-icon { width: 48px; height: 48px; }
           header button:active, .transport button:active, .options > button:active, .unlock:active,
           .options > button[aria-pressed='true'] { background: transparent; color: #67e8f9; }
+          .extra-options [data-ref='airplay'][aria-pressed='true'] { color: #67e8f9; }
           footer { position: relative; min-width: 0; display: grid; gap: 8px; }
           .timeline { display: flex; align-items: center; gap: 10px; min-width: 0; }
           .time { min-width: 3.5ch; color: #fffd; font-size: 13px; font-variant-numeric: tabular-nums; }

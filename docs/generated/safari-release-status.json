@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "version": "0.11.6",
-  "build": "45",
-  "generatedAt": "2026-11-05T20:24:38.313Z",
+  "build": "46",
+  "generatedAt": "2026-11-14T21:55:27.152Z",
   "source": "Local upload receipt; no live Apple status query was performed.",
   "uploaded": {
     "state": "submitted",
-    "observedAt": "2026-11-05T20:23:22.917Z",
+    "observedAt": "2026-11-14T21:54:19.493Z",
     "evidence": {
-      "path": "build/safari/testflight/0.11.6-build45/upload-attempt.json",
-      "sha256": "2fc985a8798d6ece5c10428d3292cf0df6cd12d20cb5ddaaa0437b0aeda826d8"
+      "path": "build/safari/testflight/0.11.6-build46/upload-attempt.json",
+      "sha256": "8343d58711625d6682f306f6b7683b22a0d8901f559c840c28267064ad91461a"
     }
   },
   "processing": {

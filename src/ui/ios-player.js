@@ -1196,14 +1196,7 @@ class IOSPlayer {
       }
     });
     click(refs.airplay, () => {
-      if (this.video.disableRemotePlayback || this.video.hasAttribute('disableremoteplayback')) {
-        return;
-      }
-      try {
-        this.video.webkitShowPlaybackTargetPicker?.();
-      } catch {
-        /* Optional system picker. */
-      }
+      window.VSC.ControlsManager.showAirPlayPicker(this.video);
     });
     this.listen(
       refs.speed,
@@ -1503,10 +1496,9 @@ class IOSPlayer {
       this.listen(this.view.visualViewport, 'scroll', () => this.position(), true);
     }
     this.ownedFullscreen.updateButton();
-    refs.airplay.hidden =
-      this.video.disableRemotePlayback ||
-      this.video.hasAttribute('disableremoteplayback') ||
-      typeof this.video.webkitShowPlaybackTargetPicker !== 'function';
+    this.activeListeners.push(
+      window.VSC.ControlsManager.observeAirPlayButton(refs.airplay, this.video)
+    );
     try {
       const webkitPip =
         typeof this.video.webkitSetPresentationMode === 'function' &&

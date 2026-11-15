@@ -19,6 +19,28 @@ retain descriptive labels. The star sets preferred speed, the padlock locks
 controls, the ellipsis opens More, and the close (×) icon returns to the page.
 Icon shadows preserve contrast over the picture.
 
+## AirPlay controls
+
+Expanded video/audio controls offer **AirPlay** on browsers exposing Apple's
+native picker API, including Safari on Mac, iPhone and iPad. The owned iOS
+player also keeps **More → AirPlay**. Both recheck site restrictions at input
+time and update for restriction attributes and wireless-route changes. Active
+routes highlight the button and change its accessible name to “Change AirPlay
+device.” The controls never enable remote playback against a site's opt-out.
+
+The picker opens synchronously from the media's own button. There is no receiver
+discovery subscription, source conversion, Play request or speed change for
+AirPlay. Safari supplies the receiver list; choosing the local device in that
+picker returns playback. Formats, DRM and receiver rate support remain native
+constraints. The API is documented in [Apple's AirPlay API reference](https://developer.apple.com/library/archive/releasenotes/General/WhatsNewInSafari/Articles/Safari_7_0.html#//apple_ref/doc/uid/TP40014305-CH5-SW7).
+
+`node tests/e2e/run-isolated.js airplay` checks built desktop/touch controls with
+a simulated picker API, including trusted input activation and hidden-state CSS.
+It does not establish native picker or receiver behavior. Physical Mac, iPhone,
+iPad and AirPlay receiver acceptance remains incomplete until exercised with the
+installed Safari extension: select a receiver, observe output, change receivers,
+return locally and check rate, captions, source reuse and site opt-outs.
+
 ## Custom WebM decoders
 
 On iOS, an expanded OGV surface with one custom renderer and an explicit HTTP(S)
@@ -791,6 +813,7 @@ leave the corresponding check incomplete.
 | Suspension      | Switch apps and return; missed settings and removed controllers reconcile without duplicate listeners.                                           |
 | Owned player    | Full screen opens the original media in StayFast; check optional container fullscreen, Lock/Unlock, seek feedback, Done, and scroll restoration. |
 | Native media    | More → Apple player and PiP retain speed and return inline; Apple presentation contains no StayFast controls.                                    |
+| AirPlay         | Expanded controls and More open the native device picker; receiver/local handback preserves the media session and honors site opt-outs.          |
 | Extension UI    | Popup aggregates media across frames; settings, import/export, and enable/disable work.                                                          |
 | Cleanup         | Repeated toggle, navigation, and removal leave no duplicate overlays, pending callbacks, or page errors.                                         |
 
