@@ -1,3 +1,4 @@
+/* global __VSC_DIAGNOSTICS__ */
 import { bridgeEvents } from '../utils/bridge-events.js';
 
 /**
@@ -25,6 +26,56 @@ class VideoSpeedExtension {
     this.initializationInProgress = false;
     this.readyCleanup = null;
     this.spaRecoveryScheduled = false;
+    this.pendingComprehensiveScans = new WeakMap();
+    this.videoDiagnostics = null;
+    this.diagnosticsAutoStarted = false;
+  }
+
+  ensureVideoDiagnostics() {
+    if (!this.videoDiagnostics || this.videoDiagnostics.document !== document) {
+      this.videoDiagnostics?.cleanup();
+      this.videoDiagnostics = new window.VSC.VideoLoadDiagnostics(document);
+    }
+    return this.videoDiagnostics;
+  }
+
+  startAutomaticVideoDiagnostics() {
+    try {
+      if (
+        !this.diagnosticsAutoStarted &&
+        typeof __VSC_DIAGNOSTICS__ !== 'undefined' &&
+        __VSC_DIAGNOSTICS__ &&
+        window.VSC.EventManager.isTwitterHost(window.location.hostname)
+      ) {
+        this.diagnosticsAutoStarted = true;
+        this.ensureVideoDiagnostics().start({ reason: 'diagnostic-build' });
+      }
+    } catch {
+      // Diagnostic startup must never stop ordinary playback controls.
+    }
+  }
+
+  handleVideoDiagnostics(action) {
+    if (!['start', 'stop', 'clear', 'report'].includes(action)) {
+      return null;
+    }
+    try {
+      const recorder = this.ensureVideoDiagnostics();
+      if (action === 'start') {
+        recorder.start({ reason: 'popup' });
+        for (const root of this.mutationObserver?.shadowObservers.keys() || []) {
+          recorder.observeRoot(root);
+        }
+      } else if (action === 'stop') {
+        recorder.stop();
+      } else if (action === 'clear') {
+        recorder.stop();
+        recorder.clear();
+      }
+      return recorder.snapshot();
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -61,6 +112,7 @@ class VideoSpeedExtension {
       }
 
       if (this.config.settings._abort) {
+        this.videoDiagnostics?.cleanup();
         this.logger.debug('Extension disabled on this site — aborting init');
         return;
       }
@@ -213,40 +265,59 @@ class VideoSpeedExtension {
    * @param {Document} document - Document to scan comprehensively
    */
   scheduleComprehensiveScan(document) {
-    this.scheduleDeferredWork(
-      () => {
-        try {
-          if (this.teardownRequested || !this.mediaObserver) {
+    if (this.pendingComprehensiveScans.has(document)) {
+      return;
+    }
+
+    const pendingScan = {};
+    this.pendingComprehensiveScans.set(document, pendingScan);
+    try {
+      this.scheduleDeferredWork(
+        () => {
+          // A canceled callback may still be delivered by a scheduler race after
+          // teardown/reinitialization. It must neither run nor clear newer work.
+          if (this.pendingComprehensiveScans.get(document) !== pendingScan) {
             return;
           }
+          this.pendingComprehensiveScans.delete(document);
 
-          // Skip the heavier multi-walk scan on frames with no media signal at
-          // all (common case: text pages, ad/tracking iframes). Never skips when
-          // a shadow host exists, so encapsulated players are still found.
-          if (!this.mediaObserver.hasMediaIndicators(document)) {
-            this.logger.debug('Skipping comprehensive scan — no media indicators in frame');
-            return;
-          }
-
-          this.mutationObserver?.observeOpenShadowRoots(document);
-          const comprehensiveMedia = this.mediaObserver.scanAll(document);
-
-          comprehensiveMedia.forEach((media) => {
-            // Skip if already has controller
-            if (!media.vsc) {
-              this.onVideoFound(media, media.parentElement || media.parentNode);
+          try {
+            if (this.teardownRequested || !this.mediaObserver) {
+              return;
             }
-          });
 
-          this.logger.info(
-            `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
-          );
-        } catch (error) {
-          this.logger.error(`Failed comprehensive media scan: ${error.message}`);
-        }
-      },
-      { delay: 1000 }
-    ); // Wait 1 second before comprehensive scan
+            // Skip the heavier multi-walk scan on frames with no media signal at
+            // all (common case: text pages, ad/tracking iframes). Never skips when
+            // a shadow host exists, so encapsulated players are still found.
+            if (!this.mediaObserver.hasMediaIndicators(document)) {
+              this.logger.debug('Skipping comprehensive scan — no media indicators in frame');
+              return;
+            }
+
+            this.mutationObserver?.observeOpenShadowRoots(document);
+            const comprehensiveMedia = this.mediaObserver.scanAll(document);
+
+            comprehensiveMedia.forEach((media) => {
+              // Rediscovery also repairs an existing wrapper removed while a tab
+              // was suspended, including media inside an open shadow root.
+              this.onVideoFound(media, media.parentElement || media.parentNode);
+            });
+
+            this.logger.info(
+              `Comprehensive scan found ${comprehensiveMedia.length} additional media elements`
+            );
+          } catch (error) {
+            this.logger.error(`Failed comprehensive media scan: ${error.message}`);
+          }
+        },
+        { delay: 1000 }
+      ); // Wait 1 second before comprehensive scan
+    } catch (error) {
+      if (this.pendingComprehensiveScans.get(document) === pendingScan) {
+        this.pendingComprehensiveScans.delete(document);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -261,6 +332,7 @@ class VideoSpeedExtension {
 
       this.injectControllerCSS();
       this.setupCSSLiveUpdates();
+      this.setupSiteControlsLiveUpdates();
       this.siteHandlerManager.initialize(document);
 
       this.setupEventPipeline(document);
@@ -297,7 +369,9 @@ class VideoSpeedExtension {
     const work = { id: null, type: useIdle ? 'idle' : 'timer' };
 
     const run = () => {
-      this.scheduledWork.delete(work);
+      if (!this.scheduledWork.delete(work)) {
+        return;
+      }
       if (this.teardownRequested) {
         return;
       }
@@ -305,11 +379,16 @@ class VideoSpeedExtension {
     };
 
     this.scheduledWork.add(work);
-    work.id = useIdle
-      ? window.requestIdleCallback(run, {
-          timeout: Math.max(delay, VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS),
-        })
-      : setTimeout(run, delay);
+    try {
+      work.id = useIdle
+        ? window.requestIdleCallback(run, {
+            timeout: Math.max(delay, VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS),
+          })
+        : setTimeout(run, delay);
+    } catch (error) {
+      this.scheduledWork.delete(work);
+      throw error;
+    }
     return work;
   }
 
@@ -317,14 +396,19 @@ class VideoSpeedExtension {
    * Cancel deferred startup/scan callbacks.
    */
   clearScheduledWork() {
-    for (const work of this.scheduledWork) {
+    const scheduledWork = [...this.scheduledWork];
+    this.scheduledWork.clear();
+    this.pendingComprehensiveScans = new WeakMap();
+
+    // Remove admission before cancellation APIs, which may race with or
+    // synchronously deliver a callback that was already queued.
+    for (const work of scheduledWork) {
       if (work.type === 'idle' && typeof window.cancelIdleCallback === 'function') {
         window.cancelIdleCallback(work.id);
       } else {
         clearTimeout(work.id);
       }
     }
-    this.scheduledWork.clear();
   }
 
   /**
@@ -429,10 +513,54 @@ class VideoSpeedExtension {
     bridgeEvents.addEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
   }
 
+  refreshSiteControls() {
+    for (const info of window.VSC.stateManager?.controllers?.values() || []) {
+      const controller = info.controller;
+      if (controller?.video?.ownerDocument === document) {
+        try {
+          controller.refreshSiteControls?.();
+        } catch {
+          // One page-owned player must not prevent the remaining updates.
+        }
+      }
+    }
+  }
+
+  setupSiteControlsLiveUpdates() {
+    if (this.siteControlsLiveUpdateHandler) {
+      return;
+    }
+    this.siteControlsLiveUpdateHandler = (event) => {
+      if (!event.detail?.siteRules || this.siteControlsUpdateQueued) {
+        return;
+      }
+      this.siteControlsUpdateQueued = true;
+      const handler = this.siteControlsLiveUpdateHandler;
+      // Storage listeners finish updating config before any controller reads it.
+      queueMicrotask(() => {
+        if (this.siteControlsLiveUpdateHandler !== handler) {
+          return;
+        }
+        this.siteControlsUpdateQueued = false;
+        this.refreshSiteControls();
+      });
+    };
+    bridgeEvents.addEventListener('VSC_STORAGE_CHANGED', this.siteControlsLiveUpdateHandler);
+  }
+
   /**
    * Set up observers for DOM changes and video detection
    */
   setupObservers() {
+    this.gifObserver?.cleanup();
+    try {
+      this.gifObserver = new window.VSC.GifObserver(document, (image, parent) =>
+        this.onVideoFound(image, parent)
+      );
+    } catch (error) {
+      this.gifObserver = null;
+      this.logger.debug(`GIF discovery unavailable: ${error?.message}`);
+    }
     // Media element observer
     this.mediaObserver = new this.MediaElementObserver(this.config, this.siteHandlerManager);
 
@@ -442,7 +570,8 @@ class VideoSpeedExtension {
       (video, parent) => this.onVideoFound(video, parent),
       (video) => this.onVideoRemoved(video),
       this.mediaObserver,
-      () => this.handleDocumentReplaced()
+      () => this.handleDocumentReplaced(),
+      this.gifObserver
     );
   }
 
@@ -454,7 +583,12 @@ class VideoSpeedExtension {
    * shortcut keys, so the site (e.g. YouTube) reclaims keys like `s`. Re-scanning
    * on navigation re-attaches the controller and restores shortcut claiming.
    *
-   * No polling: we react to navigation events and defer the scan to idle so the
+   * Browsers can freeze background tabs or preserve them in the back/forward cache.
+   * On restoration the page may have moved/replaced its player without a new
+   * navigation event, so also recover when the document becomes visible or a
+   * persisted pageshow restores it. A normal initial pageshow needs no extra scan.
+   *
+   * No polling: we react to navigation/restoration and defer the scan to idle so the
    * media-less common case stays cheap. onVideoFound is idempotent (skips media
    * that already has a controller), so a redundant scan is harmless.
    */
@@ -463,10 +597,17 @@ class VideoSpeedExtension {
       return;
     }
 
-    this.spaNavigationHandler = () => {
+    this.spaNavigationHandler = (event) => {
+      if (event?.type === 'pageshow' && !event.persisted) {
+        return;
+      }
+      if (event?.type === 'visibilitychange' && document.visibilityState !== 'visible') {
+        return;
+      }
       if (this.teardownRequested || !this.mediaObserver || this.spaRecoveryScheduled) {
         return;
       }
+      this.refreshSiteControls();
       // Respect the media-less-frame perf priority (P2): only rescan when the
       // frame actually has a media signal. hasMediaIndicators never skips when a
       // shadow host exists, so encapsulated players still trigger recovery, and
@@ -474,7 +615,7 @@ class VideoSpeedExtension {
       if (!this.mediaObserver.hasMediaIndicators(document)) {
         return;
       }
-      this.logger.debug('SPA navigation detected — rescanning for media');
+      this.logger.debug('Navigation or tab restoration detected — rescanning for media');
       // Defer: let the framework swap in the new player before we scan.
       this.spaRecoveryScheduled = true;
       this.scheduleDeferredWork(
@@ -497,6 +638,8 @@ class VideoSpeedExtension {
     this.spaNavigationDocument.addEventListener('yt-navigate-finish', this.spaNavigationHandler);
     // Generic SPA fallback (history navigation) for other sites.
     window.addEventListener('popstate', this.spaNavigationHandler);
+    window.addEventListener('pageshow', this.spaNavigationHandler);
+    this.spaNavigationDocument.addEventListener('visibilitychange', this.spaNavigationHandler);
   }
 
   /**
@@ -555,6 +698,7 @@ class VideoSpeedExtension {
 
       if (video.vsc) {
         video.vsc.repairDOMPlacement?.();
+        video.vsc.refreshSiteControls?.();
         this.logger.debug('Video already has controller attached');
         this.clearPendingVideoAttachment(video);
         return;
@@ -587,7 +731,8 @@ class VideoSpeedExtension {
         parent,
         this.config,
         this.actionHandler,
-        shouldStartHidden
+        shouldStartHidden,
+        options.initialSpeed
       );
     } catch (error) {
       this.logger.error(`Failed to attach controller to video: ${error.message}`);
@@ -664,6 +809,9 @@ class VideoSpeedExtension {
    * Counterpart to initialize() — leaves the page as if VSC was never active.
    */
   teardown() {
+    // Keep the bounded report available to the popup after disable/replacement.
+    this.videoDiagnostics?.mark('extension-teardown');
+    this.videoDiagnostics?.cleanup();
     if (
       !this.initialized &&
       !this.eventListenersInitialized &&
@@ -687,6 +835,9 @@ class VideoSpeedExtension {
       this.clearPendingVideoAttachment(video);
     }
 
+    this.gifObserver?.cleanup();
+    this.gifObserver = null;
+
     // Remove all controllers from tracked media elements
     const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
     for (const video of videos) {
@@ -706,7 +857,9 @@ class VideoSpeedExtension {
     if (this.spaNavigationHandler) {
       const navDoc = this.spaNavigationDocument || document;
       navDoc.removeEventListener('yt-navigate-finish', this.spaNavigationHandler);
+      navDoc.removeEventListener('visibilitychange', this.spaNavigationHandler);
       window.removeEventListener('popstate', this.spaNavigationHandler);
+      window.removeEventListener('pageshow', this.spaNavigationHandler);
       this.spaNavigationHandler = null;
       this.spaNavigationDocument = null;
     }
@@ -727,6 +880,11 @@ class VideoSpeedExtension {
       bridgeEvents.removeEventListener('VSC_STORAGE_CHANGED', this.cssLiveUpdateHandler);
       this.cssLiveUpdateHandler = null;
     }
+    if (this.siteControlsLiveUpdateHandler) {
+      bridgeEvents.removeEventListener('VSC_STORAGE_CHANGED', this.siteControlsLiveUpdateHandler);
+      this.siteControlsLiveUpdateHandler = null;
+    }
+    this.siteControlsUpdateQueued = false;
 
     // Remove adopted controller CSS (both default and custom sheets)
     if (document.adoptedStyleSheets) {
@@ -772,6 +930,8 @@ class VideoSpeedExtension {
 
     return {
       mediaCount: videos.length,
+      pausedVideoCount: videos.filter((video) => window.VSC.ControlsManager.canStepFrame(video))
+        .length,
       currentSpeed: speeds.length === 1 ? speeds[0] : null,
       speeds,
     };
@@ -792,6 +952,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
       // Use state manager for complete media element discovery (includes shadow DOM)
       const videos = window.VSC.stateManager ? window.VSC.stateManager.getAllMediaElements() : [];
       let handled = true;
+      let diagnostics;
 
       switch (message.type) {
         case window.VSC.Constants.MESSAGE_TYPES.SET_SPEED:
@@ -851,10 +1012,39 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
           }
           break;
 
+        case window.VSC.Constants.MESSAGE_TYPES.STEP_FRAME: {
+          const direction = message.payload?.direction;
+          if ((direction !== -1 && direction !== 1) || !extension.actionHandler?.stepFrame) {
+            handled = false;
+            break;
+          }
+          const action = direction < 0 ? 'rewindFrame' : 'advanceFrame';
+          const fallbackFps = extension.config?.getKeyBinding(action);
+          let stepped = false;
+          videos.forEach((video) => {
+            try {
+              if (!window.VSC.ControlsManager.canStepFrame(video)) {
+                return;
+              }
+              extension.actionHandler.stepFrame(video, direction, fallbackFps);
+              stepped = true;
+            } catch {
+              // One inaccessible page-owned media element must not block its peers.
+            }
+          });
+          handled = stepped;
+          break;
+        }
+
         case window.VSC.Constants.MESSAGE_TYPES.GET_STATUS: {
           message._status = extension.getMediaStatus(videos);
           break;
         }
+
+        case window.VSC.Constants.MESSAGE_TYPES.VIDEO_DIAGNOSTICS:
+          diagnostics = extension.handleVideoDiagnostics(message.payload?.action);
+          handled = diagnostics !== null;
+          break;
 
         case window.VSC.Constants.MESSAGE_TYPES.TEARDOWN:
           extension.teardown();
@@ -876,12 +1066,27 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
               requestId: message.requestId,
               ok: handled,
               mediaCount: status.mediaCount,
+              pausedVideoCount: status.pausedVideoCount,
               currentSpeed: status.currentSpeed,
               speeds: status.speeds,
+              ...(diagnostics ? { diagnostics } : {}),
             },
           })
         );
       }
+    }
+  });
+
+  // A cold/late ISOLATED world can arrive after the bounded settings request
+  // timed out. Resume startup on its one-shot signal, but never undo teardown
+  // or start a second initialization while the original request is pending.
+  bridgeEvents.addEventListener('VSC_BRIDGE_READY', () => {
+    if (
+      !extension.initialized &&
+      !extension.initializationInProgress &&
+      !extension.teardownRequested
+    ) {
+      extension.initialize();
     }
   });
 
@@ -892,6 +1097,7 @@ VideoSpeedExtension.IDLE_CALLBACK_TIMEOUT_MS = 1000;
   }
 
   // Auto-initialize
+  extension.startAutomaticVideoDiagnostics();
   extension.initialize().catch((error) => {
     window.VSC.logger.error(`Extension initialization failed: ${error.message}`);
   });

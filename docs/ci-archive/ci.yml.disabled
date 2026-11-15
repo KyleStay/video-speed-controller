@@ -26,7 +26,9 @@ jobs:
       - run: npm run lint
       - run: npm run build:release:browsers
       - run: npm test
+      - run: python3 tests/unit/e2e/browser-process-info.test.py
       - run: xvfb-run -a node tests/e2e/run-browser-fixtures.js chrome
+      - run: xvfb-run -a node tests/e2e/run-player-controls.js chrome
       - run: mkdir -p test-results && xvfb-run -a node tests/e2e/run-performance-benchmark.js
         env:
           STAYFAST_BENCHMARK_OUTPUT: test-results/performance.json
@@ -39,8 +41,10 @@ jobs:
           retention-days: 7
       - run: npx puppeteer browsers install firefox
       - run: node tests/e2e/run-browser-fixtures.js firefox
+      - run: node tests/e2e/run-player-controls.js firefox frames
       - run: node scripts/package-release.js --all
       - run: xvfb-run -a npm run test:e2e -- basic
+      - run: xvfb-run -a node tests/e2e/run-e2e.js options
 
       - uses: actions/upload-artifact@v7
         if: always()

@@ -5,11 +5,19 @@
 window.VSC = window.VSC || {};
 
 class VideoMutationObserver {
-  constructor(config, onVideoFound, onVideoRemoved, mediaObserver, onDocumentReplaced) {
+  constructor(
+    config,
+    onVideoFound,
+    onVideoRemoved,
+    mediaObserver,
+    onDocumentReplaced,
+    gifObserver
+  ) {
     this.config = config;
     this.onVideoFound = onVideoFound;
     this.onVideoRemoved = onVideoRemoved;
     this.mediaObserver = mediaObserver;
+    this.gifObserver = gifObserver;
     this.onDocumentReplacedCallback = onDocumentReplaced || null;
     this.observer = null;
     this.observedDocument = null;
@@ -115,8 +123,17 @@ class VideoMutationObserver {
       const owner = this;
       const wrapper = function (init) {
         const shadowRoot = Reflect.apply(original, this, [init]);
-        if (init?.mode === 'open' && owner.active) {
-          owner.observeShadowRoot(shadowRoot);
+        try {
+          if (
+            init?.mode === 'open' &&
+            owner.active &&
+            this.isConnected &&
+            this.ownerDocument === owner.observedDocument
+          ) {
+            owner.observeShadowRoot(shadowRoot);
+          }
+        } catch {
+          // Optional discovery must not change the page's native attachShadow result.
         }
         return shadowRoot;
       };
@@ -402,6 +419,13 @@ class VideoMutationObserver {
         this.onVideoRemoved(node);
       }
     }
+    if (node.nodeName === 'IMG') {
+      if (job.added) {
+        this.gifObserver?.consider(node);
+      } else {
+        this.gifObserver?.remove(node);
+      }
+    }
     return Boolean(job.next);
   }
 
@@ -413,6 +437,8 @@ class VideoMutationObserver {
     }
     if (video.isConnected) {
       controller?.repairDOMPlacement?.();
+      // Re-evaluate opt-in site-button hiding after player composition changes.
+      controller?.refreshSiteControls?.();
     } else {
       this.onVideoRemoved(video);
     }
@@ -637,6 +663,7 @@ class VideoMutationObserver {
       } else {
         // Video is still valid, update visibility based on current state
         video.vsc.repairDOMPlacement?.();
+        video.vsc.refreshSiteControls?.();
         video.vsc.updateVisibility();
       }
     } else {
@@ -716,11 +743,17 @@ class VideoMutationObserver {
       return; // Already observing
     }
 
+    try {
+      window.VSC_controller?.videoDiagnostics?.observeRoot(shadowRoot);
+    } catch {
+      // Optional diagnostics must not affect media discovery.
+    }
     const shadowObserver = new MutationObserver((mutations) => {
       this.scheduleMutationProcessing(mutations);
     });
 
     shadowObserver.observe(shadowRoot, this.buildObserverOptions());
+    this.gifObserver?.observeRoot(shadowRoot);
     this.listenForReadyMedia(shadowRoot);
     this.shadowObservers.set(shadowRoot, shadowObserver);
 
@@ -735,7 +768,13 @@ class VideoMutationObserver {
     for (const [shadowRoot, shadowObserver] of this.shadowObservers) {
       const host = shadowRoot.host;
       if (!host || host.isConnected === false) {
+        try {
+          window.VSC_controller?.videoDiagnostics?.unobserveRoot(shadowRoot);
+        } catch {
+          // Discovery cleanup is independent of diagnostics.
+        }
         shadowObserver.disconnect();
+        this.gifObserver?.unobserveRoot(shadowRoot);
         this.unlistenForReadyMedia(shadowRoot);
         this.shadowObservers.delete(shadowRoot);
         window.VSC.logger.debug('Pruned shadow observer for detached host');
@@ -796,6 +835,7 @@ class VideoMutationObserver {
     // Clean up shadow observers
     this.shadowObservers.forEach((shadowObserver, shadowRoot) => {
       shadowObserver.disconnect();
+      this.gifObserver?.unobserveRoot(shadowRoot);
       this.unlistenForReadyMedia(shadowRoot);
     });
     this.shadowObservers.clear();

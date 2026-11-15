@@ -103,6 +103,114 @@ async function runReliabilityCheckSet(page, runTest, { fixtureBaseUrl, mediaUrl 
     await page.waitForFunction(() => window.VSC_controller?.mutationObserver?.observer);
   };
 
+  await runTest('Delayed metadata retains newer preferences and per-media commands', async () => {
+    await loadFixture();
+    const result = await page.evaluate(() => {
+      const extension = window.VSC_controller;
+      const { config, actionHandler } = extension;
+      const previous = { ...config.settings };
+      const revision = config.speedPreferenceRevision;
+      const videos = [];
+      const attach = () => {
+        const video = document.createElement('video');
+        document.body.append(video);
+        const controller = new window.VSC.VideoController(video, null, config, actionHandler);
+        videos.push(video);
+        if (!controller.initMetadataHandler) {
+          throw new Error('metadata must be pending');
+        }
+        return video;
+      };
+      try {
+        config.settings.lastSpeed = 1.5;
+        const external = attach();
+        config.settings.lastSpeed = 2.25;
+        config.speedPreferenceRevision++;
+        external.dispatchEvent(new Event('loadedmetadata'));
+        const externalRate = external.playbackRate;
+        const local = attach();
+        actionHandler.adjustSpeed(local, 2.5, { source: 'init' });
+        const sibling = attach();
+        actionHandler.adjustSpeed(sibling, 3, { source: 'init' });
+        local.dispatchEvent(new Event('loadedmetadata'));
+        return { externalRate, localRate: local.playbackRate };
+      } finally {
+        for (const video of videos) {
+          video.vsc?.remove();
+          video.remove();
+        }
+        config.settings = previous;
+        config.speedPreferenceRevision = revision;
+      }
+    });
+    assert.equal(result.externalRate, 2.25, 'metadata uses the current external preference');
+    assert.equal(result.localRate, 2.5, 'metadata retains the media command');
+  });
+
+  await runTest(
+    'Muted loops receive controls before site transport arrives and retain site controls',
+    async () => {
+      await loadFixture();
+      await page.evaluate((source) => {
+        const custom = document.createElement('section');
+        custom.innerHTML = '<div><video id="custom-loop" loop muted playsinline></video></div>';
+        const decorative = document.createElement('section');
+        decorative.innerHTML = '<video id="decorative-loop" loop muted playsinline></video>';
+        for (const root of [custom, decorative]) {
+          root.style.cssText = 'position:relative;width:640px';
+          const video = root.querySelector('video');
+          video.width = 640;
+          video.height = 360;
+          video.muted = true;
+          video.src = source;
+          document.querySelector('#fixture-root').append(root);
+        }
+      }, mediaUrl);
+      await page.waitForFunction(
+        () =>
+          document.querySelector('#custom-loop')?.vsc?.div.isConnected &&
+          document.querySelector('#decorative-loop')?.vsc?.div.isConnected
+      );
+      await page.evaluate(() => {
+        const video = document.querySelector('#custom-loop');
+        video.parentElement.parentElement.insertAdjacentHTML(
+          'beforeend',
+          '<button id="custom-sound" aria-label="Sound Off">Sound</button>'
+        );
+        document.querySelector('#custom-sound').onclick = () => {
+          video.muted = !video.muted;
+        };
+      });
+      await page.waitForFunction(
+        () =>
+          document.querySelector('#custom-loop')?.vsc?.div.isConnected &&
+          document.querySelector('#decorative-loop')?.readyState >= 2
+      );
+      assert.true(
+        await page.evaluate(() => !!document.querySelector('#decorative-loop').vsc),
+        'Silent loops without site transport receive controls'
+      );
+      await page.click('#custom-sound');
+      assert.false(
+        await page.evaluate(() => document.querySelector('#custom-loop').muted),
+        'Site audio control remains usable'
+      );
+      await page.click('#custom-sound');
+      const before = await page.evaluate(() => document.querySelector('#custom-loop').playbackRate);
+      await page.keyboard.press('d');
+      await page.waitForFunction(
+        (rate) => document.querySelector('#custom-loop').playbackRate > rate,
+        {},
+        before
+      );
+      assert.equal(
+        await page.evaluate(() => window.VSC.stateManager.getControlledElements().length),
+        2,
+        'Both loops are controlled'
+      );
+    }
+  );
+
   await runTest('Scrolling an X feed attaches ready videos before idle work', async () => {
     // All requests are intercepted above; this fixture never contacts X.
     await loadFixture('https://x.com/home');

@@ -6,7 +6,14 @@
 window.VSC = window.VSC || {};
 
 class VideoController {
-  constructor(target, parent, config, actionHandler, shouldStartHidden = false) {
+  constructor(
+    target,
+    parent,
+    config,
+    actionHandler,
+    shouldStartHidden = false,
+    initialSpeed = null
+  ) {
     // Return existing controller if already attached
     if (target.vsc) {
       return target.vsc;
@@ -40,6 +47,7 @@ class VideoController {
     this.disposed = false;
 
     try {
+      window.VSC.recordVideoDiagnostic?.('before-controller', target);
       // Attach controller to video element first (needed for adjustSpeed)
       target.vsc = this;
 
@@ -51,10 +59,11 @@ class VideoController {
       }
 
       // Initialize speed
-      this.initializeSpeed();
+      this.initializeSpeed(initialSpeed);
 
       // Create UI
       this.div = this.initializeControls();
+      window.VSC.recordVideoDiagnostic?.('after-controller', target);
 
       // Set up event handlers
       this.setupEventHandlers();
@@ -64,6 +73,11 @@ class VideoController {
 
       // Start measuring the real frame rate (video-only, zero steady-state cost).
       this.setupFpsDetection();
+
+      if (target.localName === 'video' && window.VSC.SiteControls) {
+        this.siteControls = new window.VSC.SiteControls(target);
+        this.refreshSiteControls();
+      }
     } catch (error) {
       // Construction must be transactional. A page-owned DOM/media API can
       // throw in the MAIN world; never leave a stale expando or registered,
@@ -257,12 +271,16 @@ class VideoController {
    * conflict with the player's own initialization sequence.
    * @private
    */
-  initializeSpeed() {
-    const targetSpeed = this.getTargetSpeed();
+  initializeSpeed(initialSpeed = null) {
+    const targetSpeed =
+      Number.isFinite(initialSpeed) && initialSpeed > 0 ? initialSpeed : this.getTargetSpeed();
 
     window.VSC.logger.debug(`Setting initial playbackRate to: ${targetSpeed}`);
 
-    if (!this.actionHandler || targetSpeed === this.video.playbackRate) {
+    if (
+      !this.actionHandler ||
+      (this.video.readyState >= 1 && targetSpeed === this.video.playbackRate)
+    ) {
       return;
     }
 
@@ -273,8 +291,19 @@ class VideoController {
       const handler = () => {
         this.video.removeEventListener('loadedmetadata', handler);
         this.initMetadataHandler = null;
-        if (targetSpeed !== this.video.playbackRate) {
-          this.actionHandler.adjustSpeed(this.video, targetSpeed, { source: 'init' });
+        if (this.disposed || this.video.vsc !== this) {
+          return;
+        }
+        // Match lifecycle recovery: retain this media's current accepted rate,
+        // but let an external preference revision supersede it.
+        const local = this.actionHandler.eventManager?.getMediaRateState?.(this.video);
+        const currentTargetSpeed =
+          Number.isFinite(local?.lifecycleSpeed) &&
+          (local.lifecycleSpeedRevision ?? 0) === (this.config.speedPreferenceRevision ?? 0)
+            ? local.lifecycleSpeed
+            : this.getTargetSpeed();
+        if (currentTargetSpeed !== this.video.playbackRate) {
+          this.actionHandler.adjustSpeed(this.video, currentTargetSpeed, { source: 'init' });
         }
       };
       this.initMetadataHandler = handler;
@@ -360,6 +389,7 @@ class VideoController {
       speed: speed,
       opacity: this.config.settings.controllerOpacity,
       buttonSize: this.config.settings.controllerButtonSize,
+      gif: Boolean(window.VSC.GifPlayback?.get(this.video)),
     });
 
     // Set up control events
@@ -373,6 +403,14 @@ class VideoController {
     this.insertionParent = wrapper.parentNode;
     this.mediaParentAncestor = this.parent?.parentNode;
 
+    this.positionControls(wrapper);
+
+    window.VSC.logger.debug('initializeControls End');
+    return wrapper;
+  }
+
+  positionControls(wrapper) {
+    const shadow = wrapper.shadowRoot;
     // THEN compute position based on actual DOM state.
     // If a CSS override sets the wrapper to position:relative (e.g. YouTube, Netflix),
     // the inner controller stays at (0,0) and the CSS nudge handles placement.
@@ -384,9 +422,6 @@ class VideoController {
       innerController.style.top = position.top;
       innerController.style.left = position.left;
     }
-
-    window.VSC.logger.debug('initializeControls End');
-    return wrapper;
   }
 
   /**
@@ -456,6 +491,15 @@ class VideoController {
     if (!parent) {
       return false;
     }
+    // A moved ancestor can leave the direct media parent unchanged.
+    try {
+      const siteContainer = this.siteControls?.container;
+      if (siteContainer && !siteContainer.contains(this.video)) {
+        this.refreshSiteControls();
+      }
+    } catch {
+      // Page-owned DOM access must not prevent ordinary placement recovery.
+    }
     if (
       this.div.isConnected &&
       this.parent === parent &&
@@ -469,10 +513,41 @@ class VideoController {
       this.insertIntoDOM(this.video.ownerDocument, this.div);
       this.insertionParent = this.div.parentNode;
       this.mediaParentAncestor = parent.parentNode;
+      this.refreshSiteControls();
       return this.div.isConnected;
     } catch (error) {
       window.VSC.logger.warn(`Controller placement recovery failed: ${error.message}`);
       return false;
+    }
+  }
+
+  /** Resolve the first matching rule in this media's own document. */
+  updateSiteControlsMode() {
+    let hide = false;
+    try {
+      const rule = window.VSC.matchSiteRule?.(
+        this.config.settings.siteRules,
+        this.video.ownerDocument.URL
+      );
+      hide =
+        this.config.settings.enabled !== false &&
+        rule?.enabled !== false &&
+        rule?.hideSiteControls === true;
+    } catch {
+      // Invalid or inaccessible site metadata must leave page controls available.
+    }
+    this.siteControls?.setHideAllButtons(hide);
+    return hide;
+  }
+
+  refreshSiteControls() {
+    if (this.disposed || !this.siteControls) {
+      return;
+    }
+    if (this.updateSiteControlsMode() && this.video.isConnected) {
+      this.siteControls.acquire();
+    } else {
+      this.siteControls.release();
     }
   }
 
@@ -481,8 +556,43 @@ class VideoController {
    * @private
    */
   setupEventHandlers() {
+    const mediaTarget = (media) => {
+      const local = this.actionHandler.eventManager?.getMediaRateState?.(media);
+      const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
+      const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
+      const targetSpeed = Math.min(
+        MAX,
+        Math.max(
+          MIN,
+          Number.isFinite(local?.lifecycleSpeed) &&
+            (local.lifecycleSpeedRevision ?? 0) === speedPreferenceRevision
+            ? local.lifecycleSpeed
+            : this.getTargetSpeed()
+        )
+      );
+      return { local, speedPreferenceRevision, targetSpeed };
+    };
     const mediaEventAction = (event) => {
-      const targetSpeed = this.getTargetSpeed(event.target);
+      const { local, speedPreferenceRevision, targetSpeed } = mediaTarget(event.target);
+      // Resuming/seeking must not retry a source's refused request or renew
+      // cooldown, dispatch synthetic events and flash an already-correct UI.
+      try {
+        if (event.target.playbackRate === targetSpeed) {
+          if (local) {
+            // Adopt a replacement that already matches without a native write.
+            local.lifecycleSpeed = targetSpeed;
+            local.lifecycleSpeedRevision = speedPreferenceRevision;
+            if (Number.isFinite(this.config.settings.lastSpeed)) {
+              local.acceptedSpeed = targetSpeed;
+              local.acceptedSpeedRevision = speedPreferenceRevision;
+            }
+          }
+          return;
+        }
+      } catch {
+        // A page-owned getter must not break the media lifecycle callback.
+        return;
+      }
 
       // Lifecycle restore, not a user choice — don't persist to lastSpeed.
       window.VSC.logger.info(`Media event ${event.type}: restoring speed to ${targetSpeed}`);
@@ -503,6 +613,11 @@ class VideoController {
     // Add essential event listeners for speed restoration
     this.video.addEventListener('play', this.handlePlay);
     this.video.addEventListener('seeked', this.handleSeek);
+    this.handleRateSourceReset = () => {
+      this.actionHandler.eventManager?.releaseMediaState?.(this.video);
+    };
+    this.video.addEventListener('emptied', this.handleRateSourceReset);
+    this.video.addEventListener('loadstart', this.handleRateSourceReset);
 
     // Native ratechange events are not composed: a shadow root prevents them
     // from reaching EventManager's document capture listener. Forward only
@@ -523,6 +638,21 @@ class VideoController {
    * @private
    */
   setupMutationObserver() {
+    this.handleSourceVisibility = () => {
+      if (this.disposed) {
+        return;
+      }
+      this.refreshSiteControls();
+      this.div.classList.toggle(
+        'vsc-nosource',
+        !this.video.src && !this.video.currentSrc && this.video.readyState < 2
+      );
+    };
+    // A <source> child can become playable without changing the video's src
+    // attribute. Reconcile readiness as well as explicit attribute writes.
+    for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+      this.video.addEventListener(event, this.handleSourceVisibility);
+    }
     this.targetObserver = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (
@@ -530,12 +660,7 @@ class VideoController {
           (mutation.attributeName === 'src' || mutation.attributeName === 'currentSrc')
         ) {
           window.VSC.logger.debug('Mutation of A/V element detected');
-          const controller = this.div;
-          if (!mutation.target.src && !mutation.target.currentSrc) {
-            controller.classList.add('vsc-nosource');
-          } else {
-            controller.classList.remove('vsc-nosource');
-          }
+          this.handleSourceVisibility();
         }
       });
     });
@@ -549,7 +674,10 @@ class VideoController {
    * Remove controller and clean up
    */
   remove() {
+    window.VSC.recordVideoDiagnostic?.('controller-remove', this.video);
     window.VSC.logger.debug('Removing VideoController');
+    this.siteControls?.cleanup();
+    this.controlsManager?.cleanup();
     this.actionHandler?.eventManager?.releaseMediaState?.(this.video);
 
     // Remove DOM element
@@ -574,6 +702,11 @@ class VideoController {
     if (this.handleSeek) {
       this.video.removeEventListener('seeked', this.handleSeek);
     }
+    if (this.handleRateSourceReset) {
+      this.video.removeEventListener('emptied', this.handleRateSourceReset);
+      this.video.removeEventListener('loadstart', this.handleRateSourceReset);
+      this.handleRateSourceReset = null;
+    }
     if (this.handleShadowRateChange) {
       this.video.removeEventListener('ratechange', this.handleShadowRateChange);
       this.handleShadowRateChange = null;
@@ -592,6 +725,12 @@ class VideoController {
     }
 
     // Disconnect mutation observer
+    if (this.handleSourceVisibility) {
+      for (const event of ['loadeddata', 'loadstart', 'emptied']) {
+        this.video.removeEventListener(event, this.handleSourceVisibility);
+      }
+      this.handleSourceVisibility = null;
+    }
     if (this.targetObserver) {
       this.targetObserver.disconnect();
     }
@@ -600,6 +739,8 @@ class VideoController {
     if (window.VSC.stateManager) {
       window.VSC.stateManager.removeController(this.controllerId);
     }
+
+    window.VSC.GifPlayback?.get(this.video)?.cleanup();
 
     // Remove reference from video element
     delete this.video.vsc;

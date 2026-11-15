@@ -23,6 +23,72 @@ describe('Options accessibility and CSS safety', () => {
     vi.resetModules();
   });
 
+  it('imports legacy site rules and explicit hide-buttons choices without coercion', async () => {
+    const { validateImportedSettings } = await import('../../../src/ui/options/options.js');
+    const rule = { pattern: 'example.com', enabled: true, speed: null };
+    const settings = (siteRule) => ({ keyBindings: [], siteRules: [siteRule] });
+    expect(validateImportedSettings(settings(rule))).toBe('');
+    for (const hideSiteControls of [false, true]) {
+      expect(validateImportedSettings(settings({ ...rule, hideSiteControls }))).toBe('');
+    }
+    for (const hideSiteControls of [null, 0, 1, 'false', 'true', [], {}]) {
+      expect(validateImportedSettings(settings({ ...rule, hideSiteControls }))).toContain(
+        'site rule'
+      );
+    }
+    expect(rule).toEqual({ pattern: 'example.com', enabled: true, speed: null });
+  });
+
+  it('bounds legacy imported speeds while retaining invalid-value validation', async () => {
+    const previousConstants = window.VSC.Constants;
+    vi.resetModules();
+    try {
+      const { validateImportedSettings } = await import('../../../src/ui/options/options.js');
+      const settings = {
+        keyBindings: [
+          { action: 'fast', value: 64 },
+          { action: 'reset', value: 32 },
+          { action: 'rewind', value: 64 },
+          { action: 'faster', value: 32 },
+          { action: 'advanceFrame', value: 120 },
+        ],
+        lastSpeed: 64,
+        siteRules: [{ pattern: 'example.com', enabled: true, speed: 32 }],
+      };
+      const { normalizeSpeedSetting } = await import('../../../src/utils/speed-limits.js');
+      const normalized = Object.fromEntries(
+        Object.entries(settings).map(([key, value]) => [key, normalizeSpeedSetting(key, value)])
+      );
+      expect(normalized.keyBindings.map((binding) => binding.value)).toEqual([16, 16, 64, 32, 120]);
+      expect(normalized.lastSpeed).toBe(16);
+      expect(normalized.siteRules[0].speed).toBe(16);
+      expect(settings.lastSpeed).toBe(64);
+      expect(settings.siteRules[0].speed).toBe(32);
+      expect(validateImportedSettings(normalized)).toBe('');
+      expect(validateImportedSettings(settings)).toContain('shortcut');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: 64 })).toContain('lastSpeed');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: 16.01 })).toContain('lastSpeed');
+      expect(
+        validateImportedSettings({
+          ...normalized,
+          siteRules: [{ pattern: 'example.com', enabled: true, speed: 16.01 }],
+        })
+      ).toContain('site rule');
+      expect(validateImportedSettings({ ...normalized, lastSpeed: Infinity })).toContain(
+        'lastSpeed'
+      );
+      expect(
+        validateImportedSettings({
+          ...normalized,
+          siteRules: [{ pattern: 'example.com', enabled: true, speed: Infinity }],
+        })
+      ).toContain('site rule');
+    } finally {
+      vi.unstubAllGlobals();
+      window.VSC.Constants = previousConstants;
+    }
+  });
+
   it('createRow applies accessible labels to generated controls', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -235,6 +301,42 @@ describe('Options accessibility and CSS safety', () => {
   it('keeps mobile preference checkbox layout from applying to site rule rows', () => {
     expect(optionsCss).toContain(".row:not(.site-rule):has(> input[type='checkbox'])");
     expect(optionsCss).not.toContain(".row:has(input[type='checkbox'])");
+  });
+
+  it('uses the device viewport while retaining user zoom', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    expect(parsed.querySelector('meta[name="viewport"]').content).toBe(
+      'width=device-width, initial-scale=1'
+    );
+  });
+
+  it('keeps touch inputs legible and matches the CSS editor highlight font size', () => {
+    const touchCss = optionsCss.split('@media (any-pointer: coarse) {')[1];
+    expect(touchCss).toMatch(/min-height: 44px;/);
+    expect(touchCss).toMatch(
+      /\.css-editor textarea,[\s\S]*?\.css-editor \.css-highlight\s*\{\s*font-size: 16px;/
+    );
+    expect(touchCss).toMatch(/\.removeParent,[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
+  });
+
+  it('bounds narrow touch row columns and gives the action selector its own row', () => {
+    expect(optionsCss).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(optionsCss).toMatch(/\.row.customs \.customDo\s*\{\s*grid-column: 1 \/ -1;/);
+    expect(optionsCss).toContain('grid-template-columns: 44px 70px minmax(0, 1fr) 44px');
+    expect(optionsCss).toMatch(
+      /\.row\.site-rule \.rulePattern\s*\{\s*grid-column: 1 \/ -1;\s*grid-row: 1;/
+    );
+    expect(optionsCss).toMatch(/#site-rules-container\s*\{\s*width: 100%;\s*min-width: 0;/);
+  });
+
+  it('explains browser storage and offers settings transfer', () => {
+    const parsed = new DOMParser().parseFromString(optionsHtml, 'text/html');
+    const text = parsed.getElementById('about-privacy').parentElement.textContent;
+    expect(text.replace(/\s+/g, ' ')).toContain(
+      'Your browser may sync preferences through its own settings sync.'
+    );
+    expect(text).toContain('Export');
+    expect(text).toContain('Import');
   });
 
   it('keeps shortcut text visible in forced colors mode', () => {

@@ -47,6 +47,13 @@ export function sendTabCommand(tabId, message) {
           return;
         }
         const mediaCount = successful.reduce((count, response) => count + response.mediaCount, 0);
+        const pausedVideoCount = successful.reduce((count, response) => {
+          const paused = response.pausedVideoCount;
+          return (
+            count +
+            (Number.isInteger(paused) && paused >= 0 && paused <= response.mediaCount ? paused : 0)
+          );
+        }, 0);
         const speeds = [
           ...new Set(
             successful
@@ -61,6 +68,7 @@ export function sendTabCommand(tabId, message) {
         resolve({
           ok: true,
           mediaCount,
+          pausedVideoCount,
           speeds,
           currentSpeed: speeds.length === 1 ? speeds[0] : null,
         });

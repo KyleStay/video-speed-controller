@@ -1,3 +1,5 @@
+import { normalizeSpeedSetting } from '../utils/speed-limits.js';
+
 /**
  * Settings management for Video Speed Controller
  */
@@ -15,6 +17,7 @@ if (!window.VSC.VideoSpeedConfig) {
       // Tracks the last speed value we wrote to storage, so the onChanged
       // listener can distinguish our own echo from a genuine external write.
       this._lastWrittenSpeed = null;
+      this.speedPreferenceRevision = 0;
 
       // Keep in-memory settings fresh when other contexts write to storage.
       // This prevents the stale-read problem where e.g. the options page holds
@@ -45,12 +48,24 @@ if (!window.VSC.VideoSpeedConfig) {
               }
             }
 
+            // Explicit external replacements supersede per-media readback even
+            // when a reset/import repeats the same value. Sibling commands and
+            // this config's debounced self-echo retain their local authority.
+            if (
+              ['lastSpeed', 'siteDefaultSpeed', 'siteRules'].includes(key) &&
+              !(key === 'siteRules' && this._onlySiteControlsChanged(change.newValue))
+            ) {
+              this.speedPreferenceRevision += 1;
+            }
+
             // Imports may omit a setting and remove its stored key. Existing
             // contexts must adopt the default rather than keep the old value.
-            this.settings[key] =
+            this.settings[key] = normalizeSpeedSetting(
+              key,
               change.newValue === undefined
                 ? window.VSC.Constants.DEFAULT_SETTINGS[key]
-                : change.newValue;
+                : change.newValue
+            );
 
             // External lastSpeed write while we have a pending debounce:
             // cancel our stale timer — the external value is more recent.
@@ -70,25 +85,51 @@ if (!window.VSC.VideoSpeedConfig) {
       }
     }
 
+    /** A live visibility toggle must not cancel an in-flight speed command. */
+    _onlySiteControlsChanged(nextRules) {
+      try {
+        if (!window.VSC.matchSiteRule) {
+          return false;
+        }
+        const before = window.VSC.matchSiteRule(this.settings.siteRules, window.location.href);
+        const after = window.VSC.matchSiteRule(nextRules, window.location.href);
+        return (
+          (before?.hideSiteControls === true) !== (after?.hideSiteControls === true) &&
+          (before?.enabled !== false) === (after?.enabled !== false) &&
+          (before?.speed ?? null) === (after?.speed ?? null)
+        );
+      } catch {
+        return false;
+      }
+    }
+
     /**
      * Load settings from Chrome storage or pre-injected settings
+     * @param {Object} [options] - Load behavior
+     * @param {boolean} [options.throwOnError=false] - Reject instead of returning fallback settings
      * @returns {Promise<Object>} Loaded settings
      */
-    async load() {
+    async load({ throwOnError = false } = {}) {
       try {
         // Use StorageManager which handles both contexts automatically.
         // controllerCSS: null fetches the legacy key for one-time migration (not in DEFAULT_SETTINGS).
-        const storage = await window.VSC.StorageManager.get({
+        const loadedStorage = await window.VSC.StorageManager.get({
           ...window.VSC.Constants.DEFAULT_SETTINGS,
           controllerCSS: null,
         });
 
         // null = bridge signaled abort (site disabled/blacklisted)
-        if (storage === null) {
+        if (loadedStorage === null) {
           this.settings._abort = true;
           return;
         }
 
+        const storage = Object.fromEntries(
+          Object.entries(loadedStorage).map(([key, value]) => [
+            key,
+            normalizeSpeedSetting(key, value),
+          ])
+        );
         delete this.settings._abort;
 
         this._loaded = true;
@@ -198,6 +239,9 @@ if (!window.VSC.VideoSpeedConfig) {
         return this.settings;
       } catch (error) {
         window.VSC.logger.error(`Failed to load settings: ${error.message}`);
+        if (throwOnError) {
+          throw error;
+        }
         return window.VSC.Constants.DEFAULT_SETTINGS;
       }
     }
@@ -236,6 +280,10 @@ if (!window.VSC.VideoSpeedConfig) {
         );
         return false;
       }
+
+      newSettings = Object.fromEntries(
+        Object.entries(newSettings).map(([key, value]) => [key, normalizeSpeedSetting(key, value)])
+      );
 
       // Update in-memory settings immediately
       this.settings = { ...this.settings, ...newSettings };

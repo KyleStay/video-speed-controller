@@ -1,2 +1,7 @@
+if node scripts/pre-push-check.mjs; then
+  echo 'Deletion-only push: skipping lint and tests.'
+  exit 0
+fi
+
 npm run lint
 npm test

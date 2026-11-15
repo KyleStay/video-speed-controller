@@ -14,3 +14,8 @@ node_modules
 coverage
 plan.md
 test-results
+
+# Local build products and per-user editor state
+/build/
+**/xcuserdata/
+*.xcuserstate

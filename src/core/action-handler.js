@@ -190,6 +190,10 @@ class ActionHandler {
    * @param {number} seekSeconds - Seconds to seek
    */
   seek(video, seekSeconds) {
+    if (window.VSC.GifPlayback?.get(video)) {
+      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seekSeconds));
+      return;
+    }
     // Use site-specific seeking (handlers return true if they handle it)
     window.VSC.siteHandlerManager.handleSeek(video, seekSeconds);
   }
@@ -205,7 +209,7 @@ class ActionHandler {
    * Frame size = detected fps (measured by the controller's rVFC burst sampler)
    * when available, else the binding's configurable fallback fps. Step amount is
    * `1 / fps` seconds, routed through the normal seek path so site handlers'
-   * bounds-checking applies (handleSeek clamps to [0, duration]).
+   * bounds-checking applies (finite duration or the current native live window).
    *
    * This writes `currentTime`, not `playbackRate`, so it never touches the
    * ratechange cooldown / fight-back machinery.
@@ -215,6 +219,11 @@ class ActionHandler {
    * @param {number} fallbackFps - Binding value: fps used when none is detected
    */
   stepFrame(video, direction, fallbackFps) {
+    const gif = window.VSC.GifPlayback?.get(video);
+    if (gif) {
+      gif.stepFrame(direction);
+      return;
+    }
     if (video.tagName !== 'VIDEO') {
       window.VSC.logger.debug('stepFrame ignored: not a video element');
       return;
@@ -436,7 +445,7 @@ class ActionHandler {
         return;
       }
 
-      if (typeof value !== 'number' || isNaN(value)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
         window.VSC.logger.warn('adjustSpeed called with invalid value:', value);
         return;
       }
@@ -451,11 +460,9 @@ class ActionHandler {
    */
   _adjustSpeedInternal(video, value, options) {
     const { relative = false, source = 'internal' } = options;
-
     // Calculate target speed
     let targetSpeed;
     if (relative) {
-      // For relative changes, add to current speed
       const currentSpeed = video.playbackRate < 0.1 ? 0.0 : video.playbackRate;
       targetSpeed = currentSpeed + value;
 
@@ -484,7 +491,7 @@ class ActionHandler {
 
     // Fight detection is enforced upstream in event-manager.js.
     // External changes that reach here have already been approved (fight surrendered or speed matched).
-    this.setSpeed(video, targetSpeed, source);
+    return this.setSpeed(video, targetSpeed, source);
   }
 
   /**
@@ -506,8 +513,21 @@ class ActionHandler {
    * @param {string} source - Change source: 'internal' (user/extension) or 'external' (site)
    */
   setSpeed(video, speed, source = 'internal') {
-    const speedValue = speed.toFixed(2);
-    const numericSpeed = Number(speedValue);
+    if (!Number.isFinite(speed)) {
+      return false;
+    }
+    let previousPlaybackRate;
+    try {
+      previousPlaybackRate = video.playbackRate;
+    } catch {
+      return false;
+    }
+    const { MIN, MAX } = window.VSC.Constants.SPEED_LIMITS;
+    let numericSpeed = Number(Math.min(MAX, Math.max(MIN, speed)).toFixed(2));
+    const commandConfig = this.config,
+      commandSettings = commandConfig.settings;
+    const previousSpeed = commandSettings.lastSpeed;
+    const speedPreferenceRevision = this.config.speedPreferenceRevision ?? 0;
 
     // 1. Update lastSpeed BEFORE touching playbackRate. The playbackRate
     //    assignment (step 3) fires a synchronous native ratechange event.
@@ -528,7 +548,68 @@ class ActionHandler {
     }
 
     // 3. Set the actual playback rate via site handler (native ratechange fires here, blocked by cooldown)
-    window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
+    const mediaRateState = this.eventManager?.getMediaRateState?.(video);
+    if (mediaRateState) {
+      mediaRateState.applyingSpeed = true;
+    }
+    try {
+      window.VSC.siteHandlerManager.handleSpeedChange(video, numericSpeed);
+      const acceptedSpeed = video.playbackRate;
+      if (!Number.isFinite(acceptedSpeed) || acceptedSpeed <= 0) {
+        this.config.settings.lastSpeed = previousSpeed;
+        return false;
+      }
+      // Reflect the source's accepted rate without claiming measured decoding throughput.
+      numericSpeed = acceptedSpeed;
+      if (source !== 'external' && source !== 'init') {
+        this.config.settings.lastSpeed = numericSpeed;
+      }
+      if (mediaRateState) {
+        mediaRateState.lifecycleSpeed = numericSpeed;
+        mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+      }
+      if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
+        // Each source can accept a different rate for the same command.
+        // A sibling's readback must not invalidate this media's authority.
+        mediaRateState.acceptedSpeed = numericSpeed;
+        mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
+      }
+    } catch (error) {
+      let restoredSpeed =
+        this.config.settings.lastSpeed === numericSpeed
+          ? previousSpeed
+          : this.config.settings.lastSpeed;
+      try {
+        const actual = video.playbackRate;
+        if (Number.isFinite(actual) && actual > 0 && actual !== previousPlaybackRate) {
+          // A custom setter can mutate then throw. Retain its local readback
+          // even during init, without replacing an existing saved preference.
+          if (source !== 'external' && source !== 'init') {
+            restoredSpeed = actual;
+          }
+          if (mediaRateState) {
+            mediaRateState.lifecycleSpeed = actual;
+            mediaRateState.lifecycleSpeedRevision = speedPreferenceRevision;
+          }
+          if (mediaRateState && (source !== 'init' || Number.isFinite(previousSpeed))) {
+            mediaRateState.acceptedSpeed = actual;
+            mediaRateState.acceptedSpeedRevision = speedPreferenceRevision;
+          }
+        }
+      } catch {
+        // Preserve the last established authority when the page getter fails.
+      }
+      this.config.settings.lastSpeed = restoredSpeed;
+      window.VSC.logger?.debug?.(
+        `Playback speed request rejected: ${error?.message ?? String(error)}`
+      );
+      return false;
+    } finally {
+      if (mediaRateState) {
+        mediaRateState.applyingSpeed = false;
+      }
+    }
+    const speedValue = numericSpeed.toFixed(2);
 
     // 4. Dispatch synthetic event with source tracking
     video.dispatchEvent(
@@ -549,16 +630,21 @@ class ActionHandler {
       window.VSC.logger.warn(
         'Cannot update speed indicator: video controller UI not fully initialized'
       );
-      return;
+      return true;
     }
-    speedIndicator.textContent = numericSpeed.toFixed(2);
-    speedIndicator.setAttribute?.(
-      'aria-label',
-      `Playback speed ${numericSpeed.toFixed(2)}. Press Enter to reset speed.`
-    );
+    const shadow = video.vsc?.div?.shadowRoot;
+    if (shadow) {
+      window.VSC.ShadowDOMManager.updateSpeedDisplay(shadow, numericSpeed);
+    } else {
+      speedIndicator.textContent = numericSpeed.toFixed(2);
+      speedIndicator.setAttribute?.(
+        'aria-label',
+        `Playback speed ${numericSpeed.toFixed(2)}. Press Enter to reset speed.`
+      );
+    }
 
     // 6. Persist to storage only if rememberSpeed is enabled
-    if (source !== 'external' && this.config.settings.rememberSpeed) {
+    if (source !== 'external' && source !== 'init' && this.config.settings.rememberSpeed) {
       this.config.save({ lastSpeed: numericSpeed });
     }
 
@@ -566,6 +652,7 @@ class ActionHandler {
     if (video.vsc?.div) {
       this.flashController(video.vsc.div);
     }
+    return true;
   }
 }
 

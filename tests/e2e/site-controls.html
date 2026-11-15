@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Local site controls regression</title>
+    <style>
+      body {
+        margin: 24px;
+        font: 16px system-ui;
+        background: #eef2f6;
+        color: #182333;
+      }
+      button,
+      input,
+      [role='button'] {
+        min-width: 44px;
+        min-height: 44px;
+      }
+      .players {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px;
+        align-items: start;
+      }
+      .player {
+        position: relative;
+        width: 480px;
+        max-width: 100%;
+        height: 270px;
+        background: #182333;
+      }
+      video {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .transport {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        gap: 4px;
+      }
+      .caption {
+        position: absolute;
+        top: 80px;
+        left: 60px;
+        padding: 4px;
+        background: white;
+      }
+      #adjacent {
+        width: 240px;
+        height: 135px;
+      }
+      #adjacent-control {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+      }
+      #page-controls {
+        margin: 20px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Local site controls regression</h1>
+    <div id="page-controls">
+      <button id="page-play">Play or pause fixture</button>
+      <button id="page-action">Unrelated page action</button>
+      <a id="page-link" href="#details">Page details</a>
+    </div>
+    <div class="players">
+      <div class="player" id="primary">
+        <video
+          id="primary-video"
+          muted
+          loop
+          controls
+          playsinline
+          preload="auto"
+          src="/sample.webm"
+        ></video>
+        <div class="transport" id="transport">
+          <button id="site-play" aria-label="Play video">Play</button>
+          <button id="site-settings" aria-label="Video settings" style="display: inline-flex">
+            Settings
+          </button>
+          <input id="site-seek" type="range" aria-label="Seek video" />
+          <a id="site-fullscreen" href="#player" aria-label="Full screen">Full screen</a>
+        </div>
+        <div class="caption" role="caption" id="caption">
+          Caption text <button id="caption-action">Caption information</button>
+        </div>
+      </div>
+      <div class="player" id="adjacent">
+        <video id="adjacent-video" controls></video>
+        <button id="adjacent-control">Adjacent player action</button>
+      </div>
+    </div>
+    <p id="details">Page content outside either player.</p>
+    <script>
+      const video = document.getElementById('primary-video');
+      const trace = (window.__siteControlsFixture = { video, calls: [], sourceWrites: [] });
+      for (const name of ['load', 'play', 'pause']) {
+        const method = video[name];
+        video[name] = function (...args) {
+          trace.calls.push(name);
+          return method.apply(this, args);
+        };
+      }
+      const sourceObject = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+      Object.defineProperty(video, 'srcObject', {
+        configurable: true,
+        get() {
+          return sourceObject.get.call(this);
+        },
+        set(value) {
+          trace.sourceWrites.push('srcObject');
+          sourceObject.set.call(this, value);
+        },
+      });
+      new MutationObserver((records) => {
+        for (const record of records) {
+          if (
+            record.type === 'attributes' ||
+            [...record.addedNodes, ...record.removedNodes].some(
+              (node) => node.localName === 'source'
+            )
+          ) {
+            trace.sourceWrites.push(record.attributeName || 'source-child');
+          }
+        }
+      }).observe(video, { attributes: true, attributeFilter: ['src'], childList: true });
+      const toggle = () =>
+        video.paused
+          ? video.play().catch((error) => {
+              throw error;
+            })
+          : video.pause();
+      document.getElementById('page-play').addEventListener('click', toggle);
+      document.getElementById('site-play').addEventListener('click', toggle);
+      trace.addLateControl = () => {
+        const button = document.createElement('button');
+        button.id = 'late-control';
+        button.textContent = 'Late video quality';
+        document.getElementById('transport').append(button);
+      };
+    </script>
+  </body>
+</html>

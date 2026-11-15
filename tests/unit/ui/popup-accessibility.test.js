@@ -18,6 +18,8 @@ function renderPopup() {
     <button id="speed-decrease" data-delta="-0.1"><span>-0.1</span></button>
     <button id="speed-reset">1x</button>
     <button id="speed-increase" data-delta="0.1"><span>+0.1</span></button>
+    <button data-frame-direction="-1" disabled>Frame back</button>
+    <button data-frame-direction="1" disabled>Frame forward</button>
     <div class="preset-grid" role="group" aria-label="Speed presets">
       <button class="preset-btn" data-speed="0.5" aria-pressed="false">0.5</button>
       <button class="preset-btn" data-speed="1.0" aria-pressed="false">1</button>
@@ -67,8 +69,36 @@ describe('Popup accessibility', () => {
     window.dispatchEvent(new Event('pagehide'));
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     delete chrome.runtime.onMessage.removeListener;
     cleanupChromeMock();
+  });
+
+  it('advertises and accepts the 16× maximum while rejecting larger requests', async () => {
+    await initializePopup();
+    const input = document.getElementById('custom-speed-input');
+    expect(input.max).toBe('16');
+    chrome.tabs.sendMessage.mockClear();
+    input.value = '32';
+    document
+      .getElementById('custom-speed-form')
+      .dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById('status').textContent).toBe(
+      'Speed must be between 0.07× and 16×.'
+    );
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+
+    input.value = '16';
+    document
+      .getElementById('custom-speed-form')
+      .dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'VSC_SET_SPEED', payload: { speed: 16 } }),
+      expect.any(Function)
+    );
+    expect(input.getAttribute('aria-invalid')).toBe('false');
   });
 
   it('names preset groups and initializes pressed states', async () => {
@@ -88,6 +118,101 @@ describe('Popup accessibility', () => {
     expect(customSpeedInput.getAttribute('aria-invalid')).toBe('false');
   });
 
+  it('steps paused video frames and disables the pair when the page is playing', async () => {
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 1, pausedVideoCount: 1 });
+    });
+    await initializePopup();
+    const back = document.querySelector('[data-frame-direction="-1"]');
+    const forward = document.querySelector('[data-frame-direction="1"]');
+    expect(back.disabled).toBe(false);
+    expect(forward.disabled).toBe(false);
+    chrome.tabs.sendMessage.mockClear();
+    back.click();
+    forward.click();
+    expect(chrome.tabs.sendMessage.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ type: 'VSC_STEP_FRAME', payload: { direction: -1 } }),
+      expect.objectContaining({ type: 'VSC_STEP_FRAME', payload: { direction: 1 } }),
+    ]);
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 2, pausedVideoCount: 0 });
+    });
+    document.querySelector('#speed-increase').click();
+    await vi.waitFor(() => expect(forward.disabled).toBe(true));
+    expect(back.disabled).toBe(true);
+  });
+
+  it('keeps frame controls disabled without an eligible paused video and after power off', async () => {
+    await initializePopup();
+    expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(true);
+    chrome.tabs.sendMessage.mockImplementation((_tabId, _message, callback) => {
+      callback?.({ ok: true, mediaCount: 1, currentSpeed: 1, pausedVideoCount: 1 });
+    });
+    document.querySelector('#speed-increase').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(false)
+    );
+    document.querySelector('#disable').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(true)
+    );
+  });
+
+  it('refreshes stale frame eligibility without disabling working speed controls or repeating the step', async () => {
+    let playing = false;
+    chrome.tabs.sendMessage.mockImplementation((_tabId, message, callback) => {
+      callback?.(
+        message.type === 'VSC_STEP_FRAME'
+          ? { ok: false, mediaCount: 1, currentSpeed: 1.5, pausedVideoCount: 0 }
+          : { ok: true, mediaCount: 1, currentSpeed: 1.5, pausedVideoCount: playing ? 0 : 1 }
+      );
+    });
+    await initializePopup();
+    const frame = document.querySelector('[data-frame-direction="1"]');
+    expect(frame.disabled).toBe(false);
+    playing = true;
+    chrome.tabs.sendMessage.mockClear();
+    frame.click();
+    await vi.waitFor(
+      () => {
+        expect(frame.disabled).toBe(true);
+        expect(document.querySelector('#speed-increase').disabled).toBe(false);
+        expect(document.querySelector('#status').textContent).toBe('Current 1.5x');
+      },
+      { timeout: 2000 }
+    );
+    expect(chrome.tabs.sendMessage.mock.calls.map((call) => call[1].type)).toEqual([
+      'VSC_STEP_FRAME',
+      'VSC_GET_STATUS',
+    ]);
+  });
+
+  it('refreshes all frame statuses after a partially successful frame step', async () => {
+    chrome.tabs.sendMessage.mockImplementation((_tabId, message, callback) => {
+      callback?.(
+        message.type === 'VSC_STEP_FRAME'
+          ? { ok: true, mediaCount: 1, currentSpeed: 2, pausedVideoCount: 1, speeds: [2] }
+          : { ok: true, mediaCount: 2, currentSpeed: null, pausedVideoCount: 1, speeds: [1, 2] }
+      );
+    });
+    await initializePopup();
+    chrome.tabs.sendMessage.mockClear();
+    chrome.runtime.onMessage.removeListener.mockClear();
+    document.querySelector('[data-frame-direction="1"]').click();
+    await vi.waitFor(
+      () => {
+        expect(chrome.runtime.onMessage.removeListener).toHaveBeenCalledTimes(2);
+        expect(document.querySelector('#status').textContent).toBe('Multiple playback speeds.');
+      },
+      { timeout: 2000 }
+    );
+    expect(document.querySelector('#speed-increase').disabled).toBe(false);
+    expect(chrome.tabs.sendMessage.mock.calls.map((call) => call[1].type)).toEqual([
+      'VSC_STEP_FRAME',
+      'VSC_GET_STATUS',
+    ]);
+  });
+
   it('marks invalid custom speed input and avoids sending invalid commands', async () => {
     await initializePopup();
     chrome.tabs.sendMessage.mockClear();
@@ -100,7 +225,7 @@ describe('Popup accessibility', () => {
 
     expect(customSpeedInput.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById('status').textContent).toBe(
-      'Speed must be between 0.07x and 16x.'
+      'Speed must be between 0.07× and 16×.'
     );
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
 
@@ -185,6 +310,7 @@ describe('Popup accessibility', () => {
           response: {
             ok: true,
             mediaCount: 1,
+            pausedVideoCount: 1,
             currentSpeed: 1.5,
             speeds: [1.5],
           },
@@ -194,6 +320,7 @@ describe('Popup accessibility', () => {
     });
     await initializePopup();
     expect(document.getElementById('speed-increase').disabled).toBe(false);
+    expect(document.querySelector('[data-frame-direction="1"]').disabled).toBe(false);
     expect(
       document.querySelector('.preset-btn[data-speed="1.5"]').getAttribute('aria-pressed')
     ).toBe('true');
@@ -308,5 +435,19 @@ describe('Popup accessibility', () => {
     expect(popupCss).toMatch(
       /\.reset-btn\s*\{[^}]*background:\s*var\(--md-primary\);[^}]*color:\s*var\(--md-on-primary\);/s
     );
+  });
+
+  it('uses the device viewport without disabling pinch zoom', () => {
+    const parsed = new DOMParser().parseFromString(popupHtml, 'text/html');
+    const viewport = parsed.querySelector('meta[name="viewport"]').content;
+    expect(viewport).toBe('width=device-width, initial-scale=1');
+    expect(viewport).not.toMatch(/user-scalable|maximum-scale/);
+  });
+
+  it('provides touch-size controls and custom input without iPhone focus zoom', () => {
+    const touchCss = popupCss.split('@media (any-pointer: coarse)')[1];
+    expect(touchCss).toMatch(/button.preset-btn,[\s\S]*?min-width: 44px;[\s\S]*?min-height: 44px;/);
+    expect(touchCss).toMatch(/\.custom-speed input\s*\{\s*font-size: 16px;/);
+    expect(popupCss).not.toMatch(/min-width:\s*(280|304)px/);
   });
 });

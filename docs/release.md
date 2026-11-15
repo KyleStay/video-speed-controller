@@ -60,14 +60,16 @@ npm run release:github
 
 ## Quality gates
 
-| Hook       | Runs                                                                   | When            |
-| ---------- | ---------------------------------------------------------------------- | --------------- |
-| Pre-commit | `lint-staged` (eslint + prettier on changed files)                     | Every commit    |
-| Pre-push   | `npm run lint` + `npm test`                                            | Every push      |
-| CI         | lint, browser release builds, test, browser fixtures, benchmarks, ZIPs | Push/PR to main |
+| Hook       | Runs                                               | When                      |
+| ---------- | -------------------------------------------------- | ------------------------- |
+| Pre-commit | `lint-staged` (eslint + prettier on changed files) | Every commit              |
+| Pre-push   | `npm run lint` + `npm test`                        | Every push                |
+| Local CI   | lint, browser release builds, tests and ZIPs       | Explicit local invocation |
 
-CI uploads both versioned browser ZIPs as artifacts, so every passing build on
-the maintained branches produces release candidates.
+Run `python3 scripts/local-ci.py` for isolated offline checks. Browser fixtures
+and benchmarks run separately through permitted local browser runners. Keep
+hosted workflows inactive; retain results and candidate artifacts locally as
+described in [Local CI](LOCAL-CI.md).
 
 ## Updating an existing Chrome Web Store item
 

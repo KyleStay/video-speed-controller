@@ -84,6 +84,47 @@ describe('ActionHandler', () => {
     expect(config.settings.lastSpeed).toBe(2.0);
   });
 
+  it('applies keyboard and popup commands to every controlled media element', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const events = new window.VSC.EventManager(config, null);
+    const actions = new window.VSC.ActionHandler(config, events);
+    const first = createTestVideoWithController(config, actions, { playbackRate: 1 });
+    const second = createTestVideoWithController(config, actions, { playbackRate: 1.8 });
+    try {
+      actions.runAction('faster', 0.1, { type: 'keydown', target: document.body });
+      expect(first.playbackRate).toBe(1.1);
+      expect(second.playbackRate).toBe(1.9);
+      actions.runAction('slower', 0.1);
+      expect(first.playbackRate).toBe(1);
+      expect(second.playbackRate).toBe(1.8);
+    } finally {
+      first.vsc.remove();
+      second.vsc.remove();
+      events.cleanup();
+    }
+  });
+
+  it('scopes a controller button command to its own media', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    const events = new window.VSC.EventManager(config, null);
+    const actions = new window.VSC.ActionHandler(config, events);
+    const first = createTestVideoWithController(config, actions, { playbackRate: 1 });
+    const second = createTestVideoWithController(config, actions, { playbackRate: 1.8 });
+    const button = document.createElement('button');
+    second.vsc.div.shadowRoot.append(button);
+    try {
+      actions.runAction('faster', 0.1, { type: 'click', target: button });
+      expect(first.playbackRate).toBe(1);
+      expect(second.playbackRate).toBe(1.9);
+    } finally {
+      first.vsc.remove();
+      second.vsc.remove();
+      events.cleanup();
+    }
+  });
+
   it('ActionHandler should handle faster action', async () => {
     const config = window.VSC.videoSpeedConfig;
     await config.load();
@@ -96,6 +137,32 @@ describe('ActionHandler', () => {
     actionHandler.runAction('faster', 0.1);
 
     expect(mockVideo.playbackRate).toBe(1.1);
+  });
+
+  it('keeps touch preset states and the accessible pill label current after speed changes', async () => {
+    const config = window.VSC.videoSpeedConfig;
+    await config.load();
+    config.settings.rememberSpeed = false;
+    const eventManager = new window.VSC.EventManager(config, null);
+    const actionHandler = new window.VSC.ActionHandler(config, eventManager);
+    const video = createTestVideoWithController(config, actionHandler);
+    const controller = video.vsc;
+    const shadow = controller.div.shadowRoot;
+    controller.controlsManager.setTouchMode(shadow, true);
+
+    actionHandler.adjustSpeed(video, 2);
+    actionHandler.adjustSpeed(video, 1.5);
+
+    expect(shadow.querySelector('[data-value="1.5"]').getAttribute('aria-pressed')).toBe('true');
+    expect(shadow.querySelector('[data-value="2"]').getAttribute('aria-pressed')).toBe('false');
+    expect(controller.speedIndicator.getAttribute('aria-label')).toBe(
+      'Playback speed 1.50 times. Tap to show speed controls.'
+    );
+
+    actionHandler.adjustSpeed(video, 1.6);
+    expect(shadow.querySelectorAll('.touch-preset[aria-pressed="true"]')).toHaveLength(0);
+    controller.remove();
+    eventManager.cleanup();
   });
 
   it('ActionHandler should handle slower action', async () => {
@@ -1239,5 +1306,267 @@ describe('ActionHandler', () => {
     });
 
     expect(mockVideo.playbackRate).toBe(1.5); // Should use configured reset speed
+  });
+  describe('accepted playback speed state', () => {
+    function setup() {
+      const config = window.VSC.videoSpeedConfig;
+      config.settings.lastSpeed = 1.25;
+      config.settings.rememberSpeed = true;
+      const actionHandler = new window.VSC.ActionHandler(config, null);
+      const video = createTestVideoWithController(config, actionHandler);
+      const save = vi.spyOn(config, 'save').mockImplementation(() => {});
+      return { config, actionHandler, video, save };
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it('clamps direct setSpeed callers on Chrome as well as shortcut adjustments', () => {
+      const { video, actionHandler, config, save } = setup();
+      expect(actionHandler.setSpeed(video, 32, 'user')).toBe(true);
+      expect(video.playbackRate).toBe(16);
+      expect(config.settings.lastSpeed).toBe(16);
+      expect(save).toHaveBeenCalledWith({ lastSpeed: 16 });
+    });
+
+    it('caps legacy high speed user commands at 16 and establishes lifecycle authority', () => {
+      const { video, actionHandler, config, save } = setup();
+      const manager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = manager;
+      const setter = vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange');
+      try {
+        expect(actionHandler.setSpeed(video, 64, 'user')).toBe(true);
+        expect(setter).toHaveBeenCalledExactlyOnceWith(video, 16);
+        expect(video.playbackRate).toBe(16);
+        expect(config.settings.lastSpeed).toBe(16);
+        expect(manager.getMediaRateState(video).acceptedSpeed).toBe(16);
+        expect(manager.getMediaRateState(video).lifecycleSpeed).toBe(16);
+        expect(save).toHaveBeenCalledWith({ lastSpeed: 16 });
+      } finally {
+        manager.cleanup();
+      }
+    });
+
+    it.each([NaN, Infinity, -Infinity, undefined, '32'])(
+      'rejects non-finite or non-numeric direct input %s',
+      (speed) => {
+        const { video, actionHandler, config, save } = setup();
+        const before = video.playbackRate;
+        expect(actionHandler.setSpeed(video, speed, 'user')).toBe(false);
+        expect(video.playbackRate).toBe(before);
+        expect(config.settings.lastSpeed).toBe(1.25);
+        expect(save).not.toHaveBeenCalled();
+      }
+    );
+
+    it('does not persist or render a rejected native rate request', () => {
+      const { video, actionHandler, config, save } = setup();
+      const indicator = video.vsc.speedIndicator.textContent;
+      vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(() => {
+        expect(config.settings.lastSpeed).toBe(8);
+        throw new DOMException('Unsupported rate', 'NotSupportedError');
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(1.25);
+      expect(video.vsc.speedIndicator.textContent).toBe(indicator);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('does not recursively fight a synchronous native clamp during an explicit write', () => {
+      const { video, actionHandler, config, save } = setup();
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media) => {
+          media.playbackRate = 2;
+          eventManager.handleRateChange({ target: media, stopImmediatePropagation: vi.fn() });
+        });
+      try {
+        expect(actionHandler.setSpeed(video, 8, 'user')).toBe(true);
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(config.settings.lastSpeed).toBe(2);
+        expect(save).toHaveBeenCalledWith({ lastSpeed: 2 });
+        expect(eventManager.getMediaRateState(video).applyingSpeed).toBe(false);
+        handler.mockImplementation(() => {
+          throw new Error('Unsupported');
+        });
+        expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+        expect(eventManager.getMediaRateState(video).applyingSpeed).toBe(false);
+        expect(config.settings.lastSpeed).toBe(2);
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
+    it.each(['synchronous', 'deferred'])(
+      'retains a source-specific initialization clamp without retrying or saving it (%s events)',
+      (timing) => {
+        vi.useFakeTimers();
+        const { video, actionHandler, config, save } = setup();
+        config.settings.lastSpeed = 8;
+        const eventManager = new window.VSC.EventManager(config, actionHandler);
+        actionHandler.eventManager = eventManager;
+        const forward = (event) => eventManager.handleRateChange(event);
+        video.addEventListener('ratechange', forward);
+        let writes = 0;
+        const handler = vi
+          .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+          .mockImplementation((media, requested) => {
+            if (++writes > 4) {
+              throw new Error('Recursive rate restoration');
+            }
+            media.playbackRate = media === video ? 2 : requested;
+            const dispatch = () => media.dispatchEvent(new Event('ratechange'));
+            if (timing === 'synchronous') {
+              dispatch();
+            } else {
+              setTimeout(dispatch, 0);
+            }
+          });
+        try {
+          expect(actionHandler.setSpeed(video, 8, 'init')).toBe(true);
+          vi.advanceTimersByTime(10);
+          expect(handler).toHaveBeenCalledTimes(1);
+          expect(video.playbackRate).toBe(2);
+          expect(config.settings.lastSpeed).toBe(8);
+          expect(save).not.toHaveBeenCalled();
+          expect(video.vsc.speedIndicator.textContent).toBe('2.00');
+          // An unrelated media element must keep its own requested authority.
+          const other = createTestVideoWithController(config, actionHandler);
+          expect(actionHandler.setSpeed(other, 8, 'init')).toBe(true);
+          expect(eventManager.getMediaRateState(video).acceptedSpeed).toBe(2);
+          expect(eventManager.getMediaRateState(other).acceptedSpeed).toBe(8);
+          expect(eventManager.getMediaRateState(other)).not.toBe(
+            eventManager.getMediaRateState(video)
+          );
+          other.vsc.remove();
+        } finally {
+          video.removeEventListener('ratechange', forward);
+          eventManager.cleanup();
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it.each(['synchronous', 'deferred'])(
+      'keeps different media clamps through sibling commands and site resets (%s)',
+      (timing) => {
+        vi.useFakeTimers();
+        const { video, actionHandler, config } = setup();
+        const other = createTestVideoWithController(config, actionHandler);
+        Object.defineProperty(video, 'readyState', { value: 4, configurable: true });
+        const manager = new window.VSC.EventManager(config, actionHandler);
+        actionHandler.eventManager = manager;
+        const notify = (media) =>
+          manager.handleRateChange({ target: media, stopImmediatePropagation: vi.fn() });
+        let writes = 0;
+        vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation(
+          (media, rate) => {
+            if (++writes > 10) {
+              throw new Error('Repeated unsupported rate');
+            }
+            media.playbackRate = media === video ? Math.min(rate, 2) : rate;
+            const dispatch = () => notify(media);
+            if (timing === 'synchronous') {
+              dispatch();
+            } else {
+              setTimeout(dispatch, 0);
+            }
+          }
+        );
+        try {
+          actionHandler.setSpeed(video, 8, 'user');
+          actionHandler.setSpeed(other, 8, 'user');
+          vi.advanceTimersByTime(10);
+          notify(video);
+          expect(writes).toBe(2);
+          expect(config.settings.lastSpeed).toBe(8);
+          // A command on B cannot force A to retry a rejected rate, either
+          // during its cooldown or in the later fight-back path.
+          actionHandler.setSpeed(other, 4, 'user');
+          for (const elapsed of [10, 5000]) {
+            vi.advanceTimersByTime(elapsed);
+            video.playbackRate = 1;
+            notify(video);
+            vi.advanceTimersByTime(10);
+            expect(video.playbackRate).toBe(2);
+            expect(manager.getMediaRateState(video).acceptedSpeed).toBe(2);
+            expect(config.settings.lastSpeed).toBe(4);
+          }
+          expect(writes).toBe(5);
+        } finally {
+          manager.cleanup();
+          other.vsc.remove();
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it('retains local initialization readback when a site mutates the rate and then throws', () => {
+      const { video, actionHandler, config, save } = setup();
+      config.settings.lastSpeed = 8;
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation((media) => {
+          media.playbackRate = 2;
+          throw new Error('Partial write');
+        });
+      try {
+        expect(actionHandler.setSpeed(video, 8, 'init')).toBe(false);
+        eventManager.handleRateChange({ target: video, stopImmediatePropagation: vi.fn() });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(config.settings.lastSpeed).toBe(8);
+        expect(video.playbackRate).toBe(2);
+        expect(save).not.toHaveBeenCalled();
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
+    it('does not establish initialization authority when no user preference exists', () => {
+      const { video, actionHandler, config, save } = setup();
+      config.settings.lastSpeed = null;
+      const eventManager = new window.VSC.EventManager(config, actionHandler);
+      actionHandler.eventManager = eventManager;
+      try {
+        expect(actionHandler.setSpeed(video, 1.5, 'init')).toBe(true);
+        expect(config.settings.lastSpeed).toBeNull();
+        expect(eventManager.getMediaRateState(video).acceptedSpeed).toBeUndefined();
+        expect(save).not.toHaveBeenCalled();
+      } finally {
+        eventManager.cleanup();
+      }
+    });
+
+    it('handles a null rejection and retains actual authority after a partial site write', () => {
+      const { video, actionHandler, config, save } = setup();
+      const handler = vi
+        .spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange')
+        .mockImplementation(() => {
+          throw null;
+        });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(1.25);
+      handler.mockImplementation((media) => {
+        media.playbackRate = 2;
+        throw 'Site rejected';
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(false);
+      expect(config.settings.lastSpeed).toBe(2);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('uses native accepted readback when a source clamps the rate', () => {
+      const { video, actionHandler, config, save } = setup();
+      vi.spyOn(window.VSC.siteHandlerManager, 'handleSpeedChange').mockImplementation((media) => {
+        media.playbackRate = 2;
+      });
+      expect(actionHandler.setSpeed(video, 8, 'user')).toBe(true);
+      expect(config.settings.lastSpeed).toBe(2);
+      expect(video.vsc.speedIndicator.textContent).toBe('2.00');
+      expect(save).toHaveBeenCalledWith({ lastSpeed: 2 });
+    });
   });
 });

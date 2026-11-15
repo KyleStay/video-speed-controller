@@ -92,6 +92,25 @@ describe('MediaElementObserver', () => {
     });
   });
 
+  it('queries light media once and filters each discovered light/shadow element once', () => {
+    const observer = makeObserver();
+    const doc = freshDoc();
+    const light = doc.createElement('video');
+    const host = doc.createElement('custom-player');
+    doc.body.append(light, host);
+    const root = host.attachShadow({ mode: 'open' });
+    const nested = doc.createElement('video');
+    root.appendChild(nested);
+    const query = vi.spyOn(doc, 'querySelectorAll');
+    const ignore = vi.spyOn(observer.siteHandler, 'shouldIgnoreVideo');
+
+    expect(observer.scanForMedia(doc)).toEqual([light, nested]);
+    expect(query.mock.calls.filter(([selector]) => selector === 'video')).toHaveLength(1);
+    expect(ignore).toHaveBeenCalledTimes(2);
+    query.mockRestore();
+    ignore.mockRestore();
+  });
+
   describe('depth-capped shadow media discovery', () => {
     it('exposes a finite MAX_SHADOW_DEPTH', () => {
       expect(Number.isFinite(window.VSC.MediaElementObserver.MAX_SHADOW_DEPTH)).toBe(true);

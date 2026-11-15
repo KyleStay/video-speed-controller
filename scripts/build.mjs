@@ -8,6 +8,7 @@ import {
   RELEASE_READY_BROWSERS,
   createBrowserManifest,
   getBuildTarget,
+  getBuildDefines,
 } from './browser-config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,6 +25,11 @@ const browserArgument = process.argv.find((argument) => argument.startsWith('--b
 const explicitBrowser = browserArgument?.split('=', 2)[1];
 const requestedBrowsers = isAllBrowsers ? RELEASE_READY_BROWSERS : [explicitBrowser || 'chrome'];
 
+// Refuse unsupported targets before touching any retained build output.
+for (const browser of requestedBrowsers) {
+  getBuildTarget(browser);
+}
+
 if (isWatch && (isAllBrowsers || explicitBrowser)) {
   throw new Error('Watch mode uses the default Chrome dist/. Omit --all and --browser.');
 }
@@ -35,7 +41,10 @@ const common = {
   platform: 'browser',
   legalComments: 'none',
   format: 'iife', // preserve side-effects and simple global init without ESM runtime
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    __VSC_DIAGNOSTICS__: process.env.STAYFAST_DIAGNOSTICS === '1' ? 'true' : 'false',
+  },
 };
 
 async function copyStaticFiles(browser, outDir) {
@@ -82,6 +91,7 @@ async function buildBrowser(browser, outDir) {
   const esbuildConfig = {
     ...common,
     target: getBuildTarget(browser),
+    define: { ...common.define, ...getBuildDefines(browser) },
     entryPoints: {
       'content-bridge': 'src/entries/content-bridge.js',
       inject: 'src/entries/inject-entry.js',

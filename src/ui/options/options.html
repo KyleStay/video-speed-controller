@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StayFast Video: Settings</title>
     <link rel="stylesheet" href="options.css" />
     <script src="options.js"></script>
@@ -58,7 +59,9 @@
         </button>
       </nav>
       <div class="split-button">
-        <button id="save" class="split-primary">Save</button>
+        <button id="revert" class="split-primary" title="Revert last changes" disabled>
+          Revert
+        </button>
         <button
           id="split-toggle"
           class="split-arrow"
@@ -71,7 +74,7 @@
         <div id="split-menu" class="split-dropdown" hidden>
           <button id="import">Import</button>
           <button id="export">Export</button>
-          <button id="restore">Reset</button>
+          <button id="restore">Reset all</button>
         </div>
         <input type="file" id="importFile" accept=".json" hidden />
       </div>
@@ -155,8 +158,9 @@
             <em
               >Per-site overrides. Use a domain or
               <a href="https://www.regexpal.com/">regex</a> (e.g. <code>/\.edu$/i</code>). Check
-              "Disable" to turn off the extension on that site. Set a speed to override the
-              default.</em
+              "Disable" to turn off the extension on that site. Set a speed to override the default.
+              Check "Hide buttons" to hide the site's video buttons, including play and pause
+              overlays. StayFast controls and captions remain available.</em
             >
           </label>
           <div id="site-rules-container">
@@ -164,6 +168,7 @@
               <span>Pattern</span>
               <span>Disable</span>
               <span>Speed</span>
+              <span>Hide buttons</span>
             </div>
           </div>
           <button id="add-site-rule">Add Site Rule</button>
@@ -378,7 +383,8 @@ vsc-controller { top: 50px !important; }
         <h3 id="about-privacy">Private by design</h3>
         <p>
           No StayTech account, advertising, analytics, or external service. Your preferences stay in
-          browser storage or your browser's own settings sync.
+          browser storage. Your browser may sync preferences through its own settings sync. Use Export and Import
+          to transfer settings between devices.
         </p>
       </section>
     </div>

@@ -12,6 +12,7 @@ import {
   BLACKLISTED_CODES,
   DEFAULT_BINDINGS,
 } from './key-maps.js';
+import { SPEED_LIMITS } from './speed-limits.js';
 import { DEFAULT_CONTROLLER_CSS } from '../styles/controller-css-defaults.js';
 
 window.VSC = window.VSC || {};
@@ -83,15 +84,12 @@ meet.google.com`.replace(regStrip, ''),
     SET_SPEED: 'VSC_SET_SPEED',
     ADJUST_SPEED: 'VSC_ADJUST_SPEED',
     RESET_SPEED: 'VSC_RESET_SPEED',
+    STEP_FRAME: 'VSC_STEP_FRAME',
     TOGGLE_DISPLAY: 'VSC_TOGGLE_DISPLAY',
     GET_STATUS: 'VSC_GET_STATUS',
+    VIDEO_DIAGNOSTICS: 'VSC_VIDEO_DIAGNOSTICS',
     TEARDOWN: 'VSC_TEARDOWN',
     REINIT: 'VSC_REINIT',
-  };
-
-  const SPEED_LIMITS = {
-    MIN: 0.07, // Video min rate per Chromium source
-    MAX: 16, // Maximum playback speed in Chrome per Chromium source
   };
 
   const CONTROLLER_SIZE_LIMITS = {

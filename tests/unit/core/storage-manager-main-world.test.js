@@ -100,6 +100,48 @@ describe('StorageManager — MAIN world (CustomEvent paths)', () => {
       expect(result).toBeNull();
     });
 
+    it('retries a pending request when a late bridge announces readiness', async () => {
+      const promise = StorageManager.get({ lastSpeed: 1 });
+      const requests = vi.fn();
+      const responder = () => {
+        requests();
+        docEl.dispatchEvent(
+          new CustomEvent('VSC_SETTINGS_READY', {
+            detail: { settings: { lastSpeed: 2.25 } },
+          })
+        );
+      };
+      docEl.addEventListener('VSC_REQUEST_SETTINGS', responder);
+
+      docEl.dispatchEvent(new CustomEvent('VSC_BRIDGE_READY'));
+
+      await expect(promise).resolves.toEqual({ lastSpeed: 2.25 });
+      expect(requests).toHaveBeenCalledOnce();
+
+      // Completion removes the ready listener, so late announcements cannot
+      // start duplicate reads or resolve the request a second time.
+      docEl.dispatchEvent(new CustomEvent('VSC_BRIDGE_READY'));
+      expect(requests).toHaveBeenCalledOnce();
+      docEl.removeEventListener('VSC_REQUEST_SETTINGS', responder);
+    });
+
+    it('removes temporary response and bridge-ready listeners after timeout', async () => {
+      vi.useFakeTimers();
+      const requests = vi.fn();
+      docEl.addEventListener('VSC_REQUEST_SETTINGS', requests);
+
+      const promise = StorageManager.get();
+      await vi.advanceTimersByTimeAsync(2100);
+      await expect(promise).resolves.toBeNull();
+
+      docEl.dispatchEvent(new CustomEvent('VSC_BRIDGE_READY'));
+      docEl.dispatchEvent(
+        new CustomEvent('VSC_SETTINGS_READY', { detail: { settings: { lastSpeed: 3 } } })
+      );
+      expect(requests).toHaveBeenCalledOnce();
+      docEl.removeEventListener('VSC_REQUEST_SETTINGS', requests);
+    });
+
     it('merges defaults with received settings', async () => {
       const responder = () => {
         docEl.dispatchEvent(

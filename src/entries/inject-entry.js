@@ -11,6 +11,7 @@ import '../utils/debug-helper.js';
 import '../utils/dom-utils.js';
 import '../utils/event-manager.js';
 import '../utils/bridge-events.js';
+import '../utils/video-load-diagnostics.js';
 
 // Site pattern matching — side-effect import registers window.VSC.matchSiteRule.
 // Must come before settings.js so load() can call it.
@@ -22,13 +23,17 @@ import '../core/settings.js';
 
 // State management - depends on utils and logger
 import '../core/state-manager.js';
+import '../core/gif-decoder.js';
+import '../core/gif-playback.js';
 
 // Observers - depends on utils and settings
 import '../observers/media-observer.js';
 import '../observers/mutation-observer.js';
+import '../observers/gif-observer.js';
 
 // Core functionality - depends on settings and observers
 import '../core/action-handler.js';
+import '../ui/site-controls.js';
 import '../core/video-controller.js';
 
 // UI components - depends on core functionality

@@ -1,20 +1,25 @@
+import { SPEED_LIMITS, speedRangeDescription } from '../../utils/speed-limits.js';
 import { sendTabCommand } from './tab-command.js';
+import { initializeDiagnosticsPanel } from './diagnostics.js';
+import { initializeSiteControls } from './site-controls.js';
 
 // Message type constants
 const MessageTypes = {
   SET_SPEED: 'VSC_SET_SPEED',
   ADJUST_SPEED: 'VSC_ADJUST_SPEED',
   RESET_SPEED: 'VSC_RESET_SPEED',
+  STEP_FRAME: 'VSC_STEP_FRAME',
   TOGGLE_DISPLAY: 'VSC_TOGGLE_DISPLAY',
   GET_STATUS: 'VSC_GET_STATUS',
 };
 
-const SPEED_LIMITS = {
-  MIN: 0.07,
-  MAX: 16,
-};
-
 document.addEventListener('DOMContentLoaded', () => {
+  initializeDiagnosticsPanel();
+  initializeSiteControls();
+  const customInput = document.querySelector('#custom-speed-input');
+  if (customInput) {
+    customInput.max = String(SPEED_LIMITS.MAX);
+  }
   let enabled = true;
   let commandGeneration = 0;
   let lifecycleGeneration = 0;
@@ -119,16 +124,25 @@ document.addEventListener('DOMContentLoaded', () => {
     getSpeedControls().forEach((control) => {
       control.disabled = !available;
     });
+    if (!available) {
+      setFrameControlsAvailable(false);
+    }
+  }
+
+  function setFrameControlsAvailable(available) {
+    document.querySelectorAll('[data-frame-direction]').forEach((button) => {
+      button.disabled = !available;
+    });
   }
 
   function validateCustomSpeedValue(value) {
     const speed = parseFloat(value);
     if (!Number.isFinite(speed)) {
-      return { valid: false, speed, message: 'Enter a speed from 0.07x to 16x.' };
+      return { valid: false, speed, message: `Enter a finite speed ${speedRangeDescription()}.` };
     }
 
     if (speed < SPEED_LIMITS.MIN || speed > SPEED_LIMITS.MAX) {
-      return { valid: false, speed, message: 'Speed must be between 0.07x and 16x.' };
+      return { valid: false, speed, message: `Speed must be ${speedRangeDescription()}.` };
     }
 
     return { valid: true, speed };
@@ -201,6 +215,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Speed Control Functions
   function initializeSpeedControls() {
+    document.querySelectorAll('[data-frame-direction]').forEach((button) => {
+      button.addEventListener('click', () => {
+        sendCommand(
+          MessageTypes.STEP_FRAME,
+          { direction: Number(button.dataset.frameDirection) },
+          button.dataset.frameDirection === '-1' ? 'Frame back' : 'Frame forward'
+        );
+      });
+    });
     // Set up speed control button listeners
     document.querySelector('#speed-decrease').addEventListener('click', (event) => {
       const delta = parseFloat(event.currentTarget.dataset.delta);
@@ -283,6 +306,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (generation !== commandGeneration) {
               return;
             }
+            // A frame may resume or lose seek bounds after the popup opens.
+            // Step replies exclude ineligible frames; read all status once to
+            // keep speed controls and mixed-frame rates accurate. Never retry
+            // the action itself.
+            if (type === MessageTypes.STEP_FRAME) {
+              refreshStatus();
+              return;
+            }
             // Re-enable initializes media asynchronously and defers DOM work.
             // Retry only status reads, for a bounded period while the popup is
             // open; never repeat a speed-changing command.
@@ -309,6 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             setSpeedControlsAvailable(true);
+            setFrameControlsAvailable(response.pausedVideoCount > 0);
             updateCurrentSpeed(response.currentSpeed);
 
             if (!options.silent) {

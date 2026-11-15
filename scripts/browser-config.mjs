@@ -48,9 +48,14 @@ function createBrowserManifest(baseManifest, browser, version) {
   return manifest;
 }
 
+function getBuildDefines(browser) {
+  assertBrowser(browser);
+  return { __VSC_BROWSER__: JSON.stringify(browser) };
+}
+
 function getBuildTarget(browser) {
   assertBrowser(browser);
   return BUILD_TARGETS[browser];
 }
 
-export { BROWSERS, RELEASE_READY_BROWSERS, createBrowserManifest, getBuildTarget };
+export { BROWSERS, RELEASE_READY_BROWSERS, createBrowserManifest, getBuildTarget, getBuildDefines };

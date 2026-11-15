@@ -5,6 +5,14 @@
  * Usage: node tests/e2e/run-e2e.js [youtube|basic|all]
  */
 
+import { cleanupFixtureBrowsers } from './browser-runtime.js';
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () =>
+    cleanupFixtureBrowsers().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15)))
+  );
+}
+
 import { pathToFileURL, fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
@@ -35,6 +43,8 @@ async function runE2ETests() {
     testFiles = ['youtube.e2e.js'];
   } else if (testType === 'basic') {
     testFiles = ['basic.e2e.js'];
+  } else if (testType === 'options') {
+    testFiles = ['options.e2e.js'];
   } else if (testType === 'settings') {
     testFiles = ['settings-injection.e2e.js'];
   } else if (testType === 'display') {
@@ -79,6 +89,8 @@ async function runE2ETests() {
       console.log(`   💥 Error running ${testFile}:`);
       console.log(`      ${error.message}\n`);
       totalFailed++;
+    } finally {
+      await cleanupFixtureBrowsers();
     }
   }
 

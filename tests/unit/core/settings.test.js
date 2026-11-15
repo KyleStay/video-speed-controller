@@ -7,6 +7,8 @@ import {
   installChromeMock,
   cleanupChromeMock,
   resetMockStorage,
+  getMockStorage,
+  simulateExternalStorageWrite,
 } from '../../helpers/chrome-mock.js';
 import { vi } from 'vitest';
 
@@ -41,6 +43,49 @@ describe('Settings', () => {
     expect(settings).toBeDefined();
     expect(settings.enabled).toBe(true);
     expect(settings.lastSpeed).toBeNull(); // no user choice yet
+  });
+
+  it('preserves default load fallback while strict callers receive the storage failure', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    const settings = config.settings;
+    const failure = new Error('Storage read unavailable');
+    const get = vi.spyOn(window.VSC.StorageManager, 'get').mockRejectedValue(failure);
+    const set = vi.spyOn(window.VSC.StorageManager, 'set');
+    try {
+      expect(await config.load()).toBe(window.VSC.Constants.DEFAULT_SETTINGS);
+      expect(config.settings).toBe(settings);
+      await expect(config.load({ throwOnError: true })).rejects.toBe(failure);
+      expect(config.settings).toBe(settings);
+      expect(set).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
+  });
+
+  it('reloads persisted settings after a strict read failure and an unpersisted session edit', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    await config.load();
+    const previous = getMockStorage().rememberSpeed;
+    const set = vi
+      .spyOn(window.VSC.StorageManager, 'set')
+      .mockRejectedValue(new Error('Storage write unavailable'));
+    const get = vi
+      .spyOn(window.VSC.StorageManager, 'get')
+      .mockRejectedValue(new Error('Storage read unavailable'));
+    try {
+      expect(await config.save({ rememberSpeed: !previous })).toBe(false);
+      expect(config.settings.rememberSpeed).toBe(!previous);
+      await expect(config.load({ throwOnError: true })).rejects.toThrow('Storage read unavailable');
+      get.mockRestore();
+      await config.load({ throwOnError: true });
+      expect(config.settings.rememberSpeed).toBe(previous);
+      expect(getMockStorage().rememberSpeed).toBe(previous);
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 
   it('VideoSpeedConfig should save settings to storage', async () => {
@@ -315,5 +360,129 @@ describe('Settings', () => {
     expect(config.settings.siteDefaultSpeed).toBe(2.3);
 
     window.VSC.matchSiteRule = original;
+  });
+  it('revises speed authority only for external speed preferences after the self-echo guard', async () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    expect(config.speedPreferenceRevision).toBe(0);
+    await config.load();
+    const revision = config.speedPreferenceRevision;
+    simulateExternalStorageWrite({
+      controllerOpacity: 0.5,
+      keyBindings: config.settings.keyBindings,
+    });
+    expect(config.speedPreferenceRevision).toBe(revision);
+    config.settings.lastSpeed = 1.5;
+    config._lastWrittenSpeed = 8;
+    simulateExternalStorageWrite({ lastSpeed: 8 });
+    expect(config.settings.lastSpeed).toBe(1.5);
+    expect(config.speedPreferenceRevision).toBe(revision);
+    simulateExternalStorageWrite({ lastSpeed: 8 });
+    expect(config.speedPreferenceRevision).toBe(revision + 1);
+    simulateExternalStorageWrite({ lastSpeed: undefined });
+    expect(config.speedPreferenceRevision).toBe(revision + 2);
+    simulateExternalStorageWrite({ siteRules: config.settings.siteRules });
+    expect(config.speedPreferenceRevision).toBe(revision + 3);
+    config.settings.siteDefaultSpeed = 2;
+    simulateExternalStorageWrite({ siteDefaultSpeed: undefined });
+    expect(config.speedPreferenceRevision).toBe(revision + 4);
+  });
+
+  it('keeps speed authority when only the current site button preference changes', () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    const rule = { pattern: '/.*/', enabled: true, speed: 2.1 };
+    config.settings.siteRules = [rule];
+    simulateExternalStorageWrite({ siteRules: [{ ...rule, hideSiteControls: true }] });
+    expect(config.settings.siteRules[0].hideSiteControls).toBe(true);
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({ siteRules: [{ ...rule, hideSiteControls: false }] });
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({
+      siteRules: [{ ...rule, speed: 4, hideSiteControls: true }],
+    });
+    expect(config.speedPreferenceRevision).toBe(1);
+    simulateExternalStorageWrite({
+      siteRules: [{ ...rule, speed: 4, enabled: false, hideSiteControls: false }],
+    });
+    expect(config.speedPreferenceRevision).toBe(2);
+  });
+
+  it('keeps speed authority for a new neutral site override and its removal', () => {
+    const config = new window.VSC.VideoSpeedConfig();
+    config.settings.siteRules = [];
+    simulateExternalStorageWrite({
+      siteRules: [{ pattern: '/.*/', enabled: true, speed: null, hideSiteControls: true }],
+    });
+    expect(config.speedPreferenceRevision).toBe(0);
+    simulateExternalStorageWrite({ siteRules: undefined });
+    expect(config.speedPreferenceRevision).toBe(0);
+    expect(config.settings.siteRules).toEqual(window.VSC.Constants.DEFAULT_SETTINGS.siteRules);
+  });
+
+  describe('legacy absolute speed normalization', () => {
+    const legacy = () => ({
+      rememberSpeed: true,
+      lastSpeed: 64,
+      keyBindings: [
+        { action: 'fast', key: 71, value: 64 },
+        { action: 'reset', key: 82, value: 32 },
+        { action: 'faster', key: 68, value: 32 },
+        { action: 'slower', key: 83, value: 64 },
+        { action: 'rewind', key: 90, value: 90 },
+        { action: 'advance', key: 88, value: 120 },
+        { action: 'rewindFrame', key: 188, value: 60 },
+        { action: 'advanceFrame', key: 190, value: 120 },
+      ],
+      siteRules: [
+        { pattern: 'unrelated.invalid', enabled: true, speed: 128 },
+        { pattern: 'another.invalid', enabled: true, speed: null },
+      ],
+    });
+
+    it.each(['load', 'change', 'save'])(
+      'bounds only absolute speed units during %s',
+      async (mode) => {
+        const data = legacy();
+        const original = structuredClone(data);
+        const storageRead =
+          mode === 'load'
+            ? vi.spyOn(window.VSC.StorageManager, 'get').mockResolvedValue({
+                ...window.VSC.Constants.DEFAULT_SETTINGS,
+                ...data,
+                controllerCSS: null,
+              })
+            : null;
+        const config = new window.VSC.VideoSpeedConfig();
+        await config.load();
+        storageRead?.mockRestore();
+        if (mode === 'change') {
+          simulateExternalStorageWrite(data);
+        }
+        if (mode === 'save') {
+          await config.save(data);
+        }
+        expect(config.settings.lastSpeed).toBe(16);
+        expect(config.settings.keyBindings.map(({ value }) => value)).toEqual([
+          16, 16, 32, 64, 90, 120, 60, 120,
+        ]);
+        expect(config.settings.siteRules.map(({ speed }) => speed)).toEqual([16, null]);
+        expect(data).toEqual(original);
+        if (mode === 'save') {
+          expect(getMockStorage().lastSpeed).toBe(16);
+          expect(getMockStorage().keyBindings.map(({ value }) => value)).toEqual([
+            16, 16, 32, 64, 90, 120, 60, 120,
+          ]);
+        }
+      }
+    );
+
+    it('normalizes speed-only saves before the debounce writes storage', async () => {
+      const config = new window.VSC.VideoSpeedConfig();
+      await config.load();
+      await config.save({ lastSpeed: 64 });
+      expect(config.settings.lastSpeed).toBe(16);
+      expect(config.pendingSave).toBe(16);
+      await vi.advanceTimersByTimeAsync(config.SAVE_DELAY + 50);
+      expect(getMockStorage().lastSpeed).toBe(16);
+    });
   });
 });

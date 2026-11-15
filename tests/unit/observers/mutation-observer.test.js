@@ -226,6 +226,76 @@ describe('MutationObserver', () => {
     host.remove();
   });
 
+  it('does not retain roots created while detached but discovers them after insertion', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    observer.start(document);
+    const host = document.createElement('custom-player');
+    try {
+      const root = host.attachShadow({ mode: 'open' });
+      expect(observer.shadowObservers.has(root)).toBe(false);
+      document.body.appendChild(host);
+      observer.processChildListMutation({
+        addedNodes: [host],
+        removedNodes: [],
+        target: document.body,
+      });
+      expect(observer.shadowObservers.has(root)).toBe(true);
+    } finally {
+      observer.stop();
+      host.remove();
+    }
+  });
+
+  it.each(['isConnected', 'ownerDocument'])(
+    'preserves native attachShadow when a page-owned %s getter throws',
+    (property) => {
+      const observer = new window.VSC.VideoMutationObserver(
+        { settings: {} },
+        () => {},
+        () => {}
+      );
+      observer.start(document);
+      const host = document.createElement('custom-player');
+      document.body.appendChild(host);
+      try {
+        Object.defineProperty(host, property, {
+          configurable: true,
+          get() {
+            throw new Error('page-owned getter unavailable');
+          },
+        });
+        const root = host.attachShadow({ mode: 'open' });
+        expect(root.host).toBe(host);
+        expect(observer.shadowObservers.has(root)).toBe(false);
+      } finally {
+        observer.stop();
+        host.remove();
+      }
+    }
+  );
+
+  it('does not claim roots from a different document through the shared hook', () => {
+    const observer = new window.VSC.VideoMutationObserver(
+      { settings: {} },
+      () => {},
+      () => {}
+    );
+    observer.start(document);
+    try {
+      const other = document.implementation.createHTMLDocument('other frame');
+      const host = other.createElement('custom-player');
+      other.body.appendChild(host);
+      const root = host.attachShadow({ mode: 'open' });
+      expect(observer.shadowObservers.has(root)).toBe(false);
+    } finally {
+      observer.stop();
+    }
+  });
+
   it('VideoMutationObserver should handle HTMLCollection children properly', () => {
     const mockConfig = { settings: {} };
     const mockOnVideoFound = [];
@@ -431,6 +501,7 @@ describe('MutationObserver', () => {
       );
       observer.start(document);
       const host = document.createElement('div');
+      document.body.appendChild(host);
       const shadowRoot = host.attachShadow({ mode: 'open' });
       const shadowObserver = observer.shadowObservers.get(shadowRoot);
       const observe = vi.spyOn(shadowObserver, 'observe');
@@ -442,6 +513,7 @@ describe('MutationObserver', () => {
         expect.objectContaining({ attributeFilter: expect.arrayContaining(['style', 'class']) })
       );
       observer.stop();
+      host.remove();
     });
 
     it('enableAttributeObservation is idempotent', () => {

@@ -62,6 +62,23 @@ describe('handleSpeedChange', () => {
     expect(video.playbackRate).toBe(3.0);
   });
 
+  it('does not rewrite an unchanged native rate on repeated commands', () => {
+    const handler = new window.VSC.BaseSiteHandler();
+    let accepted = 2.5;
+    const setter = vi.fn((value) => {
+      accepted = value;
+    });
+    const video = {};
+    Object.defineProperty(video, 'playbackRate', { get: () => accepted, set: setter });
+    handler.handleSpeedChange(video, 2.5);
+    handler.handleSpeedChange(video, 2.5);
+    expect(setter).not.toHaveBeenCalled();
+    handler.handleSpeedChange(video, 3);
+    expect(setter).toHaveBeenCalledExactlyOnceWith(3);
+    handler.handleSpeedChange(video, 3);
+    expect(setter).toHaveBeenCalledTimes(1);
+  });
+
   // --- SiteHandlerManager delegation ---
 
   it('SiteHandlerManager delegates handleSpeedChange to current handler', () => {

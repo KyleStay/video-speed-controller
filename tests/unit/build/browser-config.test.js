@@ -58,21 +58,9 @@ describe('browser manifest generation', () => {
     expect(getBuildTarget('firefox')).toBe('firefox140');
   });
 
-
-  it('keeps release-ready aggregate builds scoped to Chrome and Firefox', () => {
-    expect(RELEASE_READY_BROWSERS).toEqual(['chrome', 'firefox']);
-
-    const buildSource = readFileSync(resolve(process.cwd(), 'scripts/build.mjs'), 'utf8');
-    const packageSource = readFileSync(
-      resolve(process.cwd(), 'scripts/package-release.js'),
-      'utf8'
-    );
-
-    expect(buildSource).toMatch(
-      /requestedBrowsers\s*=\s*isAllBrowsers\s*\?\s*RELEASE_READY_BROWSERS/
-    );
-    expect(packageSource).toContain('for (const targetBrowser of RELEASE_READY_BROWSERS)');
-    expect(packageSource).toContain('is experimental and not release-package ready');
+  it('limits release builds to the supported browser profiles', () => {
+    expect(BROWSERS).toEqual(['chrome', 'firefox']);
+    expect(RELEASE_READY_BROWSERS).toEqual(BROWSERS);
   });
 
   it('uses StayFast names for new artifacts while preserving the legacy Chrome archive', () => {

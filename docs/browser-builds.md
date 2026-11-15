@@ -7,14 +7,14 @@ scripts remain identical so the ISOLATED bridge, MAIN-world controller,
 
 ## Commands
 
-| Command                          | Output                                                 |
-| -------------------------------- | ------------------------------------------------------ |
-| `npm run build`                  | Development Chrome build in `dist/`                    |
-| `npm run build:chrome`           | Chrome build in `dist/chrome/`                         |
-| `npm run build:firefox`          | Firefox build in `dist/firefox/`                       |
-| `npm run build:browsers`         | Chrome and Firefox development builds                  |
-| `npm run build:release:browsers` | Minified Chrome and Firefox builds                     |
-| `npm run release:browsers`       | Release-ready Chrome and Firefox ZIPs in `release/`    |
+| Command                          | Output                                              |
+| -------------------------------- | --------------------------------------------------- |
+| `npm run build`                  | Development Chrome build in `dist/`                 |
+| `npm run build:chrome`           | Chrome build in `dist/chrome/`                      |
+| `npm run build:firefox`          | Firefox build in `dist/firefox/`                    |
+| `npm run build:browsers`         | Chrome and Firefox development builds               |
+| `npm run build:release:browsers` | Minified Chrome and Firefox builds                  |
+| `npm run release:browsers`       | Release-ready Chrome and Firefox ZIPs in `release/` |
 
 Release-ready browser ZIPs can be recreated from existing builds with
 `npm run package:chrome` or `npm run package:firefox`. New per-browser archives

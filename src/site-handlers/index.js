@@ -62,6 +62,9 @@ class SiteHandlerManager {
    * @returns {Object} Positioning information
    */
   getControllerPosition(parent, video) {
+    if (window.VSC.GifPlayback?.get(video)) {
+      return new window.VSC.BaseSiteHandler().getControllerPosition(parent, video);
+    }
     const handler = this.getCurrentHandler();
     return handler.getControllerPosition(parent, video);
   }
@@ -72,6 +75,10 @@ class SiteHandlerManager {
    * @param {number} speed - Target speed
    */
   handleSpeedChange(video, speed) {
+    if (window.VSC.GifPlayback?.get(video)) {
+      video.playbackRate = speed;
+      return;
+    }
     const handler = this.getCurrentHandler();
     handler.handleSpeedChange(video, speed);
   }
@@ -93,21 +100,13 @@ class SiteHandlerManager {
    * @returns {boolean} True if video should be ignored
    */
   shouldIgnoreVideo(video) {
+    if (window.VSC.GifPlayback?.get(video)) {
+      return false;
+    }
     const handler = this.getCurrentHandler();
-    if (handler.shouldIgnoreVideo(video)) {
-      return true;
-    }
-
-    // Detect gif-like videos: muted looping videos with no native controls.
-    // Sites like Telegram, X, Imgur serve animated stickers/GIFs as <video
-    // autoplay loop muted> elements. Showing a speed overlay on these is
-    // visually noisy and not useful.
-    if (video.tagName === 'VIDEO' && video.loop && video.muted && !video.controls) {
-      window.VSC.logger.debug('Video ignored: gif-video pattern (loop + muted + no controls)');
-      return true;
-    }
-
-    return false;
+    // GIF-style MP4/WebM loops need the same controls as other videos, even
+    // when the page supplies no transport. Keep only explicit site vetoes.
+    return handler.shouldIgnoreVideo(video);
   }
 
   /**
